@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">Redis 治理平台核心 ER 模型</title>
+  <desc id="desc">Redis 集群一对一关联加密连接认证，并关联节点、应用绑定、同步任务和发现记录；同步任务关联状态事件和异步作业；操作写入审计日志。</desc>
+  <defs><style>.title{font:600 22px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;fill:#0f172a}.name{font:600 15px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;fill:#0f172a}.field{font:400 12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#475569}.entity{fill:#f8fafc;stroke:#64748b;stroke-width:1.5}.primary{fill:#e0f2fe;stroke:#0284c7;stroke-width:1.8}.relation{fill:none;stroke:#64748b;stroke-width:1.4}.cardinality{font:600 12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#334155}</style></defs>
+  <rect width="1200" height="720" fill="#fff"/><text x="600" y="35" text-anchor="middle" class="title">Redis 治理平台核心 ER 模型</text>
+
+  <path d="M320 185 H430" class="relation"/><text x="326" y="178" class="cardinality">0..1</text><text x="410" y="178" class="cardinality">1</text>
+  <path d="M770 185 H880" class="relation"/><text x="776" y="178" class="cardinality">1</text><text x="860" y="178" class="cardinality">N</text>
+  <path d="M600 245 V335" class="relation"/><text x="610" y="263" class="cardinality">1</text><text x="610" y="329" class="cardinality">N</text>
+  <path d="M520 245 V285 H245 V335" class="relation"/><text x="500" y="263" class="cardinality">1</text><text x="252" y="329" class="cardinality">N</text>
+  <path d="M680 245 V285 H985 V335" class="relation"/><text x="689" y="263" class="cardinality">1</text><text x="990" y="329" class="cardinality">N</text>
+  <path d="M520 495 V550 H365 V595" class="relation"/><text x="500" y="516" class="cardinality">1</text><text x="374" y="588" class="cardinality">N</text>
+  <path d="M680 495 V550 H835 V595" class="relation"/><text x="689" y="516" class="cardinality">1</text><text x="813" y="588" class="cardinality">N</text>
+
+  <rect x="60" y="115" width="260" height="140" rx="8" class="entity"/><text x="190" y="143" text-anchor="middle" class="name">REDIS_CLUSTER_SECRET</text><text x="78" y="169" class="field">PK/FK  cluster_id</text><text x="78" y="192" class="field">UK     secret_uuid</text><text x="78" y="215" class="field">       encrypted_secret / key_id</text><text x="78" y="238" class="field">       AES-GCM，不存明文</text>
+  <rect x="430" y="95" width="340" height="150" rx="8" class="primary"/><text x="600" y="123" text-anchor="middle" class="name">REDIS_CLUSTER</text><text x="448" y="149" class="field">PK  id</text><text x="448" y="172" class="field">FK  idc_id</text><text x="448" y="195" class="field">    name / env / owner / endpoint</text><text x="448" y="218" class="field">    mode / status / version</text>
+  <rect x="880" y="115" width="260" height="140" rx="8" class="entity"/><text x="1010" y="143" text-anchor="middle" class="name">REDIS_NODE</text><text x="898" y="169" class="field">PK  id</text><text x="898" y="192" class="field">FK  cluster_id</text><text x="898" y="215" class="field">    host / port / role</text><text x="898" y="238" class="field">    slots / memory / status</text>
+
+  <rect x="60" y="335" width="370" height="160" rx="8" class="entity"/><text x="245" y="363" text-anchor="middle" class="name">APPLICATION + APP_CLUSTER_BINDING</text><text x="78" y="389" class="field">PK  application.id / app_code</text><text x="78" y="412" class="field">FK  application_id</text><text x="78" y="435" class="field">FK  cluster_id</text><text x="78" y="458" class="field">    client_type / version / pool_config</text>
+  <rect x="465" y="335" width="270" height="160" rx="8" class="primary"/><text x="600" y="363" text-anchor="middle" class="name">SYNC_TASK</text><text x="483" y="389" class="field">PK  id / task_no</text><text x="483" y="412" class="field">FK  source_cluster_id</text><text x="483" y="435" class="field">FK  target_cluster_id</text><text x="483" y="458" class="field">    status / mode / version</text>
+  <rect x="800" y="335" width="370" height="160" rx="8" class="entity"/><text x="985" y="363" text-anchor="middle" class="name">DISCOVERY_RUN</text><text x="818" y="389" class="field">PK  id</text><text x="818" y="412" class="field">FK  cluster_id</text><text x="818" y="435" class="field">    status / node_count</text><text x="818" y="458" class="field">    started_at / finished_at / error</text>
+
+  <rect x="200" y="595" width="330" height="105" rx="8" class="entity"/><text x="365" y="623" text-anchor="middle" class="name">SYNC_TASK_EVENT</text><text x="218" y="650" class="field">FK task_id · from/to_status</text><text x="218" y="674" class="field">action · operator · occurred_at</text>
+  <rect x="670" y="595" width="330" height="105" rx="8" class="entity"/><text x="835" y="623" text-anchor="middle" class="name">ASYNC_JOB</text><text x="688" y="650" class="field">FK biz_id · job_type · status</text><text x="688" y="674" class="field">lease · attempts · idempotency_key</text>
+  <rect x="1015" y="575" width="160" height="125" rx="8" class="entity"/><text x="1095" y="603" text-anchor="middle" class="name">AUDIT_LOG</text><text x="1030" y="631" class="field">operator</text><text x="1030" y="653" class="field">action</text><text x="1030" y="675" class="field">resource/result</text>
+</svg>

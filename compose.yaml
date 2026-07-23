@@ -1,0 +1,111 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: redis_governance
+      MYSQL_USER: redis_governance
+      MYSQL_PASSWORD: redis_governance
+      MYSQL_ROOT_PASSWORD: local-root-only
+    ports:
+      - "3306:3306"
+    volumes:
+      - redis-governance-mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "no"]
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+  redis-auth:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "no", "--aclfile", "/etc/redis/users.acl"]
+    ports:
+      - "6384:6379"
+    volumes:
+      - ./scripts/redis-users.acl:/etc/redis/users.acl:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "--user", "redis-reader", "-a", "phase1-test-password", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+  redis-sentinel-master:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "no"]
+    ports:
+      - "6382:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+  redis-sentinel-replica:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "no", "--replicaof", "redis-sentinel-master", "6379"]
+    ports:
+      - "6383:6379"
+    depends_on:
+      redis-sentinel-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+  redis-sentinel:
+    image: redis:7.4-alpine
+    command: ["sh", "-c", "cp /etc/redis/sentinel.conf /tmp/sentinel.conf && exec redis-sentinel /tmp/sentinel.conf"]
+    ports:
+      - "26379:26379"
+    volumes:
+      - ./scripts/redis-sentinel.conf:/etc/redis/sentinel.conf:ro
+    depends_on:
+      redis-sentinel-master:
+        condition: service_healthy
+      redis-sentinel-replica:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+  redis-cluster-1:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--port", "7001", "--cluster-enabled", "yes", "--cluster-config-file", "nodes-7001.conf", "--cluster-node-timeout", "5000", "--appendonly", "no", "--protected-mode", "no"]
+    ports:
+      - "7001:7001"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7001", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+  redis-cluster-2:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--port", "7002", "--cluster-enabled", "yes", "--cluster-config-file", "nodes-7002.conf", "--cluster-node-timeout", "5000", "--appendonly", "no", "--protected-mode", "no"]
+    ports:
+      - "7002:7002"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7002", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+  redis-cluster-3:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--port", "7003", "--cluster-enabled", "yes", "--cluster-config-file", "nodes-7003.conf", "--cluster-node-timeout", "5000", "--appendonly", "no", "--protected-mode", "no"]
+    ports:
+      - "7003:7003"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7003", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+volumes:
+  redis-governance-mysql:

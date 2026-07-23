@@ -1,0 +1,24 @@
+spring:
+  application:
+    name: redis-governance-api
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${DB_USERNAME:redis_governance}
+    password: ${DB_PASSWORD:redis_governance}
+  flyway:
+    enabled: true
+  jackson:
+    default-property-inclusion: non_null
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+management:
+  endpoints.web.exposure.include: health,info,prometheus
+worker:
+  enabled: ${WORKER_ENABLED:true}
+  discovery:
+    poll-interval-ms: ${DISCOVERY_POLL_INTERVAL_MS:1000}
+redis-ops:
+  credential:
+    keys: ${REDIS_OPS_CREDENTIAL_KEYS:}
+    rotation-batch-size: ${CREDENTIAL_ROTATION_BATCH_SIZE:50}

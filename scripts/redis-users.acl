@@ -1,0 +1,2 @@
+user default off
+user redis-reader on >phase1-test-password ~* +@all
