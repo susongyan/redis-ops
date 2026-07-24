@@ -2,7 +2,6 @@ package io.github.redisops.domain.asset;
 
 import io.github.redisops.common.PageResult;
 import java.util.Optional;
-import java.util.List;
 
 public interface ClusterRepository {
     RedisCluster save(RedisCluster cluster);

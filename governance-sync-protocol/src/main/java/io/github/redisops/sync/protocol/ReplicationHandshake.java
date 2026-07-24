@@ -1,0 +1,99 @@
+package io.github.redisops.sync.protocol;
+
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+
+public final class ReplicationHandshake {
+    private final RespCodec codec;
+    public ReplicationHandshake(RespCodec codec) {
+        this.codec = codec;
+    }
+
+    public ReplicationReply start(String username, char[] password, String replicationId, long offset)
+            throws IOException {
+        if (password != null) {
+            if (username == null || username.isBlank())
+                commandExpectOk("AUTH", new String(password));
+            else
+                commandExpectOk("AUTH", username, new String(password));
+        }
+        commandExpect("PING", "PONG");
+        commandExpectOk("REPLCONF", "listening-port", "0");
+        commandExpectOk("REPLCONF", "capa", "eof", "capa", "psync2");
+        codec.writeCommand("PSYNC", replicationId == null ? "?" : replicationId, Long.toString(offset));
+        String response = simple(codec.read());
+        if (response.startsWith("FULLRESYNC ")) {
+            String[] parts = response.split(" ");
+            if (parts.length != 3)
+                throw new RespProtocolException("invalid FULLRESYNC response");
+            return new ReplicationReply.FullResync(parts[1], Long.parseLong(parts[2]), readRdbHeader());
+        }
+        if (response.startsWith("CONTINUE")) {
+            String[] parts = response.split(" ");
+            return new ReplicationReply.Continue(parts.length > 1 ? parts[1] : replicationId);
+        }
+        throw new RespProtocolException("unexpected PSYNC response: " + response);
+    }
+
+    public void acknowledge(long offset) throws IOException {
+        codec.writeCommand("REPLCONF", "ACK", Long.toString(offset));
+    }
+
+    private ReplicationReply.RdbTransfer readRdbHeader() throws IOException {
+        InputStream input = codec.input();
+        int marker = input.read();
+        if (marker != '$')
+            throw new RespProtocolException("RDB transfer does not start with bulk marker");
+        String header = line(input);
+        if (header.startsWith("EOF:")) {
+            String markerValue = header.substring(4);
+            if (markerValue.length() != 40)
+                throw new RespProtocolException("invalid diskless EOF marker");
+            return new ReplicationReply.RdbTransfer(-1, markerValue);
+        }
+        long length;
+        try {
+            length = Long.parseLong(header);
+        } catch (NumberFormatException e) {
+            throw new RespProtocolException("invalid RDB length", e);
+        }
+        if (length < 0)
+            throw new RespProtocolException("invalid RDB length: " + length);
+        return new ReplicationReply.RdbTransfer(length, null);
+    }
+
+    private void commandExpectOk(String... command) throws IOException {
+        commandExpect(command, "OK");
+    }
+    private void commandExpect(String first, String expected) throws IOException {
+        commandExpect(new String[]{first}, expected);
+    }
+    private void commandExpect(String[] command, String expected) throws IOException {
+        codec.writeCommand(command);
+        String value = simple(codec.read());
+        if (!expected.equalsIgnoreCase(value))
+            throw new RespProtocolException(command[0] + " failed: " + value);
+    }
+    private static String simple(RespValue value) {
+        if (value instanceof RespValue.Simple s)
+            return s.value();
+        if (value instanceof RespValue.Error e)
+            throw new RespProtocolException("Redis error: " + e.value());
+        throw new RespProtocolException("expected simple Redis response");
+    }
+    private static String line(InputStream input) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        int previous = -1;
+        while (true) {
+            int current = input.read();
+            if (current < 0)
+                throw new EOFException("RDB header ended");
+            if (previous == '\r' && current == '\n') {
+                byte[] bytes = out.toByteArray();
+                return new String(bytes, 0, bytes.length - 1, StandardCharsets.US_ASCII);
+            }
+            out.write(current);
+            previous = current;
+        }
+    }
+}

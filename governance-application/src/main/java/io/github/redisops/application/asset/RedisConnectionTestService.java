@@ -19,14 +19,14 @@ public class RedisConnectionTestService {
     private final RedisConnectionTestPort connectionTest;
 
     public RedisConnectionTestService(ClusterRepository clusters, RedisConnectionProfileProvider profiles,
-                                      RedisConnectionTestPort connectionTest) {
+            RedisConnectionTestPort connectionTest) {
         this.clusters = clusters;
         this.profiles = profiles;
         this.connectionTest = connectionTest;
     }
 
     public RedisConnectionTestResult test(Long clusterId, ClusterMode mode, String endpoint,
-                                          boolean authEnabled, String username, String password) {
+            boolean authEnabled, String username, String password) {
         RedisEndpointConfiguration.parse(mode, endpoint);
         if (clusterId != null) {
             clusters.findById(clusterId).orElseThrow(() -> BusinessException.notFound("cluster", clusterId));
@@ -51,8 +51,10 @@ public class RedisConnectionTestService {
             }
             return connectionTest.test(mode, endpoint, normalize(username), plaintext);
         } finally {
-            if (plaintext != null) Arrays.fill(plaintext, '\0');
-            if (existing != null) existing.close();
+            if (plaintext != null)
+                Arrays.fill(plaintext, '\0');
+            if (existing != null)
+                existing.close();
         }
     }
 

@@ -13,7 +13,8 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class CredentialReencryptionServiceTest {
-    @Test void rewritesOldCiphertextWithActiveKey() {
+    @Test
+    void rewritesOldCiphertextWithActiveKey() {
         String oldKey = Base64.getEncoder().encodeToString(bytes(1));
         String currentKey = Base64.getEncoder().encodeToString(bytes(65));
         UUID uuid = UUID.randomUUID();
@@ -33,5 +34,10 @@ class CredentialReencryptionServiceTest {
         assertArrayEquals("rotate-secret".toCharArray(), currentOnly.decrypt(uuid, ciphertext.getValue(), "v2"));
     }
 
-    private static byte[] bytes(int start) { byte[] value=new byte[32];for(int i=0;i<value.length;i++)value[i]=(byte)(start+i);return value; }
+    private static byte[] bytes(int start) {
+        byte[] value = new byte[32];
+        for (int i = 0; i < value.length; i++)
+            value[i] = (byte) (start + i);
+        return value;
+    }
 }

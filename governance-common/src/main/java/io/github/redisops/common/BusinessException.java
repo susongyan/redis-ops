@@ -13,7 +13,9 @@ public class BusinessException extends RuntimeException {
         this.code = code;
     }
 
-    public String code() { return code; }
+    public String code() {
+        return code;
+    }
 
     public static BusinessException notFound(String resource, long id) {
         return new BusinessException("RESOURCE_NOT_FOUND", resource + " not found: " + id);

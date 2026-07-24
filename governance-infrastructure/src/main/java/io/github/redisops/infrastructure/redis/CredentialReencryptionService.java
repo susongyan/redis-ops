@@ -19,14 +19,13 @@ public class CredentialReencryptionService {
     private final int batchSize;
 
     public CredentialReencryptionService(ClusterSecretRepository secrets, CredentialSecretProtector protector,
-                                         @Value("${redis-ops.credential.rotation-batch-size:50}") int batchSize) {
+            @Value("${redis-ops.credential.rotation-batch-size:50}") int batchSize) {
         this.secrets = secrets;
         this.protector = protector;
         this.batchSize = batchSize;
     }
 
-    @Scheduled(initialDelayString = "${redis-ops.credential.rotation-initial-delay-ms:5000}",
-            fixedDelayString = "${redis-ops.credential.rotation-interval-ms:60000}")
+    @Scheduled(initialDelayString = "${redis-ops.credential.rotation-initial-delay-ms:5000}", fixedDelayString = "${redis-ops.credential.rotation-interval-ms:60000}")
     public void rotateBatch() {
         for (RedisClusterSecret secret : secrets.findForReencryption(protector.activeKeyId(), batchSize)) {
             char[] plaintext = protector.decrypt(secret.secretUuid(), secret.encryptedSecret(), secret.keyId());

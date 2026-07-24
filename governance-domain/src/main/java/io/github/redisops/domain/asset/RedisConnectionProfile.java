@@ -13,8 +13,8 @@ public final class RedisConnectionProfile implements AutoCloseable {
     private final char[] password;
 
     public RedisConnectionProfile(long clusterId, ClusterMode mode, List<String> seedEndpoints,
-                                  String sentinelMasterName, String username, String authType,
-                                  char[] password) {
+            String sentinelMasterName, String username, String authType,
+            char[] password) {
         this.clusterId = clusterId;
         this.mode = mode;
         this.seedEndpoints = List.copyOf(seedEndpoints);
@@ -24,15 +24,31 @@ public final class RedisConnectionProfile implements AutoCloseable {
         this.password = password;
     }
 
-    public long clusterId() { return clusterId; }
-    public ClusterMode mode() { return mode; }
-    public List<String> seedEndpoints() { return seedEndpoints; }
-    public String sentinelMasterName() { return sentinelMasterName; }
-    public String username() { return username; }
-    public String authType() { return authType; }
-    public char[] password() { return password; }
+    public long clusterId() {
+        return clusterId;
+    }
+    public ClusterMode mode() {
+        return mode;
+    }
+    public List<String> seedEndpoints() {
+        return seedEndpoints;
+    }
+    public String sentinelMasterName() {
+        return sentinelMasterName;
+    }
+    public String username() {
+        return username;
+    }
+    public String authType() {
+        return authType;
+    }
+    public char[] password() {
+        return password;
+    }
 
-    @Override public void close() {
-        if (password != null) Arrays.fill(password, '\0');
+    @Override
+    public void close() {
+        if (password != null)
+            Arrays.fill(password, '\0');
     }
 }

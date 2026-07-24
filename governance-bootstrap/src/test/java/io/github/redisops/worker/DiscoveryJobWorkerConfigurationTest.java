@@ -15,11 +15,13 @@ class DiscoveryJobWorkerConfigurationTest {
     private final ApplicationContextRunner context = new ApplicationContextRunner()
             .withUserConfiguration(WorkerTestConfiguration.class);
 
-    @Test void workerIsEnabledByDefault() {
+    @Test
+    void workerIsEnabledByDefault() {
         context.run(result -> assertThat(result).hasSingleBean(DiscoveryJobWorker.class));
     }
 
-    @Test void workerCanBeDisabledForPureApiInstance() {
+    @Test
+    void workerCanBeDisabledForPureApiInstance() {
         context.withPropertyValues("worker.enabled=false")
                 .run(result -> assertThat(result).doesNotHaveBean(DiscoveryJobWorker.class));
     }
@@ -27,7 +29,13 @@ class DiscoveryJobWorkerConfigurationTest {
     @Configuration(proxyBeanMethods = false)
     @Import(DiscoveryJobWorker.class)
     static class WorkerTestConfiguration {
-        @Bean JobRepository jobs() { return mock(JobRepository.class); }
-        @Bean AssetService assets() { return mock(AssetService.class); }
+        @Bean
+        JobRepository jobs() {
+            return mock(JobRepository.class);
+        }
+        @Bean
+        AssetService assets() {
+            return mock(AssetService.class);
+        }
     }
 }

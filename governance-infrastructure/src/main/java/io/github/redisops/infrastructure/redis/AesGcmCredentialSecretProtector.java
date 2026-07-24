@@ -36,7 +36,8 @@ public class AesGcmCredentialSecretProtector implements CredentialSecretProtecto
         this.activeKeyId = keys.keySet().iterator().next();
     }
 
-    @Override public EncryptedSecret encrypt(UUID credentialUuid, char[] password) {
+    @Override
+    public EncryptedSecret encrypt(UUID credentialUuid, char[] password) {
         if (password == null || password.length == 0)
             throw new BusinessException("INVALID_ARGUMENT", "password is required");
         byte[] plain = encode(password);
@@ -55,9 +56,11 @@ public class AesGcmCredentialSecretProtector implements CredentialSecretProtecto
         }
     }
 
-    @Override public char[] decrypt(UUID credentialUuid, byte[] ciphertext, String keyId) {
+    @Override
+    public char[] decrypt(UUID credentialUuid, byte[] ciphertext, String keyId) {
         SecretKeySpec key = keys.get(keyId);
-        if (key == null) throw new BusinessException("CREDENTIAL_KEY_UNAVAILABLE", "credential encryption key is unavailable");
+        if (key == null)
+            throw new BusinessException("CREDENTIAL_KEY_UNAVAILABLE", "credential encryption key is unavailable");
         if (ciphertext == null || ciphertext.length <= IV_BYTES)
             throw new BusinessException("CREDENTIAL_DECRYPTION_FAILED", "credential ciphertext is invalid");
         byte[] iv = Arrays.copyOfRange(ciphertext, 0, IV_BYTES);
@@ -73,11 +76,15 @@ public class AesGcmCredentialSecretProtector implements CredentialSecretProtecto
             throw new BusinessException("CREDENTIAL_DECRYPTION_FAILED", "credential decryption failed");
         } finally {
             Arrays.fill(encrypted, (byte) 0);
-            if (plain != null) Arrays.fill(plain, (byte) 0);
+            if (plain != null)
+                Arrays.fill(plain, (byte) 0);
         }
     }
 
-    @Override public String activeKeyId() { return activeKeyId; }
+    @Override
+    public String activeKeyId() {
+        return activeKeyId;
+    }
 
     private static Cipher cipher(int mode, SecretKeySpec key, byte[] iv, UUID credentialUuid)
             throws GeneralSecurityException {
@@ -98,9 +105,13 @@ public class AesGcmCredentialSecretProtector implements CredentialSecretProtecto
                 throw new IllegalStateException("invalid REDIS_OPS_CREDENTIAL_KEYS entry");
             String keyId = value.substring(0, separator).trim();
             byte[] key;
-            try { key = Base64.getDecoder().decode(value.substring(separator + 1).trim()); }
-            catch (IllegalArgumentException exception) { throw new IllegalStateException("credential key is not valid base64"); }
-            if (key.length != 32) throw new IllegalStateException("credential key must decode to exactly 32 bytes");
+            try {
+                key = Base64.getDecoder().decode(value.substring(separator + 1).trim());
+            } catch (IllegalArgumentException exception) {
+                throw new IllegalStateException("credential key is not valid base64");
+            }
+            if (key.length != 32)
+                throw new IllegalStateException("credential key must decode to exactly 32 bytes");
             if (result.putIfAbsent(keyId, new SecretKeySpec(key, "AES")) != null)
                 throw new IllegalStateException("duplicate credential key id: " + keyId);
         }
@@ -112,9 +123,12 @@ public class AesGcmCredentialSecretProtector implements CredentialSecretProtecto
             ByteBuffer buffer = StandardCharsets.UTF_8.newEncoder().encode(CharBuffer.wrap(chars));
             byte[] result = new byte[buffer.remaining()];
             buffer.get(result);
-            if (buffer.hasArray()) Arrays.fill(buffer.array(), (byte) 0);
+            if (buffer.hasArray())
+                Arrays.fill(buffer.array(), (byte) 0);
             return result;
-        } catch (CharacterCodingException exception) { throw new IllegalArgumentException("password is not valid UTF-8", exception); }
+        } catch (CharacterCodingException exception) {
+            throw new IllegalArgumentException("password is not valid UTF-8", exception);
+        }
     }
 
     private static char[] decode(byte[] bytes) {
@@ -122,7 +136,8 @@ public class AesGcmCredentialSecretProtector implements CredentialSecretProtecto
             CharBuffer buffer = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes));
             char[] result = new char[buffer.remaining()];
             buffer.get(result);
-            if (buffer.hasArray()) Arrays.fill(buffer.array(), '\0');
+            if (buffer.hasArray())
+                Arrays.fill(buffer.array(), '\0');
             return result;
         } catch (CharacterCodingException exception) {
             throw new BusinessException("CREDENTIAL_DECRYPTION_FAILED", "credential plaintext is invalid");

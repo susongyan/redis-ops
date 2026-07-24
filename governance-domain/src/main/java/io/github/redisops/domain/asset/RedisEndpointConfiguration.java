@@ -11,7 +11,8 @@ public record RedisEndpointConfiguration(List<String> seedEndpoints, String sent
     }
 
     public static RedisEndpointConfiguration parse(ClusterMode mode, String configuredEndpoint) {
-        if (mode == null) throw invalid("mode is required");
+        if (mode == null)
+            throw invalid("mode is required");
         if (configuredEndpoint == null || configuredEndpoint.isBlank())
             throw invalid("at least one endpoint is required");
 
@@ -33,7 +34,8 @@ public record RedisEndpointConfiguration(List<String> seedEndpoints, String sent
                 .peek(RedisEndpointConfiguration::validateHostPort)
                 .distinct()
                 .toList();
-        if (seeds.isEmpty()) throw invalid("at least one endpoint is required");
+        if (seeds.isEmpty())
+            throw invalid("at least one endpoint is required");
         return new RedisEndpointConfiguration(seeds, masterName);
     }
 
@@ -48,10 +50,12 @@ public record RedisEndpointConfiguration(List<String> seedEndpoints, String sent
         } else if (host.contains(":")) {
             throw invalid("IPv6 endpoint must use [address]:port");
         }
-        if (host.isBlank()) throw invalid("endpoint host is required");
+        if (host.isBlank())
+            throw invalid("endpoint host is required");
         try {
             int port = Integer.parseInt(endpoint.substring(separator + 1));
-            if (port < 1 || port > 65535) throw invalid("endpoint port must be between 1 and 65535");
+            if (port < 1 || port > 65535)
+                throw invalid("endpoint port must be between 1 and 65535");
         } catch (NumberFormatException exception) {
             throw invalid("endpoint port is invalid");
         }

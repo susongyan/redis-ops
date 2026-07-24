@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1030" viewBox="0 0 1500 1030">
+  <defs>
+    <style>
+      .title{font:700 27px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;fill:#172033}
+      .subtitle{font:14px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;fill:#667085}
+      .lane{font:700 17px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;fill:#172033;text-anchor:middle}
+      .box{font:14px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;fill:#172033;text-anchor:middle}
+      .small{font:12px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;fill:#667085;text-anchor:middle}
+      .arrow{stroke:#667085;stroke-width:2;fill:none;marker-end:url(#arrow)}
+      .dash{stroke:#2E90FA;stroke-width:2;stroke-dasharray:7 5;fill:none;marker-end:url(#blueArrow)}
+      .divider{stroke:#D0D5DD;stroke-width:1}
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#667085"/>
+    </marker>
+    <marker id="blueArrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#2E90FA"/>
+    </marker>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#101828" flood-opacity=".12"/>
+    </filter>
+  </defs>
+
+  <rect width="1500" height="1030" fill="#F8FAFC"/>
+  <text x="45" y="48" class="title">同步任务标准运行流程</text>
+  <text x="45" y="74" class="subtitle">控制命令、运行租约、源复制、spool、目标 checkpoint 和状态上报形成闭环</text>
+
+  <rect x="40" y="105" width="240" height="875" rx="16" fill="#EEF4FF"/>
+  <rect x="290" y="105" width="270" height="875" rx="16" fill="#F2F4F7"/>
+  <rect x="570" y="105" width="320" height="875" rx="16" fill="#ECFDF3"/>
+  <rect x="900" y="105" width="260" height="875" rx="16" fill="#FFF7ED"/>
+  <rect x="1170" y="105" width="290" height="875" rx="16" fill="#FDF2FA"/>
+
+  <text x="160" y="140" class="lane">操作人 / Platform</text>
+  <text x="425" y="140" class="lane">共享 MySQL</text>
+  <text x="730" y="140" class="lane">Sync Worker</text>
+  <text x="1030" y="140" class="lane">源 Redis / Spool</text>
+  <text x="1315" y="140" class="lane">目标 Redis</text>
+  <line x1="40" y1="158" x2="1460" y2="158" class="divider"/>
+
+  <g filter="url(#shadow)">
+    <rect x="65" y="185" width="190" height="58" rx="10" fill="#FFFFFF" stroke="#84ADFF"/>
+    <text x="160" y="211" class="box">创建任务并请求预检查</text>
+    <text x="160" y="230" class="small">Idempotency-Key / If-Match</text>
+
+    <rect x="325" y="185" width="200" height="58" rx="10" fill="#FFFFFF" stroke="#98A2B3"/>
+    <text x="425" y="211" class="box">CHECKING + PRECHECK Job</text>
+    <text x="425" y="230" class="small">事务提交</text>
+
+    <rect x="625" y="185" width="210" height="58" rx="10" fill="#FFFFFF" stroke="#6CE9A6"/>
+    <text x="730" y="211" class="box">领取命令并执行预检查</text>
+    <text x="730" y="230" class="small">连接、版本、空间、保留 Key</text>
+
+    <rect x="325" y="275" width="200" height="58" rx="10" fill="#FFFFFF" stroke="#98A2B3"/>
+    <text x="425" y="301" class="box">报告有效期 10 分钟</text>
+    <text x="425" y="320" class="small">任务进入 READY</text>
+
+    <rect x="65" y="365" width="190" height="72" rx="10" fill="#FFFFFF" stroke="#FDB022"/>
+    <text x="160" y="391" class="box">确认 START</text>
+    <text x="160" y="411" class="small">源写隔离 + 允许目标清空</text>
+    <text x="160" y="428" class="small">精确任务编号</text>
+
+    <rect x="325" y="365" width="200" height="72" rx="10" fill="#FFFFFF" stroke="#98A2B3"/>
+    <text x="425" y="391" class="box">STARTING + START Job</text>
+    <text x="425" y="411" class="small">保存 fullSyncEpoch</text>
+    <text x="425" y="428" class="small">危险操作审计</text>
+
+    <rect x="625" y="365" width="210" height="72" rx="10" fill="#FFFFFF" stroke="#6CE9A6"/>
+    <text x="730" y="391" class="box">获取 runtime 租约</text>
+    <text x="730" y="411" class="small">generation + 1</text>
+    <text x="730" y="428" class="small">每 5 秒续租</text>
+
+    <rect x="1210" y="365" width="210" height="72" rx="10" fill="#FFFFFF" stroke="#EE46BC"/>
+    <text x="1315" y="391" class="box">逐 master 清空目标 DB</text>
+    <text x="1315" y="411" class="small">epoch 去重</text>
+    <text x="1315" y="428" class="small">逐节点记录结果</text>
+
+    <rect x="625" y="485" width="210" height="72" rx="10" fill="#FFFFFF" stroke="#6CE9A6"/>
+    <text x="730" y="511" class="box">建立复制通道</text>
+    <text x="730" y="531" class="small">AUTH → REPLCONF → PSYNC</text>
+    <text x="730" y="548" class="small">任务进入 FULL_SYNCING</text>
+
+    <rect x="925" y="485" width="210" height="72" rx="10" fill="#FFFFFF" stroke="#FDB022"/>
+    <text x="1030" y="511" class="box">FULLRESYNC / RDB</text>
+    <text x="1030" y="531" class="small">写加密 spool 并 fsync</text>
+    <text x="1030" y="548" class="small">fsync 后 ACK received</text>
+
+    <rect x="1210" y="485" width="210" height="72" rx="10" fill="#FFFFFF" stroke="#EE46BC"/>
+    <text x="1315" y="511" class="box">流式 RESTORE</text>
+    <text x="1315" y="531" class="small">REPLACE ABSTTL</text>
+    <text x="1315" y="548" class="small">记录全量进度</text>
+
+    <rect x="925" y="605" width="210" height="72" rx="10" fill="#FFFFFF" stroke="#FDB022"/>
+    <text x="1030" y="631" class="box">增量 RESP 命令流</text>
+    <text x="1030" y="651" class="small">过滤、拆分、写 spool</text>
+    <text x="1030" y="668" class="small">保留命名空间永不转发</text>
+
+    <rect x="1210" y="605" width="210" height="72" rx="10" fill="#FFFFFF" stroke="#EE46BC"/>
+    <text x="1315" y="631" class="box">业务命令 + checkpoint</text>
+    <text x="1315" y="651" class="small">原子提交</text>
+    <text x="1315" y="668" class="small">推进 appliedOffset</text>
+
+    <rect x="625" y="605" width="210" height="72" rx="10" fill="#FFFFFF" stroke="#6CE9A6"/>
+    <text x="730" y="631" class="box">更新通道与任务状态</text>
+    <text x="730" y="651" class="small">INCR_SYNCING / CAUGHT_UP</text>
+    <text x="730" y="668" class="small">5 秒低频摘要</text>
+
+    <rect x="65" y="735" width="190" height="72" rx="10" fill="#FFFFFF" stroke="#84ADFF"/>
+    <text x="160" y="761" class="box">PAUSE / RESUME</text>
+    <text x="160" y="781" class="small">暂停目标应用</text>
+    <text x="160" y="798" class="small">spool 可继续接收</text>
+
+    <rect x="625" y="735" width="210" height="72" rx="10" fill="#FFFFFF" stroke="#6CE9A6"/>
+    <text x="730" y="761" class="box">稳定在途 checkpoint</text>
+    <text x="730" y="781" class="small">恢复时读取目标事实</text>
+    <text x="730" y="798" class="small">backlog 不足则 BLOCKED</text>
+
+    <rect x="65" y="865" width="190" height="72" rx="10" fill="#FFFFFF" stroke="#84ADFF"/>
+    <text x="160" y="891" class="box">FINISH</text>
+    <text x="160" y="911" class="small">确认源写隔离</text>
+    <text x="160" y="928" class="small">等待最终 offset</text>
+
+    <rect x="625" y="865" width="210" height="72" rx="10" fill="#FFFFFF" stroke="#6CE9A6"/>
+    <text x="730" y="891" class="box">DRAINING</text>
+    <text x="730" y="911" class="small">全部 checkpoint 追平</text>
+    <text x="730" y="928" class="small">释放租约 → FINISHED</text>
+  </g>
+
+  <path d="M255 214 L325 214" class="arrow"/>
+  <path d="M525 214 L625 214" class="arrow"/>
+  <path d="M625 243 C575 260 540 286 525 304" class="arrow"/>
+  <path d="M325 304 L255 390" class="dash"/>
+  <path d="M255 401 L325 401" class="arrow"/>
+  <path d="M525 401 L625 401" class="arrow"/>
+  <path d="M835 401 L1210 401" class="arrow"/>
+  <path d="M1315 437 C1315 465 835 465 835 510" class="arrow"/>
+  <path d="M835 521 L925 521" class="arrow"/>
+  <path d="M1135 521 L1210 521" class="arrow"/>
+  <path d="M1315 557 L1315 605" class="arrow"/>
+  <path d="M1210 641 L1135 641" class="arrow"/>
+  <path d="M925 641 L835 641" class="arrow"/>
+  <path d="M625 641 L525 641 L525 690 L425 690 L425 437" class="dash"/>
+  <path d="M255 771 L625 771" class="arrow"/>
+  <path d="M835 771 L925 771 L925 677" class="dash"/>
+  <path d="M255 901 L625 901" class="arrow"/>
+  <path d="M835 901 L1210 677" class="arrow"/>
+  <path d="M625 922 L525 922 L525 950 L425 950 L425 437" class="dash"/>
+</svg>

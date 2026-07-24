@@ -50,6 +50,23 @@ mvn package
 ./scripts/redis-asset-test-up.sh
 ```
 
-详细设计见 [架构设计](docs/architecture.md)、[跨机房关系与同步](docs/cross-idc-sync.md)、[RPO 计算与切换判定](docs/rpo-calculation-and-switchover.md) 和 [Phase 1 任务拆分](docs/phase1-tasks.md)。
+详细设计见 [架构设计](docs/architecture.md)、[跨机房关系与同步](docs/cross-idc-sync.md)、
+[同步管理面与 Worker 分离](docs/sync-control-worker-separation.md)、
+[同步 Worker 管理流程与生命周期](docs/sync-worker-lifecycle.md)、
+[RPO 计算与切换判定](docs/rpo-calculation-and-switchover.md) 和
+[Phase 1 任务拆分](docs/phase1-tasks.md)。
 
 Redis 资产模块的启动方式和接口见 [Asset Management API](docs/asset-management-api.md)。
+
+## Java 代码格式
+
+项目使用 Spotless 调用 Eclipse Formatter，统一采用 4 空格缩进和 120 字符行宽：
+
+```bash
+mvn spotless:apply
+mvn spotless:check
+```
+
+`mvn verify` 会自动执行格式检查。IntelliJ IDEA 可以导入
+[`config/formatter/eclipse-java-redis-ops.xml`](config/formatter/eclipse-java-redis-ops.xml)，使 IDE
+格式化结果与 Maven 保持一致。
