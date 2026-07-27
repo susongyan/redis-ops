@@ -16,6 +16,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
     private final SyncRepository sync;
     private final SyncRunnerStateReporter reporter;
     private final SpoolKeyProvider spoolKeys;
+    private final RedisDataEndpointResolver endpoints;
     private final ObjectMapper json;
     private final Path dataDirectory;
     private final long segmentBytes;
@@ -28,7 +29,8 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
     private final Duration metricInterval;
 
     public StandaloneSyncTaskRunnerFactory(RedisConnectionProfileProvider profiles, SyncRepository sync,
-            SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys, ObjectMapper json,
+            SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys, RedisDataEndpointResolver endpoints,
+            ObjectMapper json,
             @Value("${sync.engine.data-dir:./data/sync}") Path dataDirectory,
             @Value("${sync.engine.segment-bytes:268435456}") long segmentBytes,
             @Value("${sync.engine.connect-timeout-ms:10000}") long connectTimeoutMillis,
@@ -54,6 +56,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
         this.sync = sync;
         this.reporter = reporter;
         this.spoolKeys = spoolKeys;
+        this.endpoints = endpoints;
         this.json = json;
         this.dataDirectory = dataDirectory;
         this.segmentBytes = segmentBytes;
@@ -68,7 +71,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
 
     @Override
     public SyncTaskRunner create(SyncTask task, boolean recovery) {
-        return new StandaloneSyncTaskRunner(task, recovery, profiles, sync, reporter, spoolKeys, json,
+        return new StandaloneSyncTaskRunner(task, recovery, profiles, sync, reporter, spoolKeys, endpoints, json,
                 dataDirectory, segmentBytes, connectTimeout, fullApplyConcurrency,
                 fullApplyQueueCapacity, fullApplyPipelineSize, fullApplyTransactionMaxBytes, leaseSafetyMargin,
                 metricInterval);

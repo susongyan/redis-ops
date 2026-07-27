@@ -16,7 +16,11 @@ public final class SourceReplicationSession implements AutoCloseable {
     private ReplicationCommandReader commands;
 
     public SourceReplicationSession(RedisConnectionProfile profile, Duration connectTimeout) throws IOException {
-        RedisEndpoint endpoint = RedisEndpoint.parse(profile.seedEndpoints().get(0));
+        this(profile, RedisEndpoint.parse(profile.seedEndpoints().get(0)), connectTimeout);
+    }
+
+    public SourceReplicationSession(RedisConnectionProfile profile, RedisEndpoint endpoint,
+            Duration connectTimeout) throws IOException {
         socket = new Socket();
         socket.setKeepAlive(true);
         socket.setTcpNoDelay(true);

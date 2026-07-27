@@ -32,6 +32,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private final SyncRepository sync;
     private final SyncRunnerStateReporter reporter;
     private final SpoolKeyProvider spoolKeys;
+    private final RedisDataEndpointResolver endpoints;
     private final ObjectMapper json;
     private final Path dataDirectory;
     private final long segmentBytes;
@@ -66,6 +67,8 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private volatile boolean readerStarted;
     private volatile boolean spoolFallback;
     private volatile SourceReplicationSession source;
+    private volatile RedisEndpoint sourceEndpoint;
+    private volatile RedisEndpoint targetEndpoint;
     private RedisConnectionProfile sourceProfile;
     private RedisConnectionProfile targetProfile;
     private TargetCommandSession target;
@@ -81,12 +84,14 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private long lastMetricApplied;
     private Instant lastMetricAt = Instant.now();
     private long lastHeartbeatWriteNanos;
+    private long lastSourceMasterCheckNanos;
     private boolean caughtUp;
     private volatile long lastAppliedHeartbeatMillis;
     private final byte[] heartbeatKey;
 
     StandaloneSyncTaskRunner(SyncTask task, boolean recovery, RedisConnectionProfileProvider profiles,
-            SyncRepository sync, SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys, ObjectMapper json,
+            SyncRepository sync, SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys,
+            RedisDataEndpointResolver endpoints, ObjectMapper json,
             Path dataDirectory, long segmentBytes, Duration connectTimeout, int fullApplyConcurrency,
             int fullApplyQueueCapacity, int fullApplyPipelineSize, long fullApplyTransactionMaxBytes,
             Duration leaseSafetyMargin, Duration metricInterval) {
@@ -96,6 +101,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         this.sync = sync;
         this.reporter = reporter;
         this.spoolKeys = spoolKeys;
+        this.endpoints = endpoints;
         this.json = json;
         this.dataDirectory = dataDirectory;
         this.segmentBytes = segmentBytes;
@@ -127,17 +133,19 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         try {
             sourceProfile = profiles.get(originalTask.sourceClusterId());
             targetProfile = profiles.get(originalTask.targetClusterId());
-            if (sourceProfile.mode() != ClusterMode.STANDALONE || targetProfile.mode() != ClusterMode.STANDALONE)
+            if (sourceProfile.mode() == ClusterMode.CLUSTER || targetProfile.mode() == ClusterMode.CLUSTER)
                 throw new SyncBlockedException("BLOCKED_UNSUPPORTED_TOPOLOGY",
-                        "this runner currently supports Standalone to Standalone only");
+                        "this runner currently supports Standalone and Sentinel data nodes");
+            sourceEndpoint = endpoints.resolvePrimary(sourceProfile);
+            targetEndpoint = endpoints.resolvePrimary(targetProfile);
             filter = new KeyFilter(patterns(originalTask.includePatternsJson()),
                     patterns(originalTask.excludePatternsJson()));
             planner = new CommandPlanner(filter, false, heartbeatKey);
             prepareSpool();
-            target = new TargetCommandSession(targetProfile, originalTask.targetDb(), originalTask.id(),
+            target = new TargetCommandSession(targetProfile, targetEndpoint, originalTask.targetDb(), originalTask.id(),
                     connectTimeout);
-            heartbeatSource = new TargetCommandSession(sourceProfile, originalTask.sourceDb(), originalTask.id(),
-                    connectTimeout);
+            heartbeatSource = new TargetCommandSession(sourceProfile, sourceEndpoint, originalTask.sourceDb(),
+                    originalTask.id(), connectTimeout);
             target.assertReservedNamespaceAvailable();
             Optional<TargetCheckpoint> checkpoint = target.checkpoint();
             if (checkpoint.isPresent()) {
@@ -192,7 +200,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             throw new IllegalStateException("a recovery runner must be resumed");
         try {
             publishTargetFence("FULL_SYNCING");
-            source = new SourceReplicationSession(sourceProfile, connectTimeout);
+            source = openSource();
             ReplicationReply reply = source.start(sourceProfile, null, -1);
             if (!(reply instanceof ReplicationReply.FullResync full))
                 throw new SyncBlockedException("BLOCKED_REQUIRES_FULL_RESYNC",
@@ -301,10 +309,9 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                 appliedOffset.set(checkpoint.appliedOffset());
                 receivedOffset.accumulateAndGet(checkpoint.appliedOffset(), Math::max);
                 sourceDatabase = checkpoint.sourceDatabase();
-                TargetCheckpoint adopted = target.apply(List.of(),
+                TargetCheckpoint adopted = applyTarget(List.of(),
                         new TargetCheckpoint(originalTask.fullSyncEpoch(), generation, replicationId,
-                                checkpoint.appliedOffset(), sourceDatabase, Instant.now()),
-                        targetFence, leaseGuard);
+                                checkpoint.appliedOffset(), sourceDatabase, Instant.now()));
                 appliedOffset.set(adopted.appliedOffset());
                 receivedOffset.accumulateAndGet(adopted.appliedOffset(), Math::max);
                 replaySpool();
@@ -347,8 +354,9 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         int restoreConcurrency = taskFullApplyConcurrency();
         int restoreQueueCapacity = Math.max(fullApplyQueueCapacity, restoreConcurrency);
         try (var input = spool.openRdb()) {
-            try (var restores = new FullRestorePool(targetProfile, originalTask.targetDb(), originalTask.id(),
-                    connectTimeout, restoreConcurrency, restoreQueueCapacity, taskFullApplyPipelineSize(),
+            try (var restores = new FullRestorePool(targetProfile, endpoints, originalTask.targetDb(),
+                    originalTask.id(), connectTimeout, restoreConcurrency, restoreQueueCapacity,
+                    taskFullApplyPipelineSize(),
                     fullApplyTransactionMaxBytes, targetFence, leaseGuard,
                     this::waitForApplyPermission, this::targetApplyFinished)) {
                 try {
@@ -362,10 +370,9 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             }
         }
         sourceDatabase = 0;
-        TargetCheckpoint checkpoint = target.apply(List.of(),
+        TargetCheckpoint checkpoint = applyTarget(List.of(),
                 new TargetCheckpoint(originalTask.fullSyncEpoch(), generation, replicationId,
-                        baseOffset, sourceDatabase, Instant.now()),
-                targetFence, leaseGuard);
+                        baseOffset, sourceDatabase, Instant.now()));
         appliedOffset.set(checkpoint.appliedOffset());
         spool.discardFullRdb();
         updateChannel("INCR_SYNCING");
@@ -383,7 +390,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             } else if (event instanceof RdbEvent.FunctionLibrary function) {
                 waitForApplyPermission();
                 try {
-                    target.loadFunction(function.payload(), targetFence, leaseGuard);
+                    loadFunction(function.payload());
                 } finally {
                     targetApplyFinished();
                 }
@@ -411,6 +418,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                 currentSource.acknowledge(command.endOffset());
                 applyQueue.put(command);
                 maybeWriteHeartbeat();
+                refreshSourceMasterIfNeeded();
                 while (!cancelled.get() && spool.bytes() >= limits.spoolLimitBytes() * 9 / 10)
                     Thread.sleep(100);
                 updateChannelThrottled("RUNNING");
@@ -419,6 +427,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                     return;
                 try {
                     maybeWriteHeartbeat();
+                    refreshSourceMasterIfNeeded();
                 } catch (IOException heartbeatFailure) {
                     fail(heartbeatFailure);
                     return;
@@ -507,7 +516,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             return;
         TargetCheckpoint checkpoint = new TargetCheckpoint(originalTask.fullSyncEpoch(), generation,
                 replicationId, last.endOffset(), sourceDatabase, Instant.now());
-        TargetCheckpoint committed = target.apply(planned, checkpoint, targetFence, leaseGuard);
+        TargetCheckpoint committed = applyTarget(planned, checkpoint);
         appliedOffset.set(committed.appliedOffset());
         if (appliedHeartbeat > 0)
             lastAppliedHeartbeatMillis = appliedHeartbeat;
@@ -525,7 +534,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private void connectPartial() throws IOException {
         leaseGuard.assertValid();
         closeSource();
-        source = new SourceReplicationSession(sourceProfile, connectTimeout);
+        source = openSource();
         long offset = appliedOffset.get();
         ReplicationReply reply = source.start(sourceProfile, replicationId, offset);
         if (!(reply instanceof ReplicationReply.Continue continued))
@@ -542,7 +551,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         leaseGuard.assertValid();
         long offset = receivedOffset.get();
         closeSource();
-        source = new SourceReplicationSession(sourceProfile, connectTimeout);
+        source = openSource();
         ReplicationReply reply = source.start(sourceProfile, replicationId, offset);
         if (!(reply instanceof ReplicationReply.Continue continued))
             throw new SyncBlockedException("BLOCKED_REQUIRES_FULL_RESYNC",
@@ -588,7 +597,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
 
     private void updateChannel(String status) {
         sync.upsertChannel(new SyncChannelCheckpoint(null, originalTask.id(), CHANNEL,
-                sourceProfile.seedEndpoints().get(0), null, replicationId, receivedOffset.get(),
+                sourceEndpoint.host() + ":" + sourceEndpoint.port(), null, replicationId, receivedOffset.get(),
                 appliedOffset.get(), status, Instant.now(), Instant.now()));
     }
 
@@ -688,8 +697,98 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         if (now - lastHeartbeatWriteNanos < TimeUnit.SECONDS.toNanos(1))
             return;
         leaseGuard.assertValid();
-        heartbeatSource.writeHeartbeat(System.currentTimeMillis());
+        try {
+            heartbeatSource.writeHeartbeat(System.currentTimeMillis());
+        } catch (IOException error) {
+            reopenHeartbeatSource();
+            heartbeatSource.writeHeartbeat(System.currentTimeMillis());
+        }
         lastHeartbeatWriteNanos = now;
+    }
+
+    private SourceReplicationSession openSource() throws IOException {
+        RedisEndpoint previous = sourceEndpoint;
+        sourceEndpoint = endpoints.resolvePrimary(sourceProfile);
+        if (previous != null && !previous.equals(sourceEndpoint)) {
+            sync.appendTaskEvent(originalTask.id(), "sync:" + targetFence.workerId(),
+                    "SOURCE_MASTER_CHANGED from=" + address(previous) + " to=" + address(sourceEndpoint));
+        }
+        return new SourceReplicationSession(sourceProfile, sourceEndpoint, connectTimeout);
+    }
+
+    private TargetCheckpoint applyTarget(List<CommandPlan.PlannedCommand> commands, TargetCheckpoint checkpoint)
+            throws IOException {
+        try {
+            return target.apply(commands, checkpoint, targetFence, leaseGuard);
+        } catch (IOException | RespProtocolException error) {
+            reopenTarget();
+            Optional<TargetCheckpoint> current = target.checkpoint();
+            if (current.isPresent() && current.get().epoch().equals(checkpoint.epoch())
+                    && current.get().appliedOffset() >= checkpoint.appliedOffset())
+                return current.get();
+            return target.apply(commands, checkpoint, targetFence, leaseGuard);
+        }
+    }
+
+    private void loadFunction(byte[] payload) throws IOException {
+        try {
+            target.loadFunction(payload, targetFence, leaseGuard);
+        } catch (IOException | RespProtocolException error) {
+            reopenTarget();
+            target.loadFunction(payload, targetFence, leaseGuard);
+        }
+    }
+
+    private void reopenTarget() throws IOException {
+        closeQuietly(target);
+        RedisEndpoint previous = targetEndpoint;
+        targetEndpoint = endpoints.resolvePrimary(targetProfile);
+        target = new TargetCommandSession(targetProfile, targetEndpoint, originalTask.targetDb(),
+                originalTask.id(), connectTimeout);
+        if (previous != null && !previous.equals(targetEndpoint)) {
+            sync.appendTaskEvent(originalTask.id(), "sync:" + targetFence.workerId(),
+                    "TARGET_MASTER_CHANGED from=" + address(previous) + " to=" + address(targetEndpoint));
+        }
+    }
+
+    private void reopenHeartbeatSource() throws IOException {
+        closeQuietly(heartbeatSource);
+        RedisEndpoint current = endpoints.resolvePrimary(sourceProfile);
+        sourceEndpoint = current;
+        heartbeatSource = new TargetCommandSession(sourceProfile, current, originalTask.sourceDb(),
+                originalTask.id(), connectTimeout);
+    }
+
+    private void refreshSourceMasterIfNeeded() throws IOException {
+        if (sourceProfile.mode() != ClusterMode.SENTINEL)
+            return;
+        long now = System.nanoTime();
+        if (now - lastSourceMasterCheckNanos < TimeUnit.SECONDS.toNanos(1))
+            return;
+        lastSourceMasterCheckNanos = now;
+        RedisEndpoint current = endpoints.resolvePrimary(sourceProfile);
+        if (current.equals(sourceEndpoint))
+            return;
+        long offset = receivedOffset.get();
+        closeSource();
+        RedisEndpoint previous = sourceEndpoint;
+        sourceEndpoint = current;
+        source = new SourceReplicationSession(sourceProfile, sourceEndpoint, connectTimeout);
+        ReplicationReply reply = source.start(sourceProfile, replicationId, offset);
+        if (!(reply instanceof ReplicationReply.Continue continued))
+            throw new SyncBlockedException("BLOCKED_REQUIRES_FULL_RESYNC",
+                    "new Sentinel master cannot continue from the current replication offset");
+        if (continued.replicationId() != null)
+            replicationId = continued.replicationId();
+        source.continueCommands(offset);
+        source.readTimeout(Duration.ofSeconds(1));
+        reopenHeartbeatSource();
+        sync.appendTaskEvent(originalTask.id(), "sync:" + targetFence.workerId(),
+                "SOURCE_MASTER_CHANGED from=" + address(previous) + " to=" + address(sourceEndpoint));
+    }
+
+    private static String address(RedisEndpoint endpoint) {
+        return endpoint.host() + ":" + endpoint.port();
     }
 
     private List<String> patterns(String value) {
@@ -802,7 +901,13 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         try {
             leaseGuard.assertValid();
             phase = "FENCE_PUBLISHING";
-            TargetCommandSession.FencePublication publication = target.publishFence(targetFence, leaseGuard);
+            TargetCommandSession.FencePublication publication;
+            try {
+                publication = target.publishFence(targetFence, leaseGuard);
+            } catch (IOException error) {
+                reopenTarget();
+                publication = target.publishFence(targetFence, leaseGuard);
+            }
             checkpointAtFence = publication.checkpoint();
             String action = spoolFallback ? "RECOVERING_PSYNC" : recoveryAction;
             sync.updateRuntimeObservation(originalTask.id(), targetFence.workerId(), "FENCE_PUBLISHED",

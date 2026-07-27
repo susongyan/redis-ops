@@ -203,7 +203,8 @@ class StandaloneSyncTaskRunnerIntegrationTest {
     private StandaloneSyncTaskRunner runner(SyncTask task, boolean recovery,
             RedisConnectionProfileProvider profiles, String keyRing) {
         return new StandaloneSyncTaskRunner(task, recovery, profiles, mock(SyncRepository.class),
-                mock(SyncRunnerStateReporter.class), new SpoolKeyProvider(keyRing), new ObjectMapper(),
+                mock(SyncRunnerStateReporter.class), new SpoolKeyProvider(keyRing),
+                new RedisDataEndpointResolver(5000), new ObjectMapper(),
                 dataDirectory, 1024 * 1024, Duration.ofSeconds(5), 4, 32, 8,
                 4 * 1024 * 1024L, Duration.ofSeconds(2), Duration.ofSeconds(1));
     }

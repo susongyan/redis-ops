@@ -18,11 +18,13 @@ public class SyncPrecheckExecutor {
     private final TopologyDiscoveryPort topology;
     private final SyncRepository sync;
     private final ObjectMapper json;
+    private final RedisDataEndpointResolver endpoints;
     private final Path dataDirectory;
     private final long segmentBytes;
 
     public SyncPrecheckExecutor(ClusterRepository clusters, RedisConnectionProfileProvider profiles,
             TopologyDiscoveryPort topology, SyncRepository sync, ObjectMapper json,
+            RedisDataEndpointResolver endpoints,
             @Value("${sync.engine.data-dir:./data/sync}") Path dataDirectory,
             @Value("${sync.engine.segment-bytes:268435456}") long segmentBytes) {
         this.clusters = clusters;
@@ -30,6 +32,7 @@ public class SyncPrecheckExecutor {
         this.topology = topology;
         this.sync = sync;
         this.json = json;
+        this.endpoints = endpoints;
         this.dataDirectory = dataDirectory;
         this.segmentBytes = segmentBytes;
     }
@@ -97,14 +100,14 @@ public class SyncPrecheckExecutor {
     private String supportedTopology(SyncTask task) {
         RedisCluster source = clusters.findById(task.sourceClusterId()).orElseThrow();
         RedisCluster target = clusters.findById(task.targetClusterId()).orElseThrow();
-        if (source.mode() != ClusterMode.STANDALONE || target.mode() != ClusterMode.STANDALONE)
-            throw new IllegalStateException("native runner currently supports Standalone to Standalone only");
-        return "STANDALONE -> STANDALONE";
+        if (source.mode() == ClusterMode.CLUSTER || target.mode() == ClusterMode.CLUSTER)
+            throw new IllegalStateException("native runner currently supports Standalone and Sentinel only");
+        return source.mode() + " -> " + target.mode();
     }
     private String reservedNamespace(SyncTask task) throws Exception {
         try (RedisConnectionProfile profile = profiles.get(task.targetClusterId());
-                TargetCommandSession target = new TargetCommandSession(profile, task.targetDb(), task.id(),
-                        java.time.Duration.ofSeconds(10))) {
+                TargetCommandSession target = new TargetCommandSession(profile, endpoints.resolvePrimary(profile),
+                        task.targetDb(), task.id(), java.time.Duration.ofSeconds(10))) {
             target.assertReservedNamespaceAvailable();
             return "no conflicting __redis_ops_sync_* keys";
         }

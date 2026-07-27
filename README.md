@@ -1,6 +1,8 @@
 # Redis Governance Platform
 
-Redis 轻量级运维治理平台。当前优先完成 Phase 1 的 Redis 资源管理：集群及内置连接认证、应用与绑定、节点快照和异步拓扑发现。同步任务将在资源管理完成后继续设计；RBAC 暂不实现。
+Redis 轻量级运维治理平台。Phase 1 已完成 Redis 资产管理，并正在实现自研同步数据面：
+Standalone 全量/增量闭环已经可运行，Sentinel 单通道与 failover 重连代码已经完成，
+Cluster 多 master 通道仍在建设中。RBAC 暂不实现。
 
 ## 工程结构
 
@@ -12,6 +14,8 @@ redis-governance-platform
 ├── governance-infrastructure  # MyBatis、Redis/同步工具适配器
 ├── governance-api             # REST API、DTO、统一异常处理
 ├── governance-bootstrap       # API 与异步任务单进程启动入口
+├── governance-sync-protocol   # 自研 RESP、PSYNC、RDB 和命令规划
+├── governance-sync-service    # 独立同步 Worker、租约、spool、checkpoint 和指标
 ├── docs                       # 架构、ER 与任务拆分
 └── sql                        # 数据库 migration
 ```

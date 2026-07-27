@@ -27,7 +27,11 @@ public final class TargetCommandSession implements AutoCloseable {
 
     public TargetCommandSession(RedisConnectionProfile profile, int database, long taskId, Duration connectTimeout)
             throws IOException {
-        RedisEndpoint endpoint = RedisEndpoint.parse(profile.seedEndpoints().get(0));
+        this(profile, RedisEndpoint.parse(profile.seedEndpoints().get(0)), database, taskId, connectTimeout);
+    }
+
+    public TargetCommandSession(RedisConnectionProfile profile, RedisEndpoint endpoint, int database,
+            long taskId, Duration connectTimeout) throws IOException {
         socket = new Socket();
         socket.setKeepAlive(true);
         socket.setTcpNoDelay(true);

@@ -1,6 +1,7 @@
 package io.github.redisops.sync.engine;
 
 import io.github.redisops.domain.asset.RedisConnectionProfile;
+import io.github.redisops.sync.protocol.RespProtocolException;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -14,6 +15,7 @@ final class FullRestorePool implements AutoCloseable {
     private static final RestoreItem STOP = new RestoreItem(null);
 
     private final RedisConnectionProfile profile;
+    private final RedisDataEndpointResolver endpoints;
     private final int database;
     private final long taskId;
     private final Duration connectTimeout;
@@ -29,7 +31,8 @@ final class FullRestorePool implements AutoCloseable {
     private final AtomicReference<Throwable> failure = new AtomicReference<>();
     private final AtomicBoolean completed = new AtomicBoolean();
 
-    FullRestorePool(RedisConnectionProfile profile, int database, long taskId, Duration connectTimeout,
+    FullRestorePool(RedisConnectionProfile profile, RedisDataEndpointResolver endpoints, int database,
+            long taskId, Duration connectTimeout,
             int concurrency, int queueCapacity, int pipelineSize, long transactionMaxBytes,
             TargetFence fence, LeaseGuard leaseGuard, Runnable beforeApply, Runnable afterApply) {
         if (concurrency < 1 || concurrency > 64)
@@ -41,6 +44,7 @@ final class FullRestorePool implements AutoCloseable {
         if (transactionMaxBytes < 1024)
             throw new IllegalArgumentException("full restore transaction max bytes must be at least 1024");
         this.profile = profile;
+        this.endpoints = endpoints;
         this.database = database;
         this.taskId = taskId;
         this.connectTimeout = connectTimeout;
@@ -103,7 +107,7 @@ final class FullRestorePool implements AutoCloseable {
     }
 
     private void runWorker(int lane) {
-        try (TargetCommandSession session = new TargetCommandSession(profile, database, taskId, connectTimeout)) {
+        try {
             List<TargetCommandSession.RestoreRequest> batch = new ArrayList<>(pipelineSize);
             RestoreItem carry = null;
             while (!Thread.currentThread().isInterrupted()) {
@@ -132,7 +136,7 @@ final class FullRestorePool implements AutoCloseable {
                 }
                 beforeApply.run();
                 try {
-                    session.restoreBatch(batch, fence, lane, leaseGuard);
+                    restoreBatch(batch, lane);
                 } finally {
                     afterApply.run();
                     batch.clear();
@@ -145,6 +149,22 @@ final class FullRestorePool implements AutoCloseable {
         } catch (Throwable error) {
             failure.compareAndSet(null, error);
         }
+    }
+
+    private void restoreBatch(List<TargetCommandSession.RestoreRequest> batch, int lane) throws IOException {
+        Exception last = null;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            leaseGuard.assertValid();
+            RedisEndpoint endpoint = endpoints.resolvePrimary(profile);
+            try (TargetCommandSession session = new TargetCommandSession(profile, endpoint, database,
+                    taskId, connectTimeout)) {
+                session.restoreBatch(batch, fence, lane, leaseGuard);
+                return;
+            } catch (IOException | RespProtocolException error) {
+                last = error;
+            }
+        }
+        throw new IOException("target master remained unavailable during full restore", last);
     }
 
     private void ensureHealthy() throws IOException {

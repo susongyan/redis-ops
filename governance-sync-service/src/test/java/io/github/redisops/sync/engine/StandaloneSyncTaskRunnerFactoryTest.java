@@ -27,7 +27,8 @@ class StandaloneSyncTaskRunnerFactoryTest {
 
     private static StandaloneSyncTaskRunnerFactory factory(int concurrency, int queueCapacity,
             int pipelineSize) {
-        return new StandaloneSyncTaskRunnerFactory(null, null, null, null, null,
+        return new StandaloneSyncTaskRunnerFactory(null, null, null, null,
+                new RedisDataEndpointResolver(1000), null,
                 Path.of("data"), 1024, 1000, concurrency, queueCapacity, pipelineSize,
                 4 * 1024 * 1024L, 2000, 1000);
     }

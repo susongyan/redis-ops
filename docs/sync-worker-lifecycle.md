@@ -242,7 +242,8 @@ checkpoint 原子提交。暂停时所有目标连接共用同一个写入闸门
 5. 按目标节点或 slot 批量应用业务命令。
 6. 业务命令和目标 checkpoint 在同一个原子提交中完成。
 7. checkpoint 成功后推进 applied offset，并删除不再需要的 spool segment。
-8. 每 5 秒将低频 channel 和 metric 摘要写入 MySQL。
+8. 默认每 1 秒将 channel 和 metric 摘要写入 MySQL；可通过
+   `SYNC_ENGINE_METRIC_INTERVAL_MS` 调整。
 
 所有通道连续三个采样周期满足目标 RPO，且指标新鲜度、时钟偏差合格时进入 `CAUGHT_UP`。
 
@@ -433,10 +434,20 @@ Worker 只报告“最终 offset 已追平”，不自行交换关系，也不�
 - 每任务 RPO 心跳、received/applied offset、吞吐、spool 和低频指标摘要。
 - 无认证和 ACL 的真实 Redis 集成测试，覆盖全量数据类型、TTL、Stream Group、增量
   `INCR/LPUSH`、暂停恢复和新 generation 接管。
+- Standalone/Sentinel 任意组合的单数据通道执行：Worker 通过 Sentinel
+  `GET-MASTER-ADDR-BY-NAME` 解析当前数据节点，不会把 Sentinel 控制端口当作 Redis 数据端口。
+- Sentinel 源端每秒核对当前 master，即使旧连接未断开也会切换到新 master，并优先使用
+  `PSYNC replId offset` 继续；backlog 或 replId 不兼容时安全进入
+  `BLOCKED_REQUIRES_FULL_RESYNC`。
+- Sentinel 目标端连接失败或旧主返回只读错误时重新解析当前 master；增量恢复先读取目标
+  checkpoint，解决 `EXEC` 已提交但响应丢失的歧义，全量 RESTORE 则依靠
+  `REPLACE ABSTTL` 安全重放。
 
 当前尚未具备：
 
-- Sentinel failover、Cluster 多 master 通道和任意目标路由。
+- Sentinel 源、目标真实 failover 容器演练；当前协议、解析、周期 master 检查和安全重连代码
+  已完成，但上线验收仍需验证 Sentinel 选主、旧主降级和 backlog 续传。
+- Cluster 多 master 通道、每 slot checkpoint/fence 和任意目标 slot 路由。
 - Redis 5.0、6.2、8.0、8.4 的容器矩阵和 golden RDB fixture；当前真实验收使用 Redis
   7.4，其他版本主要由协议单测和解析器兼容代码覆盖。
 - 100 GB 全量和持续 5 万 ops/s 性能基准；当前 RDB 按 Key 流式处理，但单个超大 Key
@@ -448,8 +459,9 @@ Worker 只报告“最终 offset 已追平”，不自行交换关系，也不�
 - 完整预检查、逐节点清空阶段幂等事件和主备切换闭环验收。
 - TLS、Module 数据和 Active-Active；它们仍按首期范围明确不支持。
 
-因此当前代码已经达到 M2 的 Standalone 功能闭环，可以执行真实全量、持续增量、暂停恢复
-和 checkpoint 续传；尚不应宣称达到多版本、100 GB/5 万 ops/s 和高可用拓扑的生产验收。
+因此当前代码已经达到 M2 的 Standalone 功能闭环，并具备 Sentinel 单通道运行实现；在完成
+Sentinel 真实 failover、Cluster 多通道、多版本、100 GB/5 万 ops/s 和故障矩阵前，尚不应
+宣称完成高可用拓扑的生产验收。
 
 ## 14. 分阶段验收
 
@@ -473,6 +485,8 @@ Worker 只报告“最终 offset 已追平”，不自行交换关系，也不�
 - Sentinel master 切换自动重连。
 - Cluster 每 master 独立通道并正确路由目标 slot。
 - 多实例接管、磁盘满和 MySQL 中断测试通过。
+
+当前状态：Sentinel 执行与重连代码完成，真实 failover 演练待补；Cluster 尚未完成。
 
 ### M4：切换验收
 

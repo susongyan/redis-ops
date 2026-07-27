@@ -1,6 +1,9 @@
 # Redis 同步 RPO 计算与切换判定
 
-本文用于后续接入 RedisShake 或其他同步工具时，统一 RPO、Offset、Backlog 和追平时间的定义与计算方式。当前平台的 `lastRpoSeconds` 仍由状态推进接口提交，尚未实现自动采集；后续同步适配器应按照本文模型上报。
+本文用于统一自研同步 Worker 的 RPO、Offset、Backlog 和追平时间定义。当前 Worker 已经每秒
+写入任务专属源端心跳，并在心跳经过真实复制链路应用到目标后生成
+`timestampLagSeconds`、`offsetGapBytes`、吞吐和 ETA 样本；主备切换读取最近三个连续样本，
+不再依赖人工推进状态或手工提交 `lastRpoSeconds`。
 
 ## 1. 指标定义
 
@@ -176,11 +179,13 @@ API、数据库和监控指标应保留 `calculationMethod` 与采集时间，�
 
 后续同步模块可分阶段实现：
 
-1. 同步适配器上报源/目标 Offset、Backlog、吞吐和采集时间。
-2. 增加心跳水位写入与目标端读取，形成实测时间延迟。
-3. 增加 RPO 样本表或时序指标，保留最近趋势而不是只保存 `lastRpoSeconds`。
+1. 持续完善源/目标 Offset、Backlog、吞吐和采集时间的采集精度。
+2. 为 Cluster 每个源 master 建立独立心跳和通道指标，任务 RPO 取最大值。
+3. 将当前 MySQL 低频样本同时导出到 Prometheus，保留更长趋势。
 4. 页面展示目标 RPO、当前 RPO、计算方式、指标新鲜度、Backlog 和追平 ETA。
 5. 增加连续达标、指标过期、无法追平和时钟异常告警。
-6. 将受控切换前置检查改为读取最近一段时间的样本，替换当前手工填写 `lastRpoSeconds` 的方式。
+6. 在 Sentinel/Cluster 和真实跨机房演练中验证连续样本、指标新鲜度与时钟偏差门槛。
 
-当前阶段的 `desiredRpoSeconds` 已用于 `CAUGHT_UP` 状态和主备切换校验，但 `lastRpoSeconds` 仍是人工输入值，只能视为流程占位，不能视为平台已经自动保证 RPO。
+当前 `desiredRpoSeconds` 已用于 `CAUGHT_UP` 和主备切换校验。切换要求最近三个样本均不超过
+目标 RPO、每个样本新鲜度不超过 5 秒、相邻采样间隔不超过 2.5 秒，且源时钟超前不得超过
+2 秒。缺少样本、样本过期或时钟异常都会阻止切换。
