@@ -17,9 +17,11 @@ M1“资产闭环”已经完成并通过本地真实环境验收。完成范围
 
 Phase 1 整体尚未完成。M2 已选择自研 Java 同步引擎：Standalone 全量 RDB、增量 RESP、
 加密 spool、目标 checkpoint/fence、租约接管、暂停恢复、RPO 指标及任务页面已经形成闭环；
-Sentinel 单通道选主与 failover 重连代码已经完成。Cluster 多 master/slot 路由、多版本与
-性能故障矩阵仍是退出项。Standalone 已通过 Redis 5.0、6.2、7.4、8.0、8.4 同版本容器
-矩阵；跨版本、Sentinel/Cluster 和压力故障矩阵仍待完成。RBAC 按既定决定延期。
+Sentinel 单通道选主与 failover 重连代码已经完成。Cluster 每 master 独立 PSYNC、加密
+spool、RDB `SLOT_INFO`、目标 Slot 路由、每 Slot checkpoint/fence、保守通道 cursor 和接管
+恢复已经形成闭环，并通过 Cluster→Cluster、Standalone→Cluster、Cluster→Standalone
+真实容器验收。Standalone 已通过 Redis 5.0、6.2、7.4、8.0、8.4 同版本容器矩阵；跨版本、
+Sentinel failover、Cluster 多版本和性能故障矩阵仍是退出项。RBAC 按既定决定延期。
 
 ## 1. 里程碑
 
@@ -58,7 +60,7 @@ Sentinel 单通道选主与 failover 重连代码已经完成。Cluster 多 mast
 | P1-204 | Pre-check 流程 | 连通性/源目标/版本/容量规则及报告 | 105,202,203 | 3d |
 | P1-205 | 同步控制 Worker | 操作 job、幂等、失败映射、审计 | 008,202,204 | 4d |
 | P1-206 | 状态与指标轮询 | 工具状态映射、卡住识别、事件历史 | 205 | 3d |
-| P1-207 | 自研同步引擎（进行中） | Standalone 已闭环、Sentinel 代码完成；Cluster 与上线矩阵待完成 | 202 | 4d |
+| P1-207 | 自研同步引擎（进行中） | Standalone/Cluster 功能闭环、Sentinel 代码完成；高可用与上线矩阵待完成 | 202 | 4d |
 | P1-208 | 同步任务前端 | 创建向导、检查报告、动作按钮、时间线 | 203–207 | 5d |
 | P1-301 | 可观测性 | Actuator/Prometheus 指标、结构化日志、面板 | 105,205 | 2d |
 | P1-302 | E2E 与故障测试 | 重复点击、Worker 宕机、DB 锁冲突、工具超时 | 108,208 | 4d |

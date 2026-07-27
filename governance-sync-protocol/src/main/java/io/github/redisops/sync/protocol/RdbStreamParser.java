@@ -17,14 +17,16 @@ public final class RdbStreamParser {
             TYPE_LIST_QUICKLIST_2 = 18, TYPE_STREAM_LISTPACKS_2 = 19, TYPE_SET_LISTPACK = 20,
             TYPE_STREAM_LISTPACKS_3 = 21, TYPE_HASH_METADATA_PRE_GA = 22, TYPE_HASH_LISTPACK_EX_PRE_GA = 23,
             TYPE_HASH_METADATA = 24, TYPE_HASH_LISTPACK_EX = 25;
-    private static final int OPCODE_FUNCTION2 = 245, OPCODE_FUNCTION_PRE_GA = 246, OPCODE_MODULE_AUX = 247,
-            OPCODE_IDLE = 248, OPCODE_FREQ = 249, OPCODE_AUX = 250, OPCODE_RESIZEDB = 251,
-            OPCODE_EXPIRETIME_MS = 252, OPCODE_EXPIRETIME = 253, OPCODE_SELECTDB = 254, OPCODE_EOF = 255;
+    private static final int OPCODE_SLOT_INFO = 244, OPCODE_FUNCTION2 = 245, OPCODE_FUNCTION_PRE_GA = 246,
+            OPCODE_MODULE_AUX = 247, OPCODE_IDLE = 248, OPCODE_FREQ = 249, OPCODE_AUX = 250,
+            OPCODE_RESIZEDB = 251, OPCODE_EXPIRETIME_MS = 252, OPCODE_EXPIRETIME = 253,
+            OPCODE_SELECTDB = 254, OPCODE_EOF = 255;
 
     private final InputStream input;
     private int rdbVersion, database;
     private long expireAt = -1;
     private long crc;
+    private long position;
 
     public RdbStreamParser(InputStream input) {
         this.input = new BufferedInputStream(input, 64 * 1024);
@@ -69,6 +71,11 @@ public final class RdbStreamParser {
                 case OPCODE_RESIZEDB -> {
                     readLength(null);
                     readLength(null);
+                }
+                case OPCODE_SLOT_INFO -> {
+                    readLength(null); // slot ID
+                    readLength(null); // key count
+                    readLength(null); // expiring key count
                 }
                 case OPCODE_FUNCTION2 -> consumer.accept(new RdbEvent.FunctionLibrary(readString(null)));
                 case OPCODE_FUNCTION_PRE_GA ->
@@ -260,7 +267,8 @@ public final class RdbStreamParser {
     private int readUnsigned(OutputStream record) throws IOException {
         int value = input.read();
         if (value < 0)
-            throw new EOFException("truncated RDB");
+            throw truncated(1, 0);
+        position++;
         crc = RedisCrc64.update(crc, value);
         if (record != null)
             record.write(value);
@@ -271,7 +279,8 @@ public final class RdbStreamParser {
             throw new RespProtocolException("negative RDB length");
         byte[] value = input.readNBytes(length);
         if (value.length != length)
-            throw new EOFException("truncated RDB");
+            throw truncated(length, value.length);
+        position += value.length;
         crc = RedisCrc64.update(crc, value, 0, value.length);
         if (record != null)
             record.write(value);
@@ -281,8 +290,14 @@ public final class RdbStreamParser {
     private byte[] readExactRaw(int length) throws IOException {
         byte[] value = input.readNBytes(length);
         if (value.length != length)
-            throw new EOFException("truncated RDB");
+            throw truncated(length, value.length);
+        position += value.length;
         return value;
+    }
+
+    private EOFException truncated(int expected, int actual) {
+        return new EOFException("truncated RDB at byte " + position + ", expected " + expected
+                + " bytes but received " + actual);
     }
     private int readLittleEndianShort(OutputStream record) throws IOException {
         byte[] b = readExact(2, record);

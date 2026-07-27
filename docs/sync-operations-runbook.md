@@ -73,9 +73,20 @@ Redis 版本矩阵：
 ./scripts/sync-version-matrix.sh
 ```
 
+Cluster 三种拓扑转换：
+
+```bash
+./scripts/sync-cluster-it.sh
+```
+
+该脚本启动两套三主节点 Cluster 和一套双 Standalone 测试环境，验证
+Cluster→Cluster、Standalone→Cluster、Cluster→Standalone 的全量与增量；同时覆盖跨 Slot
+安全命令拆分、暂停恢复和新 generation 从目标 cursor/checkpoint 接管。
+
 必须另行完成：
 
 - Sentinel 旧主降级、新主提升和 PSYNC 续传演练。
+- Cluster 多版本、master failover 和在线 reshard 的失败关闭/恢复演练。
 - Worker 在 `WATCH` 后、`EXEC` 后、spool fsync 后的崩溃注入。
 - MySQL 中断超过租约安全窗口、磁盘满和双 Worker 竞争。
 - 100 GB 全量与持续 5 万 ops/s 基准；记录吞吐、RPO、ETA、CPU、GC 和 spool 趋势。

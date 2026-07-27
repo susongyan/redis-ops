@@ -18,6 +18,7 @@ final class FullRestorePool implements AutoCloseable {
     private final RedisDataEndpointResolver endpoints;
     private final int database;
     private final long taskId;
+    private final String channel;
     private final Duration connectTimeout;
     private final int pipelineSize;
     private final long transactionMaxBytes;
@@ -35,6 +36,14 @@ final class FullRestorePool implements AutoCloseable {
             long taskId, Duration connectTimeout,
             int concurrency, int queueCapacity, int pipelineSize, long transactionMaxBytes,
             TargetFence fence, LeaseGuard leaseGuard, Runnable beforeApply, Runnable afterApply) {
+        this(profile, endpoints, database, taskId, "standalone", connectTimeout, concurrency, queueCapacity,
+                pipelineSize, transactionMaxBytes, fence, leaseGuard, beforeApply, afterApply);
+    }
+
+    FullRestorePool(RedisConnectionProfile profile, RedisDataEndpointResolver endpoints, int database,
+            long taskId, String channel, Duration connectTimeout,
+            int concurrency, int queueCapacity, int pipelineSize, long transactionMaxBytes,
+            TargetFence fence, LeaseGuard leaseGuard, Runnable beforeApply, Runnable afterApply) {
         if (concurrency < 1 || concurrency > 64)
             throw new IllegalArgumentException("full restore concurrency must be between 1 and 64");
         if (queueCapacity < concurrency)
@@ -47,6 +56,7 @@ final class FullRestorePool implements AutoCloseable {
         this.endpoints = endpoints;
         this.database = database;
         this.taskId = taskId;
+        this.channel = channel;
         this.connectTimeout = connectTimeout;
         this.pipelineSize = pipelineSize;
         this.transactionMaxBytes = transactionMaxBytes;
@@ -157,7 +167,7 @@ final class FullRestorePool implements AutoCloseable {
             leaseGuard.assertValid();
             RedisEndpoint endpoint = endpoints.resolvePrimary(profile);
             try (TargetCommandSession session = new TargetCommandSession(profile, endpoint, database,
-                    taskId, connectTimeout)) {
+                    taskId, connectTimeout, channel)) {
                 session.restoreBatch(batch, fence, lane, leaseGuard);
                 return;
             } catch (IOException | RespProtocolException error) {

@@ -39,6 +39,24 @@ class RdbStreamParserTest {
     }
 
     @Test
+    void skipsClusterSlotMetadata() throws Exception {
+        var bytes = new java.io.ByteArrayOutputStream();
+        bytes.write("REDIS0012".getBytes(StandardCharsets.US_ASCII));
+        bytes.write(244);
+        bytes.write(0x40);
+        bytes.write(0x2a); // slot 42
+        bytes.write(3); // three keys
+        bytes.write(1); // one expiring key
+        bytes.write(255);
+        bytes.write(new byte[8]);
+        List<RdbEvent> events = new ArrayList<>();
+
+        new RdbStreamParser(new ByteArrayInputStream(bytes.toByteArray())).parse(events::add);
+
+        assertEquals(List.of(RdbEvent.End.INSTANCE), events);
+    }
+
+    @Test
     void rejectsChecksumMismatch() throws Exception {
         var bytes = new java.io.ByteArrayOutputStream();
         bytes.write("REDIS0009".getBytes(StandardCharsets.US_ASCII));

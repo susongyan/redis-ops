@@ -97,19 +97,43 @@ public class SyncPrecheckExecutor {
         validateDatabase(target.mode(), task.targetDb(), "targetDb");
         return task.sourceDb() + " -> " + task.targetDb();
     }
-    private String supportedTopology(SyncTask task) {
+    private String supportedTopology(SyncTask task) throws Exception {
         RedisCluster source = clusters.findById(task.sourceClusterId()).orElseThrow();
         RedisCluster target = clusters.findById(task.targetClusterId()).orElseThrow();
-        if (source.mode() == ClusterMode.CLUSTER || target.mode() == ClusterMode.CLUSTER)
-            throw new IllegalStateException("native runner currently supports Standalone and Sentinel only");
-        return source.mode() + " -> " + target.mode();
+        int sourceMasters = clusterMasters(task.sourceClusterId(), source.mode());
+        int targetMasters = clusterMasters(task.targetClusterId(), target.mode());
+        return source.mode() + " (" + sourceMasters + " channels) -> " + target.mode()
+                + " (" + targetMasters + " targets)";
+    }
+    private int clusterMasters(long clusterId, ClusterMode mode) throws Exception {
+        if (mode != ClusterMode.CLUSTER)
+            return 1;
+        try (RedisConnectionProfile profile = profiles.get(clusterId)) {
+            return new HashSet<>(endpoints.resolveClusterMasters(profile).stream()
+                    .map(RedisDataEndpointResolver.ClusterMaster::endpoint).toList()).size();
+        }
     }
     private String reservedNamespace(SyncTask task) throws Exception {
-        try (RedisConnectionProfile profile = profiles.get(task.targetClusterId());
-                TargetCommandSession target = new TargetCommandSession(profile, endpoints.resolvePrimary(profile),
-                        task.targetDb(), task.id(), java.time.Duration.ofSeconds(10))) {
-            target.assertReservedNamespaceAvailable();
-            return "no conflicting __redis_ops_sync_* keys";
+        try (RedisConnectionProfile profile = profiles.get(task.targetClusterId())) {
+            if (profile.mode() == ClusterMode.CLUSTER) {
+                int inspected = 0;
+                Set<RedisEndpoint> masters = new LinkedHashSet<>();
+                for (RedisDataEndpointResolver.ClusterMaster master : endpoints.resolveClusterMasters(profile))
+                    masters.add(master.endpoint());
+                for (RedisEndpoint master : masters) {
+                    try (TargetCommandSession target = TargetCommandSession.clusterSlot(profile, master, task.id(),
+                            java.time.Duration.ofSeconds(10), "precheck", 0)) {
+                        target.assertReservedNamespaceAvailable();
+                        inspected++;
+                    }
+                }
+                return "no conflicting __redis_ops_sync_* keys on " + inspected + " Cluster masters";
+            }
+            try (TargetCommandSession target = new TargetCommandSession(profile, endpoints.resolvePrimary(profile),
+                    task.targetDb(), task.id(), java.time.Duration.ofSeconds(10))) {
+                target.assertReservedNamespaceAvailable();
+                return "no conflicting __redis_ops_sync_* keys";
+            }
         }
     }
     private String spoolStorage() throws Exception {

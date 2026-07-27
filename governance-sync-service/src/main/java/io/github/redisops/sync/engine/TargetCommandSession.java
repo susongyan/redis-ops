@@ -32,6 +32,26 @@ public final class TargetCommandSession implements AutoCloseable {
 
     public TargetCommandSession(RedisConnectionProfile profile, RedisEndpoint endpoint, int database,
             long taskId, Duration connectTimeout) throws IOException {
+        this(profile, endpoint, database, connectTimeout, standaloneKeyspace(taskId, "standalone"), true);
+    }
+
+    TargetCommandSession(RedisConnectionProfile profile, RedisEndpoint endpoint, int database,
+            long taskId, Duration connectTimeout, String channel) throws IOException {
+        this(profile, endpoint, database, connectTimeout, standaloneKeyspace(taskId, channel), true);
+    }
+
+    static TargetCommandSession clusterSlot(RedisConnectionProfile profile, RedisEndpoint endpoint,
+            long taskId, Duration connectTimeout, String channel, int slot) throws IOException {
+        byte[] progress = ClusterSlotKeyspace.fullProgress(taskId, channel, slot, 0);
+        int separator = lastIndexOf(progress, (byte) ':');
+        Keyspace keyspace = new Keyspace(ClusterSlotKeyspace.checkpoint(taskId, channel, slot),
+                heartbeatKey(taskId, channel, slot), ClusterSlotKeyspace.fence(taskId, channel, slot),
+                java.util.Arrays.copyOf(progress, separator + 1));
+        return new TargetCommandSession(profile, endpoint, 0, connectTimeout, keyspace, false);
+    }
+
+    private TargetCommandSession(RedisConnectionProfile profile, RedisEndpoint endpoint, int database,
+            Duration connectTimeout, Keyspace keyspace, boolean selectDatabase) throws IOException {
         socket = new Socket();
         socket.setKeepAlive(true);
         socket.setTcpNoDelay(true);
@@ -39,20 +59,25 @@ public final class TargetCommandSession implements AutoCloseable {
                 Math.toIntExact(connectTimeout.toMillis()));
         codec = new RespCodec(new BufferedInputStream(socket.getInputStream(), 64 * 1024),
                 new BufferedOutputStream(socket.getOutputStream(), 64 * 1024));
-        checkpointKey = ("__redis_ops_sync_ckpt__:" + taskId + ":standalone")
-                .getBytes(StandardCharsets.US_ASCII);
-        heartbeatKey = ("__redis_ops_sync_hb__:" + taskId + ":standalone")
-                .getBytes(StandardCharsets.US_ASCII);
-        fenceKey = ("__redis_ops_sync_fence__:" + taskId + ":standalone")
-                .getBytes(StandardCharsets.US_ASCII);
-        fullProgressPrefix = ("__redis_ops_sync_full_progress__:" + taskId + ":")
-                .getBytes(StandardCharsets.US_ASCII);
+        checkpointKey = keyspace.checkpoint();
+        heartbeatKey = keyspace.heartbeat();
+        fenceKey = keyspace.fence();
+        fullProgressPrefix = keyspace.fullProgressPrefix();
         authenticate(profile);
-        expectOk(command("SELECT", Integer.toString(database)), "SELECT");
+        if (selectDatabase)
+            expectOk(command("SELECT", Integer.toString(database)), "SELECT");
     }
 
     public Optional<TargetCheckpoint> checkpoint() throws IOException {
         return checkpoint(command(bytes("GET"), checkpointKey));
+    }
+
+    Optional<TargetCheckpoint> checkpoint(long taskId, String channel, int slot) throws IOException {
+        return checkpoint(command(bytes("GET"), ClusterSlotKeyspace.checkpoint(taskId, channel, slot)));
+    }
+
+    Optional<TargetCheckpoint> cursor(long taskId, String channel, int slot) throws IOException {
+        return checkpoint(command(bytes("GET"), ClusterSlotKeyspace.cursor(taskId, channel, slot)));
     }
 
     public Optional<TargetFence> currentFence() throws IOException {
@@ -95,10 +120,24 @@ public final class TargetCommandSession implements AutoCloseable {
 
     public void restoreBatch(List<RestoreRequest> requests, TargetFence expectedFence, int lane,
             LeaseGuard leaseGuard) throws IOException {
+        restoreBatch(requests, expectedFence, lane, leaseGuard, fenceKey, fullProgressPrefix);
+    }
+
+    void restoreBatch(List<RestoreRequest> requests, TargetFence expectedFence, int lane,
+            LeaseGuard leaseGuard, long taskId, String channel, int slot) throws IOException {
+        byte[] progress = ClusterSlotKeyspace.fullProgress(taskId, channel, slot, 0);
+        restoreBatch(requests, expectedFence, lane, leaseGuard,
+                ClusterSlotKeyspace.fence(taskId, channel, slot),
+                java.util.Arrays.copyOf(progress, lastIndexOf(progress, (byte) ':') + 1));
+    }
+
+    private void restoreBatch(List<RestoreRequest> requests, TargetFence expectedFence, int lane,
+            LeaseGuard leaseGuard, byte[] operationFenceKey, byte[] operationProgressPrefix)
+            throws IOException {
         leaseGuard.assertValid();
-        expectOk(command(bytes("WATCH"), fenceKey), "WATCH");
+        expectOk(command(bytes("WATCH"), operationFenceKey), "WATCH");
         try {
-            assertFenceValue(command(bytes("GET"), fenceKey), expectedFence);
+            assertFenceValue(command(bytes("GET"), operationFenceKey), expectedFence);
             leaseGuard.assertValid();
             expectOk(command("MULTI"), "MULTI");
             for (RestoreRequest request : requests) {
@@ -106,7 +145,7 @@ public final class TargetCommandSession implements AutoCloseable {
                 codec.writeCommandBuffered(bytes("RESTORE"), request.key(), bytes(Long.toString(ttl)),
                         request.payload(), bytes("REPLACE"), bytes("ABSTTL"));
             }
-            byte[] progressKey = concat(fullProgressPrefix, bytes(Integer.toString(lane)));
+            byte[] progressKey = concat(operationProgressPrefix, bytes(Integer.toString(lane)));
             byte[] progress = bytes(expectedFence.generation() + "|" + requests.size() + "|"
                     + Instant.now().toEpochMilli());
             codec.writeCommandBuffered(bytes("SET"), progressKey, progress);
@@ -152,11 +191,29 @@ public final class TargetCommandSession implements AutoCloseable {
     }
 
     public FencePublication publishFence(TargetFence requested, LeaseGuard leaseGuard) throws IOException {
+        return publishFence(requested, leaseGuard, fenceKey, checkpointKey);
+    }
+
+    FencePublication publishFence(TargetFence requested, LeaseGuard leaseGuard, long taskId,
+            String channel, int slot) throws IOException {
+        return publishFence(requested, leaseGuard, ClusterSlotKeyspace.fence(taskId, channel, slot),
+                ClusterSlotKeyspace.checkpoint(taskId, channel, slot));
+    }
+
+    FencePublication publishCursorFence(TargetFence requested, LeaseGuard leaseGuard, long taskId,
+            String channel, int slot) throws IOException {
+        return publishFence(requested, leaseGuard, ClusterSlotKeyspace.fence(taskId, channel, slot),
+                ClusterSlotKeyspace.cursor(taskId, channel, slot));
+    }
+
+    private FencePublication publishFence(TargetFence requested, LeaseGuard leaseGuard,
+            byte[] operationFenceKey, byte[] operationCheckpointKey) throws IOException {
         for (int attempt = 0; attempt < 20; attempt++) {
             leaseGuard.assertValid();
-            expectOk(command(bytes("WATCH"), fenceKey, checkpointKey), "WATCH");
-            Optional<TargetFence> existingFence = fence(command(bytes("GET"), fenceKey));
-            Optional<TargetCheckpoint> existingCheckpoint = checkpoint(command(bytes("GET"), checkpointKey));
+            expectOk(command(bytes("WATCH"), operationFenceKey, operationCheckpointKey), "WATCH");
+            Optional<TargetFence> existingFence = fence(command(bytes("GET"), operationFenceKey));
+            Optional<TargetCheckpoint> existingCheckpoint = checkpoint(command(bytes("GET"),
+                    operationCheckpointKey));
             if (existingFence.isPresent()) {
                 TargetFence existing = existingFence.get();
                 if (!existing.epoch().equals(requested.epoch())) {
@@ -181,7 +238,7 @@ public final class TargetCommandSession implements AutoCloseable {
             }
             leaseGuard.assertValid();
             expectOk(command("MULTI"), "MULTI");
-            expectQueued(command(bytes("SET"), fenceKey, requested.encode()));
+            expectQueued(command(bytes("SET"), operationFenceKey, requested.encode()));
             RespValue result = command("EXEC");
             if (result == RespValue.NullValue.INSTANCE)
                 continue;
@@ -194,11 +251,32 @@ public final class TargetCommandSession implements AutoCloseable {
     public TargetCheckpoint apply(List<CommandPlan.PlannedCommand> commands, TargetCheckpoint next,
             TargetFence expectedFence, LeaseGuard leaseGuard)
             throws IOException {
+        return apply(commands, next, expectedFence, leaseGuard, fenceKey, checkpointKey);
+    }
+
+    TargetCheckpoint apply(List<CommandPlan.PlannedCommand> commands, TargetCheckpoint next,
+            TargetFence expectedFence, LeaseGuard leaseGuard, long taskId, String channel, int slot)
+            throws IOException {
+        return apply(commands, next, expectedFence, leaseGuard,
+                ClusterSlotKeyspace.fence(taskId, channel, slot),
+                ClusterSlotKeyspace.checkpoint(taskId, channel, slot));
+    }
+
+    TargetCheckpoint applyCursor(TargetCheckpoint next, TargetFence expectedFence, LeaseGuard leaseGuard,
+            long taskId, String channel, int slot) throws IOException {
+        return apply(List.of(), next, expectedFence, leaseGuard,
+                ClusterSlotKeyspace.fence(taskId, channel, slot),
+                ClusterSlotKeyspace.cursor(taskId, channel, slot));
+    }
+
+    private TargetCheckpoint apply(List<CommandPlan.PlannedCommand> commands, TargetCheckpoint next,
+            TargetFence expectedFence, LeaseGuard leaseGuard, byte[] operationFenceKey,
+            byte[] operationCheckpointKey) throws IOException {
         for (int attempt = 0; attempt < 20; attempt++) {
             leaseGuard.assertValid();
-            expectOk(command(bytes("WATCH"), fenceKey, checkpointKey), "WATCH");
-            assertFenceValue(command(bytes("GET"), fenceKey), expectedFence);
-            Optional<TargetCheckpoint> current = checkpoint(command(bytes("GET"), checkpointKey));
+            expectOk(command(bytes("WATCH"), operationFenceKey, operationCheckpointKey), "WATCH");
+            assertFenceValue(command(bytes("GET"), operationFenceKey), expectedFence);
+            Optional<TargetCheckpoint> current = checkpoint(command(bytes("GET"), operationCheckpointKey));
             TargetCheckpoint valueToWrite = next;
             if (current.isPresent()) {
                 TargetCheckpoint existing = current.get();
@@ -230,7 +308,7 @@ public final class TargetCommandSession implements AutoCloseable {
             expectOk(command("MULTI"), "MULTI");
             for (CommandPlan.PlannedCommand planned : commands)
                 expectQueued(command(planned.arguments().toArray(byte[][]::new)));
-            expectQueued(command(bytes("SET"), checkpointKey, valueToWrite.encode()));
+            expectQueued(command(bytes("SET"), operationCheckpointKey, valueToWrite.encode()));
             leaseGuard.assertValid();
             RespValue result = command("EXEC");
             if (result == RespValue.NullValue.INSTANCE)
@@ -360,6 +438,41 @@ public final class TargetCommandSession implements AutoCloseable {
         byte[] result = java.util.Arrays.copyOf(left, left.length + right.length);
         System.arraycopy(right, 0, result, left.length, right.length);
         return result;
+    }
+
+    private static Keyspace standaloneKeyspace(long taskId, String channel) {
+        String safeChannel = safeChannel(channel);
+        return new Keyspace(
+                bytes("__redis_ops_sync_ckpt__:{" + taskId + "}:" + safeChannel),
+                bytes("__redis_ops_sync_hb__:{" + taskId + "}:" + safeChannel),
+                bytes("__redis_ops_sync_fence__:{" + taskId + "}:" + safeChannel),
+                bytes("__redis_ops_sync_full_progress__:{" + taskId + "}:" + safeChannel + ":"));
+    }
+
+    private static byte[] heartbeatKey(long taskId, String channel, int slot) {
+        return ClusterSlotKeyspace.heartbeat(taskId, safeChannel(channel), slot);
+    }
+
+    private static String safeChannel(String channel) {
+        if (channel == null || channel.isBlank() || !channel.matches("[A-Za-z0-9._-]+"))
+            throw new IllegalArgumentException("invalid sync channel");
+        return channel;
+    }
+
+    private static int lastIndexOf(byte[] value, byte expected) {
+        for (int i = value.length - 1; i >= 0; i--)
+            if (value[i] == expected)
+                return i;
+        throw new IllegalArgumentException("full progress key has no separator");
+    }
+
+    private record Keyspace(byte[] checkpoint, byte[] heartbeat, byte[] fence, byte[] fullProgressPrefix) {
+        private Keyspace {
+            checkpoint = checkpoint.clone();
+            heartbeat = heartbeat.clone();
+            fence = fence.clone();
+            fullProgressPrefix = fullProgressPrefix.clone();
+        }
     }
 
     public record FencePublication(TargetFence fence, Optional<TargetCheckpoint> checkpoint) {

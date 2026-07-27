@@ -2,7 +2,7 @@
 
 Redis 轻量级运维治理平台。Phase 1 已完成 Redis 资产管理，并正在实现自研同步数据面：
 Standalone 全量/增量闭环已经可运行，Sentinel 单通道与 failover 重连代码已经完成，
-Cluster 多 master 通道仍在建设中。RBAC 暂不实现。
+Cluster 多 master 通道、目标 Slot 路由和安全接管已经形成闭环。RBAC 暂不实现。
 
 ## 工程结构
 
@@ -45,6 +45,13 @@ API、内置 Worker 和 Redis 的端到端资产验收：
 ```bash
 mvn package
 ./scripts/asset-smoke.sh
+```
+
+同步引擎的 Redis 版本矩阵和 Cluster 拓扑转换验收：
+
+```bash
+./scripts/sync-version-matrix.sh
+./scripts/sync-cluster-it.sh
 ```
 
 验收脚本会启动无认证 Standalone、ACL Standalone、Sentinel 和三主节点 Cluster，验证连通性、

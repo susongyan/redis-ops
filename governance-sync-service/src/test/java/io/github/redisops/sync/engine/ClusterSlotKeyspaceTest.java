@@ -18,7 +18,9 @@ class ClusterSlotKeyspaceTest {
             assertEquals(slot, RedisSlot.of(tag));
             tags.add(tag);
             assertEquals(slot, RedisSlot.of(ClusterSlotKeyspace.checkpoint(9, "source-a", slot)));
+            assertEquals(slot, RedisSlot.of(ClusterSlotKeyspace.cursor(9, "source-a", slot)));
             assertEquals(slot, RedisSlot.of(ClusterSlotKeyspace.fence(9, "source-a", slot)));
+            assertEquals(slot, RedisSlot.of(ClusterSlotKeyspace.heartbeat(9, "source-a", slot)));
             assertEquals(slot, RedisSlot.of(ClusterSlotKeyspace.fullProgress(9, "source-a", slot, 2)));
         }
         assertEquals(16384, tags.size());

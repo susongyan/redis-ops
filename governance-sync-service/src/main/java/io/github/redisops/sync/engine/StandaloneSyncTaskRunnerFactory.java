@@ -1,6 +1,8 @@
 package io.github.redisops.sync.engine;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.redisops.domain.asset.ClusterMode;
+import io.github.redisops.domain.asset.RedisConnectionProfile;
 import io.github.redisops.domain.asset.RedisConnectionProfileProvider;
 import io.github.redisops.domain.sync.SyncRepository;
 import io.github.redisops.domain.sync.SyncTask;
@@ -71,6 +73,13 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
 
     @Override
     public SyncTaskRunner create(SyncTask task, boolean recovery) {
+        try (RedisConnectionProfile source = profiles.get(task.sourceClusterId());
+                RedisConnectionProfile target = profiles.get(task.targetClusterId())) {
+            if (source.mode() == ClusterMode.CLUSTER || target.mode() == ClusterMode.CLUSTER)
+                return new ClusterSyncTaskRunner(task, recovery, profiles, sync, reporter, spoolKeys, endpoints, json,
+                        dataDirectory, segmentBytes, connectTimeout, fullApplyConcurrency, fullApplyQueueCapacity,
+                        fullApplyPipelineSize, fullApplyTransactionMaxBytes, leaseSafetyMargin, metricInterval);
+        }
         return new StandaloneSyncTaskRunner(task, recovery, profiles, sync, reporter, spoolKeys, endpoints, json,
                 dataDirectory, segmentBytes, connectTimeout, fullApplyConcurrency,
                 fullApplyQueueCapacity, fullApplyPipelineSize, fullApplyTransactionMaxBytes, leaseSafetyMargin,

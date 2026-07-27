@@ -39,9 +39,20 @@ public final class EncryptedSpool implements AutoCloseable {
     private FileLock directoryLock;
 
     public EncryptedSpool(Path dataDirectory, long taskId, byte[] key, long segmentBytes, long limitBytes) {
+        this(dataDirectory, taskId, null, key, segmentBytes, limitBytes);
+    }
+
+    public EncryptedSpool(Path dataDirectory, long taskId, String channel, byte[] key, long segmentBytes,
+            long limitBytes) {
         if (segmentBytes < 1024)
             throw new IllegalArgumentException("segmentBytes must be at least 1024");
-        this.directory = dataDirectory.resolve(Long.toString(taskId));
+        Path taskDirectory = dataDirectory.resolve(Long.toString(taskId));
+        if (channel != null) {
+            if (channel.isBlank() || !channel.matches("[A-Za-z0-9._-]+"))
+                throw new IllegalArgumentException("invalid spool channel");
+            taskDirectory = taskDirectory.resolve(channel);
+        }
+        this.directory = taskDirectory;
         this.taskId = taskId;
         this.key = key.clone();
         this.segmentBytes = segmentBytes;

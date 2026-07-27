@@ -33,6 +33,7 @@ class CommandPlannerTest {
         CommandPlanner planner = new CommandPlanner(new KeyFilter(List.of("*"), List.of()), true);
 
         assertEquals(CommandPlan.Disposition.BLOCK, planner.plan(command("FLUSHALL")).disposition());
+        assertEquals(CommandPlan.Disposition.BLOCK, planner.plan(command("FLUSHDB")).disposition());
     }
 
     private static byte[] b(String value) {

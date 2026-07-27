@@ -36,6 +36,8 @@ public final class CommandPlanner {
         String name = command.name();
         if (name.equals("SELECT") || name.equals("PING") || name.equals("REPLCONF"))
             return CommandPlan.skip();
+        if (name.equals("FLUSHDB") && clusterTarget)
+            return CommandPlan.block("FLUSHDB requires an explicit all-master target operation");
         if (name.equals("FLUSHDB"))
             return new CommandPlan(CommandPlan.Disposition.APPLY, List.of(new CommandPlan.PlannedCommand(-1, args)),
                     null);

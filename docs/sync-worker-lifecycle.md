@@ -442,14 +442,25 @@ Worker 只报告“最终 offset 已追平”，不自行交换关系，也不�
 - Sentinel 目标端连接失败或旧主返回只读错误时重新解析当前 master；增量恢复先读取目标
   checkpoint，解决 `EXEC` 已提交但响应丢失的歧义，全量 RESTORE 则依靠
   `REPLACE ABSTTL` 安全重放。
+- Cluster 源端按当前 master 建立独立 PSYNC 通道，每个通道保存自己的 replId、offset、
+  slotRanges 和加密 spool；源 master 地址变化但 Slot 集合不变时可按 checkpoint 续传，
+  在线 reshard 导致 Slot 集合变化时失败关闭。
+- Cluster RDB 支持官方 `SLOT_INFO` 元数据；业务 Key 仍按 RDB value type 生成
+  `RESTORE REPLACE ABSTTL`，平台元数据不写入目标业务空间。
+- Cluster 目标按 Redis Slot 路由，每个 Slot 使用同 Slot fence/checkpoint 保证事务原子性；
+  通道另有保守 cursor，只有一个批次涉及的全部 Slot 都成功后才推进，部分提交恢复时按
+  Slot checkpoint 去重后补齐未完成 Slot。
+- Cluster 全量并发受任务级总并发信号量限制，增量限速在多个源通道之间共享，避免把每个
+  master 的配置误乘为任务总上限。
+- 已通过 Cluster→Cluster、Standalone→Cluster 和 Cluster→Standalone 真实容器验收，
+  包含三源 master、跨 Slot 可拆命令、暂停恢复和更高 generation 接管。
 
 当前尚未具备：
 
 - Sentinel 源、目标真实 failover 容器演练；当前协议、解析、周期 master 检查和安全重连代码
   已完成，但上线验收仍需验证 Sentinel 选主、旧主降级和 backlog 续传。
-- Cluster 多 master 通道、每 slot checkpoint/fence 和任意目标 slot 路由。
 - Redis 5.0、6.2、7.4、8.0、8.4 的同版本 Standalone 容器矩阵已经通过；跨版本
-  旧版本到新版本矩阵和可持久复用的 golden RDB fixture 尚未完成。
+  旧版本到新版本矩阵、Cluster 多版本矩阵和可持久复用的 golden RDB fixture 尚未完成。
 - 100 GB 全量和持续 5 万 ops/s 性能基准；当前 RDB 按 Key 流式处理，但单个超大 Key
   的 DUMP payload 仍会占用对应大小的内存。
 - 256 MiB 分段下的 50 GiB 长时间 spool 压力、磁盘满和进程崩溃注入矩阵。
@@ -459,9 +470,9 @@ Worker 只报告“最终 offset 已追平”，不自行交换关系，也不�
 - 完整预检查、逐节点清空阶段幂等事件和主备切换闭环验收。
 - TLS、Module 数据和 Active-Active；它们仍按首期范围明确不支持。
 
-因此当前代码已经达到 M2 的 Standalone 功能闭环，并具备 Sentinel 单通道运行实现；在完成
-Sentinel 真实 failover、Cluster 多通道、多版本、100 GB/5 万 ops/s 和故障矩阵前，尚不应
-宣称完成高可用拓扑的生产验收。
+因此当前代码已经达到 M2 的 Standalone 与 Cluster 功能闭环，并具备 Sentinel 单通道运行
+实现；在完成 Sentinel 真实 failover、Cluster 多版本、100 GB/5 万 ops/s 和故障矩阵前，
+尚不应宣称完成高可用拓扑的生产验收。
 
 ## 14. 分阶段验收
 
@@ -487,7 +498,9 @@ Sentinel 真实 failover、Cluster 多通道、多版本、100 GB/5 万 ops/s �
 - Cluster 每 master 独立通道并正确路由目标 slot。
 - 多实例接管、磁盘满和 MySQL 中断测试通过。
 
-当前状态：Sentinel 执行与重连代码完成，真实 failover 演练待补；Cluster 尚未完成。
+当前状态：Cluster 功能和三种拓扑转换的真实容器验收完成；Sentinel 执行与重连代码完成，
+真实 failover 演练待补。Cluster 多版本、在线 failover/reshard 和压力故障矩阵属于上线前
+验收项。
 
 ### M4：切换验收
 

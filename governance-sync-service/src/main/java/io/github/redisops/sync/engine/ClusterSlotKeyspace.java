@@ -19,8 +19,16 @@ final class ClusterSlotKeyspace {
         return key("__redis_ops_sync_ckpt__", taskId, channel, slot);
     }
 
+    static byte[] cursor(long taskId, String channel, int slot) {
+        return key("__redis_ops_sync_cursor__", taskId, channel, slot);
+    }
+
     static byte[] fence(long taskId, String channel, int slot) {
         return key("__redis_ops_sync_fence__", taskId, channel, slot);
+    }
+
+    static byte[] heartbeat(long taskId, String channel, int slot) {
+        return key("__redis_ops_sync_hb__", taskId, channel, slot);
     }
 
     static byte[] fullProgress(long taskId, String channel, int slot, int lane) {
