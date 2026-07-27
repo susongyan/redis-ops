@@ -448,8 +448,8 @@ Worker 只报告“最终 offset 已追平”，不自行交换关系，也不�
 - Sentinel 源、目标真实 failover 容器演练；当前协议、解析、周期 master 检查和安全重连代码
   已完成，但上线验收仍需验证 Sentinel 选主、旧主降级和 backlog 续传。
 - Cluster 多 master 通道、每 slot checkpoint/fence 和任意目标 slot 路由。
-- Redis 5.0、6.2、8.0、8.4 的容器矩阵和 golden RDB fixture；当前真实验收使用 Redis
-  7.4，其他版本主要由协议单测和解析器兼容代码覆盖。
+- Redis 5.0、6.2、7.4、8.0、8.4 的同版本 Standalone 容器矩阵已经通过；跨版本
+  旧版本到新版本矩阵和可持久复用的 golden RDB fixture 尚未完成。
 - 100 GB 全量和持续 5 万 ops/s 性能基准；当前 RDB 按 Key 流式处理，但单个超大 Key
   的 DUMP payload 仍会占用对应大小的内存。
 - 256 MiB 分段下的 50 GiB 长时间 spool 压力、磁盘满和进程崩溃注入矩阵。
@@ -478,7 +478,8 @@ Sentinel 真实 failover、Cluster 多通道、多版本、100 GB/5 万 ops/s �
 - 非幂等命令在故障注入后不重复应用。
 - 暂停、spool、恢复和部分重同步有效。
 
-当前状态：功能和自动化集成测试已完成；多版本、性能及完整故障注入属于上线前验收项。
+当前状态：功能、自动化集成测试和 Redis 5.0/6.2/7.4/8.0/8.4 同版本容器矩阵已完成；
+跨版本、性能及完整故障注入属于上线前验收项。
 
 ### M3：高可用与 Cluster
 

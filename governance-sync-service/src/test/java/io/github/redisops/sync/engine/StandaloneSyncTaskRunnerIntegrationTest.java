@@ -128,8 +128,8 @@ class StandaloneSyncTaskRunnerIntegrationTest {
                                     current.appliedOffset() - 1, current.sourceDatabase(), Instant.now()),
                             currentFence, validLease);
                     assertEquals(current.appliedOffset(), nonRegressed.appliedOffset());
-                    assertEquals(current.appliedOffset(),
-                            targetSession.checkpoint().orElseThrow().appliedOffset());
+                    assertTrue(targetSession.checkpoint().orElseThrow().appliedOffset() >= current.appliedOffset(),
+                            "a concurrently advancing replication stream must never regress the checkpoint");
                 }
             } finally {
                 recovered.close();

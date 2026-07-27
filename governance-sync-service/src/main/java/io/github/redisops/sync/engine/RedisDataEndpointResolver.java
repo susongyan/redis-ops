@@ -17,6 +17,9 @@ import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 @Component
 public class RedisDataEndpointResolver {
@@ -42,6 +45,21 @@ public class RedisDataEndpointResolver {
                 + profile.sentinelMasterName(), last);
     }
 
+    public List<ClusterMaster> resolveClusterMasters(RedisConnectionProfile profile) throws IOException {
+        if (profile.mode() != ClusterMode.CLUSTER)
+            return List.of(new ClusterMaster(resolvePrimary(profile), null, 0, 16383));
+        IOException last = null;
+        for (String seed : profile.seedEndpoints()) {
+            RedisEndpoint endpoint = RedisEndpoint.parse(seed);
+            try {
+                return queryClusterSlots(profile, endpoint);
+            } catch (IOException error) {
+                last = error;
+            }
+        }
+        throw new IOException("all Redis Cluster seed endpoints failed", last);
+    }
+
     private RedisEndpoint querySentinel(RedisConnectionProfile profile, RedisEndpoint sentinel)
             throws IOException {
         try (Socket socket = new Socket()) {
@@ -62,6 +80,66 @@ public class RedisDataEndpointResolver {
                 throw new RespProtocolException("Sentinel master lookup failed: " + error.value());
             return parseMaster(response);
         }
+    }
+
+    private List<ClusterMaster> queryClusterSlots(RedisConnectionProfile profile, RedisEndpoint seed)
+            throws IOException {
+        try (Socket socket = new Socket()) {
+            socket.setKeepAlive(true);
+            socket.setTcpNoDelay(true);
+            socket.connect(new InetSocketAddress(seed.host(), seed.port()),
+                    Math.toIntExact(connectTimeout.toMillis()));
+            socket.setSoTimeout(Math.toIntExact(connectTimeout.toMillis()));
+            RespCodec codec = new RespCodec(new BufferedInputStream(socket.getInputStream(), 64 * 1024),
+                    new BufferedOutputStream(socket.getOutputStream(), 64 * 1024));
+            if (profile.password() != null)
+                authenticate(codec, profile);
+            codec.writeCommand("CLUSTER", "SLOTS");
+            RespValue response = codec.read();
+            if (response instanceof RespValue.Error error)
+                throw new RespProtocolException("CLUSTER SLOTS failed: " + error.value());
+            return parseClusterSlots(response, seed.host());
+        }
+    }
+
+    static List<ClusterMaster> parseClusterSlots(RespValue response, String fallbackHost) {
+        if (!(response instanceof RespValue.Array ranges))
+            throw new RespProtocolException("CLUSTER SLOTS returned an unexpected response");
+        List<ClusterMaster> result = new ArrayList<>();
+        for (RespValue value : ranges.values()) {
+            if (!(value instanceof RespValue.Array range) || range.values().size() < 3
+                    || !(range.values().get(0) instanceof RespValue.IntegerValue start)
+                    || !(range.values().get(1) instanceof RespValue.IntegerValue end)
+                    || !(range.values().get(2) instanceof RespValue.Array master)
+                    || master.values().size() < 2
+                    || !(master.values().get(0) instanceof RespValue.Bulk host)
+                    || !(master.values().get(1) instanceof RespValue.IntegerValue port))
+                throw new RespProtocolException("CLUSTER SLOTS contains an invalid slot range");
+            String resolvedHost = new String(host.value(), StandardCharsets.UTF_8);
+            if (resolvedHost.isBlank())
+                resolvedHost = fallbackHost;
+            String nodeId = master.values().size() > 2 && master.values().get(2) instanceof RespValue.Bulk id
+                    ? new String(id.value(), StandardCharsets.US_ASCII)
+                    : null;
+            if (start.value() < 0 || end.value() > 16383 || start.value() > end.value())
+                throw new RespProtocolException("CLUSTER SLOTS contains an invalid boundary");
+            result.add(new ClusterMaster(new RedisEndpoint(resolvedHost, Math.toIntExact(port.value())),
+                    nodeId, Math.toIntExact(start.value()), Math.toIntExact(end.value())));
+        }
+        result.sort(Comparator.comparingInt(ClusterMaster::slotStart));
+        validateSlotCoverage(result);
+        return List.copyOf(result);
+    }
+
+    private static void validateSlotCoverage(List<ClusterMaster> masters) {
+        int expected = 0;
+        for (ClusterMaster master : masters) {
+            if (master.slotStart() != expected)
+                throw new RespProtocolException("Redis Cluster slot ownership has a gap or overlap at " + expected);
+            expected = master.slotEnd() + 1;
+        }
+        if (expected != 16384)
+            throw new RespProtocolException("Redis Cluster does not cover all 16384 slots");
     }
 
     static RedisEndpoint parseMaster(RespValue response) {
@@ -114,5 +192,8 @@ public class RedisDataEndpointResolver {
         } catch (java.nio.charset.CharacterCodingException error) {
             throw new IllegalArgumentException("credential cannot be encoded", error);
         }
+    }
+
+    public record ClusterMaster(RedisEndpoint endpoint, String nodeId, int slotStart, int slotEnd) {
     }
 }
