@@ -3,6 +3,7 @@ package io.github.redisops.api.sync;
 import io.github.redisops.api.*;
 import io.github.redisops.application.IdempotencyService;
 import io.github.redisops.application.sync.SyncService;
+import io.github.redisops.common.PageResult;
 import io.github.redisops.domain.sync.*;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -29,7 +30,8 @@ public class SyncController {
         return wrap(idempotency.execute(operator, key, "SYNC_TASK_CREATE", body,
                 () -> service.create(body.relationId, body.sourceClusterId, body.targetClusterId, body.purpose,
                         body.syncMode, body.sourceDb, body.targetDb, body.includePatterns, body.excludePatterns,
-                        body.rateLimitOps, body.bandwidthLimitBytesPerSecond, body.spoolLimitBytes, operator),
+                        body.rateLimitOps, body.bandwidthLimitBytesPerSecond, body.spoolLimitBytes,
+                        body.fullApplyConcurrency, body.fullApplyPipelineSize, operator),
                 x -> x.id().toString(), id -> service.get(Long.parseLong(id))), request);
     }
 
@@ -40,8 +42,17 @@ public class SyncController {
 
     @GetMapping("/api/v1/sync-tasks/{id}")
     ApiResponse<TaskDetail> get(@PathVariable long id, HttpServletRequest request) {
-        return wrap(new TaskDetail(service.get(id), service.events(id), service.runtime(id).orElse(null),
-                service.channels(id), service.precheck(id).orElse(null), service.metrics(id, 100)), request);
+        PageResult<SyncTaskEvent> events = service.events(id, 1, 20);
+        return wrap(new TaskDetail(service.get(id), events.items(), events.total(),
+                service.runtime(id).orElse(null), service.channels(id),
+                service.precheck(id).orElse(null), service.metrics(id, 100)), request);
+    }
+
+    @GetMapping("/api/v1/sync-tasks/{id}/events")
+    ApiResponse<PageResult<SyncTaskEvent>> events(@PathVariable long id,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size, HttpServletRequest request) {
+        return wrap(service.events(id, page, size), request);
     }
 
     @PostMapping("/api/v1/sync-tasks/{id}/prechecks")
@@ -105,7 +116,8 @@ public class SyncController {
             @RequestHeader("If-Match") long version, @Valid @RequestBody LimitRequest body,
             HttpServletRequest request) {
         return action(request, key, "SYNC_LIMITS", body, () -> service.updateLimits(id, version, body.rateLimitOps,
-                body.bandwidthLimitBytesPerSecond, body.spoolLimitBytes, operator(request), key));
+                body.bandwidthLimitBytesPerSecond, body.spoolLimitBytes, body.fullApplyConcurrency,
+                body.fullApplyPipelineSize, operator(request), key));
     }
 
     @GetMapping("/api/v1/sync-tasks/{id}/runtime")
@@ -156,7 +168,9 @@ public class SyncController {
             SyncMode syncMode, Integer sourceDb, Integer targetDb,
             @Size(max = 100) List<String> includePatterns, @Size(max = 100) List<String> excludePatterns,
             @Positive Long rateLimitOps, @Positive Long bandwidthLimitBytesPerSecond,
-            @Positive Long spoolLimitBytes) {
+            @Positive Long spoolLimitBytes,
+            @Min(1) @Max(64) Integer fullApplyConcurrency,
+            @Min(1) @Max(10000) Integer fullApplyPipelineSize) {
     }
     public record StartRequest(boolean writeFenced, @NotBlank String writeFenceNote, boolean allowTargetFlush,
             @NotBlank String confirmationTaskNo) {
@@ -166,9 +180,11 @@ public class SyncController {
     public record SourceFenceRequest(@NotBlank String note) {
     }
     public record LimitRequest(@Positive long rateLimitOps, @Positive long bandwidthLimitBytesPerSecond,
-            @Positive long spoolLimitBytes) {
+            @Positive long spoolLimitBytes,
+            @Min(1) @Max(64) Integer fullApplyConcurrency,
+            @Min(1) @Max(10000) Integer fullApplyPipelineSize) {
     }
-    public record TaskDetail(SyncTask task, List<SyncTaskEvent> events, SyncRuntime runtime,
+    public record TaskDetail(SyncTask task, List<SyncTaskEvent> events, long eventTotal, SyncRuntime runtime,
             List<SyncChannelCheckpoint> channels, SyncPrecheckReport precheck,
             List<SyncMetricSnapshot> metrics) {
     }

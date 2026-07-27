@@ -39,6 +39,14 @@ public class MyBatisJobRepository implements JobRepository {
                 : Optional.empty();
     }
     @Override
+    @Transactional
+    public Optional<AsyncJob> claimNextRouted(String type, String owner, String runtimeOwner,
+            Duration duration, boolean allowExpiredRuntime) {
+        return mapper.claimRouted(type, owner, runtimeOwner, duration.toSeconds(), allowExpiredRuntime) == 1
+                ? Optional.ofNullable(mapper.findClaimed(owner))
+                : Optional.empty();
+    }
+    @Override
     public void complete(long id, String owner) {
         mapper.complete(id, owner);
     }

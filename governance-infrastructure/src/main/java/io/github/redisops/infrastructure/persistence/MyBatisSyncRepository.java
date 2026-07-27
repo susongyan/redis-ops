@@ -32,8 +32,11 @@ public class MyBatisSyncRepository implements SyncRepository {
         event(x.id(), before.status(), x.status(), op, message);
         return true;
     }
-    public List<SyncTaskEvent> findEvents(long id) {
-        return mapper.findEvents(id);
+    public List<SyncTaskEvent> findEvents(long id, int offset, int limit) {
+        return mapper.findEvents(id, offset, limit);
+    }
+    public long countEvents(long id) {
+        return mapper.countEvents(id);
     }
     public long countActiveTasks(long id) {
         return mapper.countActiveTasks(id);
@@ -70,6 +73,20 @@ public class MyBatisSyncRepository implements SyncRepository {
     }
     public void releaseRuntime(long taskId, String owner, String phase, String error) {
         mapper.releaseRuntime(taskId, owner, phase, error);
+    }
+    public void updateRuntimeObservation(long taskId, String owner, String phase, Long targetFenceGeneration,
+            java.time.Instant fencePublishedAt, String recoveryAction, String error) {
+        mapper.updateRuntimeObservation(taskId, owner, phase, targetFenceGeneration, fencePublishedAt,
+                recoveryAction, error);
+    }
+    public List<SyncTask> findExpiredRecoverableTasks(int limit) {
+        return mapper.findExpiredRecoverableTasks(Math.max(1, Math.min(limit, 100)));
+    }
+    public void appendTaskEvent(long taskId, String operator, String message) {
+        SyncTask task = mapper.findTask(taskId);
+        if (task == null)
+            return;
+        event(taskId, task.status(), task.status(), operator, message);
     }
     public List<SyncChannelCheckpoint> findChannels(long taskId) {
         return mapper.findChannels(taskId);

@@ -1,5 +1,8 @@
 # Redis 同步 Worker 管理流程与生命周期设计
 
+长时间 GC、进程崩溃、跨 Worker 接管及目标 Redis Fence 的详细处理见
+[Sync Worker 停顿、崩溃与安全接管](sync-worker-failure-takeover.md)。
+
 ## 1. 文档目标
 
 本文档定义自研 Redis 同步 Worker 的管理边界、状态模型、控制命令、运行租约、故障恢复和
@@ -12,7 +15,7 @@
 - checkpoint、spool、MySQL 状态冲突时以谁为准。
 - 主备切换工作流如何与同步任务衔接。
 
-本文档描述目标设计。当前代码完成度和目标设计之间的差距见第 13 节。
+本文档同时描述目标设计和当前实现边界。当前代码完成度和后续差距见第 13 节。
 
 ## 2. 核心设计原则
 
@@ -199,10 +202,34 @@ Runtime 规则：
    - Cluster：每个 master 一个通道，记录 slotRanges。
 7. 每个通道执行 `AUTH -> REPLCONF -> PSYNC`。
 8. FULLRESYNC 时接收 RDB 到加密 spool；fsync 后才更新 received offset 和发送 ACK。
-9. 流式解析 RDB，通过 `RESTORE REPLACE ABSTTL` 写入目标。
-10. 全量结束后切换到增量命令流，任务进入 `INCR_SYNCING`。
+9. 顺序解析 RDB，将匹配的 Key 放入有界队列；多个目标连接并发执行
+   `RESTORE REPLACE ABSTTL`，每个连接使用受控 pipeline。
+10. 等待队列清空、所有 pipeline 响应成功且没有在途 RESTORE 后，写入全量基准
+    checkpoint。
+11. 全量屏障完成后切换到有序增量命令流，任务进入 `INCR_SYNCING`。
 
 目标清空和创建新 fullSyncEpoch 必须每个 epoch 只执行一次。Job 重试不能再次清空已经开始写入的目标。
+
+全量应用并发数和 Pipeline 大小保存在 `sync_task`，创建任务时可分别设置：
+
+```json
+{
+  "fullApplyConcurrency": 4,
+  "fullApplyPipelineSize": 100
+}
+```
+
+- `fullApplyConcurrency`：目标连接和应用线程数，允许 1～64，任务默认值为 4。
+- `fullApplyPipelineSize`：单连接一次发送的最大 RESTORE 数，允许 1～10000，任务默认值为 100。
+- 任务进入 `STARTING` 后不允许修改这两个参数；运行中的 ops、带宽和 spool 限制仍可调整。
+- `sync.engine.full-apply-concurrency` 和 `sync.engine.full-apply-pipeline-size` 保留为旧任务兼容
+  回退值。
+- `sync.engine.full-apply-queue-capacity` 仍是 Worker 部署级安全配置，默认 2000；实际容量不会
+  小于任务并发数。
+
+并发仅用于全量阶段不同 Key 的 RESTORE。增量命令仍严格按 replication offset 顺序规划并与
+checkpoint 原子提交。暂停时所有目标连接共用同一个写入闸门；已在途 pipeline 完成后
+`pause()` 才返回。
 
 ### 6.3 增量同步与追平
 
@@ -381,20 +408,48 @@ Worker 只报告“最终 offset 已追平”，不自行交换关系，也不�
 - 独立 Sync Service 启动模块。
 - V7 runtime、channel、precheck、metric 数据结构和 Repository。
 - 控制 API、异步 Job 领取框架、预检查和目标清空基础代码。
-- RESP、PSYNC 握手、部分 RDB 解析、Key 过滤和命令规划基础库。
+- Standalone 到 Standalone 的真实复制 Runner，不再使用启动即拒绝的占位实现。
+- 基于 Java Socket 的 AUTH、REPLCONF、PSYNC、FULLRESYNC、CONTINUE 和周期 ACK。
+- 固定长度和 diskless EOF 两种 RDB 传输，以及 RDB CRC64 校验。
+- Redis 5.0 至 8.4 内置 RDB 类型的流式解析，包括紧凑编码、TTL、Stream Consumer
+  Group 和 Functions；Module、未知类型及损坏数据失败关闭。
+- RDB 通过带目标 Fence 的 `RESTORE REPLACE ABSTTL` 事务批次应用，Functions 使用相同写屏障。
+- 原始 RESP 增量命令解析和精确 replication offset 计算。
+- include/exclude、保留命名空间、可拆多 Key 命令和不安全命令阻塞。
+- 业务命令与目标 checkpoint 在同一个 `WATCH + MULTI/EXEC` 中提交，并同时监视目标 Fence。
+- MySQL 租约 generation 与目标 Redis Fence 双重 fencing；恢复以目标 checkpoint 为最终事实，
+  MySQL 仅保存摘要。
+- AES-256-GCM 加密 RDB 和增量 spool、随机 IV、完整性校验、fsync 后 ACK、分段回收和
+  spool 容量保护。
+- 暂停时关闭目标应用闸门但继续接收源数据，恢复时先重放 spool 再执行部分 PSYNC。
+- 全量 RDB 使用可配置目标连接池和 pipeline 并发 RESTORE；每个 lane 受目标 Fence、
+  pipeline 数量和事务字节上限保护，有界队列提供内存背压。
+- Runner Manager、单实例并发上限、运行租约领取及定时续租。
+- Runner 生命周期接口，以及 prepare/start/pause/resume/finish/cancel/limits 管理闭环。
+- 专用续租线程、单调时钟 Lease Guard 和安全截止时间；长 GC 恢复后不能补续租继续写。
+- 过期 runtime 自动安全接管、目标 Fence 原子发布、本地 spool 文件锁及跨机器 PSYNC 恢复。
+- 运行中 PAUSE、FINISH、RATE_LIMIT 只允许 runtime owner 领取；租约过期后其他 Worker
+  才能接管 RESUME、CANCEL。
+- 每任务 RPO 心跳、received/applied offset、吞吐、spool 和低频指标摘要。
+- 无认证和 ACL 的真实 Redis 集成测试，覆盖全量数据类型、TTL、Stream Group、增量
+  `INCR/LPUSH`、暂停恢复和新 generation 接管。
 
 当前尚未具备：
 
-- `NativeSyncRunnerManager` 和真实 Runner，Sync Service 暂时不能编译运行。
-- 全量 RDB 接收、目标 RESTORE 和增量命令应用闭环。
-- 目标原子 checkpoint 和 generation fencing。
-- 加密 spool、fsync、segment 回收和断点续传。
-- 租约定时续期、优雅停机和实例接管。
 - Sentinel failover、Cluster 多 master 通道和任意目标路由。
-- RPO 心跳、Prometheus 指标和低频指标采集器。
-- 完整预检查、逐节点清空审计及真实 Redis 集成测试。
+- Redis 5.0、6.2、8.0、8.4 的容器矩阵和 golden RDB fixture；当前真实验收使用 Redis
+  7.4，其他版本主要由协议单测和解析器兼容代码覆盖。
+- 100 GB 全量和持续 5 万 ops/s 性能基准；当前 RDB 按 Key 流式处理，但单个超大 Key
+  的 DUMP payload 仍会占用对应大小的内存。
+- 256 MiB 分段下的 50 GiB 长时间 spool 压力、磁盘满和进程崩溃注入矩阵。
+- 50 GiB spool、MySQL 长时间中断和真实双进程 Stop-The-World GC 的压力及故障注入矩阵。
+- 跨主机共享或对象存储 spool；当前按本地盘加 PSYNC 处理，backlog 不足时安全阻塞。
+- Prometheus 高频指标导出；目前已保存 MySQL 低频摘要。
+- 完整预检查、逐节点清空阶段幂等事件和主备切换闭环验收。
+- TLS、Module 数据和 Active-Active；它们仍按首期范围明确不支持。
 
-因此当前代码属于“控制骨架和协议 PoC”，尚不是可部署的同步 Worker。
+因此当前代码已经达到 M2 的 Standalone 功能闭环，可以执行真实全量、持续增量、暂停恢复
+和 checkpoint 续传；尚不应宣称达到多版本、100 GB/5 万 ops/s 和高可用拓扑的生产验收。
 
 ## 14. 分阶段验收
 
@@ -410,6 +465,8 @@ Worker 只报告“最终 offset 已追平”，不自行交换关系，也不�
 - Standalone 到 Standalone 完成全量和增量。
 - 非幂等命令在故障注入后不重复应用。
 - 暂停、spool、恢复和部分重同步有效。
+
+当前状态：功能和自动化集成测试已完成；多版本、性能及完整故障注入属于上线前验收项。
 
 ### M3：高可用与 Cluster
 

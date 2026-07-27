@@ -16,15 +16,27 @@ public class SyncControlWorker {
             "SYNC_FINISH", "SYNC_CANCEL", "SYNC_RATE_LIMIT");
     private final JobRepository jobs;
     private final NativeSyncCoordinator coordinator;
-    private final String owner = "sync-control-" + UUID.randomUUID();
+    private final String owner;
     public SyncControlWorker(JobRepository jobs, NativeSyncCoordinator coordinator) {
         this.jobs = jobs;
         this.coordinator = coordinator;
+        this.owner = coordinator.instanceId() + ":control:" + UUID.randomUUID();
     }
     @Scheduled(fixedDelayString = "${sync.engine.poll-interval-ms:500}")
     public void poll() {
         for (String type : TYPES)
-            jobs.claimNext(type, owner + ":" + type, Duration.ofSeconds(30)).ifPresent(this::execute);
+            claim(type).ifPresent(this::execute);
+    }
+    private java.util.Optional<AsyncJob> claim(String type) {
+        String claimOwner = owner + ":" + type;
+        return switch (type) {
+            case "SYNC_PRECHECK", "SYNC_START" ->
+                jobs.claimNext(type, claimOwner, Duration.ofSeconds(30));
+            case "SYNC_RESUME", "SYNC_CANCEL" ->
+                jobs.claimNextRouted(type, claimOwner, coordinator.instanceId(), Duration.ofSeconds(30), true);
+            default ->
+                jobs.claimNextRouted(type, claimOwner, coordinator.instanceId(), Duration.ofSeconds(30), false);
+        };
     }
     private void execute(AsyncJob job) {
         String lease = job.leaseOwner();

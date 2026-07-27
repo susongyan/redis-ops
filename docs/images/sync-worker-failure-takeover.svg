@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="720" viewBox="0 0 1180 720">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
+    .title { font-size: 24px; font-weight: 700; }
+    .head { font-size: 16px; font-weight: 700; }
+    .body { font-size: 14px; }
+    .muted { font-size: 13px; fill: #4f5d70; }
+    .canvas { fill: #f3f6fb; }
+    .panel { fill: #ffffff; stroke: #ccd5e3; stroke-width: 1.5; }
+    .lane-head { fill: #e8eef8; stroke: #c2cde0; stroke-width: 1; }
+    .lane { stroke: #8795aa; stroke-width: 1.5; stroke-dasharray: 6 6; }
+    .arrow { stroke: #245dcc; stroke-width: 2.2; marker-end: url(#arrow); }
+    .danger { stroke: #c93434; stroke-width: 2.2; marker-end: url(#dangerArrow); }
+    .safe { fill: #e4f7ec; stroke: #278c52; stroke-width: 1.5; rx: 8; }
+    .warn { fill: #fff0d8; stroke: #cf7c14; stroke-width: 1.5; rx: 8; }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 z" fill="#3468d4"/>
+    </marker>
+    <marker id="dangerArrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 z" fill="#d94a4a"/>
+    </marker>
+  </defs>
+  <rect width="1180" height="720" class="canvas"/>
+  <rect x="20" y="54" width="1140" height="646" rx="16" class="panel"/>
+  <text x="30" y="38" class="title">长 GC、租约过期与新 Worker 安全接管</text>
+  <rect x="54" y="64" width="252" height="30" rx="8" class="lane-head"/>
+  <rect x="354" y="64" width="252" height="30" rx="8" class="lane-head"/>
+  <rect x="634" y="64" width="252" height="30" rx="8" class="lane-head"/>
+  <rect x="914" y="64" width="252" height="30" rx="8" class="lane-head"/>
+  <text x="100" y="82" class="head">旧 Worker · Generation N</text>
+  <text x="410" y="82" class="head">MySQL Runtime</text>
+  <text x="700" y="82" class="head">目标 Redis</text>
+  <text x="980" y="82" class="head">新 Worker · N+1</text>
+  <line x1="180" y1="100" x2="180" y2="680" class="lane"/>
+  <line x1="480" y1="100" x2="480" y2="680" class="lane"/>
+  <line x1="760" y1="100" x2="760" y2="680" class="lane"/>
+  <line x1="1040" y1="100" x2="1040" y2="680" class="lane"/>
+  <line x1="180" y1="135" x2="480" y2="135" class="arrow"/>
+  <text x="270" y="126" class="body">续租成功，Lease Guard 延长</text>
+  <rect x="60" y="165" width="240" height="58" class="warn"/>
+  <text x="86" y="190" class="head">Stop-The-World GC</text>
+  <text x="86" y="211" class="muted">续租线程与数据线程同时暂停</text>
+  <rect x="370" y="250" width="220" height="58" class="warn"/>
+  <text x="397" y="276" class="head">租约超过 30 秒</text>
+  <text x="397" y="297" class="muted">runtime 成为可接管候选</text>
+  <line x1="1040" y1="340" x2="480" y2="340" class="arrow"/>
+  <text x="650" y="330" class="body">原子 claim，generation=N+1</text>
+  <line x1="1040" y1="390" x2="760" y2="390" class="arrow"/>
+  <text x="810" y="380" class="body">WATCH fence + checkpoint</text>
+  <line x1="1040" y1="430" x2="760" y2="430" class="arrow"/>
+  <text x="820" y="420" class="body">发布目标 Fence N+1</text>
+  <rect x="650" y="455" width="220" height="65" class="safe"/>
+  <text x="677" y="481" class="head">数据面所有权切换</text>
+  <text x="677" y="503" class="muted">原子读取旧 Worker 最终 checkpoint</text>
+  <line x1="180" y1="550" x2="760" y2="550" class="danger"/>
+  <text x="300" y="540" class="body">旧 pipeline 尝试 EXEC / RESTORE</text>
+  <line x1="760" y1="585" x2="180" y2="585" class="danger"/>
+  <text x="315" y="575" class="body">WATCH 冲突，拒绝旧 generation</text>
+  <line x1="1040" y1="625" x2="760" y2="625" class="arrow"/>
+  <text x="810" y="615" class="body">从 checkpoint + PSYNC 恢复</text>
+  <rect x="60" y="635" width="240" height="42" class="safe"/>
+  <text x="82" y="661" class="body">旧 Worker 恢复后 Lease Guard 失效并退出</text>
+</svg>

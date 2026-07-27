@@ -22,6 +22,28 @@ public interface JobMapper {
             ORDER BY id LIMIT 1
             """)
     int claim(@Param("jobType") String jobType, @Param("owner") String owner, @Param("leaseSeconds") long leaseSeconds);
+    @Update("""
+            UPDATE async_job SET status='RUNNING',lease_owner=#{owner},
+              lease_until=DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL #{leaseSeconds} SECOND),attempts=attempts+1
+            WHERE id=(
+              SELECT candidate.id FROM (
+                SELECT j.id FROM async_job j
+                LEFT JOIN sync_runtime r ON r.task_id=j.biz_id
+                WHERE j.job_type=#{jobType} AND j.status IN ('PENDING','RETRY')
+                  AND j.next_run_at<=CURRENT_TIMESTAMP(3)
+                  AND (j.lease_until IS NULL OR j.lease_until<CURRENT_TIMESTAMP(3))
+                  AND (
+                    r.lease_owner=#{runtimeOwner}
+                    OR (#{allowExpiredRuntime}=TRUE
+                      AND (r.task_id IS NULL OR r.lease_owner IS NULL OR r.lease_until<CURRENT_TIMESTAMP(3)))
+                  )
+                ORDER BY j.id LIMIT 1
+              ) candidate
+            )
+            """)
+    int claimRouted(@Param("jobType") String jobType, @Param("owner") String owner,
+            @Param("runtimeOwner") String runtimeOwner, @Param("leaseSeconds") long leaseSeconds,
+            @Param("allowExpiredRuntime") boolean allowExpiredRuntime);
     @Select("SELECT id,job_type,biz_id,CAST(payload_json AS CHAR) payload,status,idempotency_key,lease_owner,lease_until,attempts,max_attempts,last_error FROM async_job WHERE lease_owner=#{owner} AND status='RUNNING' ORDER BY updated_at DESC LIMIT 1")
     AsyncJob findClaimed(String owner);
     @Update("UPDATE async_job SET status='SUCCEEDED',lease_owner=NULL,lease_until=NULL WHERE id=#{id} AND lease_owner=#{owner} AND status='RUNNING'")

@@ -19,6 +19,10 @@ public final class RespCodec {
         int marker = input.read();
         if (marker < 0)
             throw new EOFException("RESP stream ended");
+        return readWithMarker(marker);
+    }
+
+    RespValue readWithMarker(int marker) throws IOException {
         return switch (marker) {
             case '+' -> new RespValue.Simple(line());
             case '-' -> new RespValue.Error(line());
@@ -30,12 +34,20 @@ public final class RespCodec {
     }
 
     public void writeCommand(byte[]... arguments) throws IOException {
+        writeCommandBuffered(arguments);
+        output.flush();
+    }
+
+    public void writeCommandBuffered(byte[]... arguments) throws IOException {
         output.write(('*' + Integer.toString(arguments.length) + "\r\n").getBytes(StandardCharsets.US_ASCII));
         for (byte[] argument : arguments) {
             output.write(('$' + Integer.toString(argument.length) + "\r\n").getBytes(StandardCharsets.US_ASCII));
             output.write(argument);
             output.write(CRLF);
         }
+    }
+
+    public void flush() throws IOException {
         output.flush();
     }
 

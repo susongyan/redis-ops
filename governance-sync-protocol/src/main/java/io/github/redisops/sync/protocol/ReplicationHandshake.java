@@ -1,7 +1,10 @@
 package io.github.redisops.sync.protocol;
 
 import java.io.*;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 public final class ReplicationHandshake {
     private final RespCodec codec;
@@ -12,16 +15,21 @@ public final class ReplicationHandshake {
     public ReplicationReply start(String username, char[] password, String replicationId, long offset)
             throws IOException {
         if (password != null) {
-            if (username == null || username.isBlank())
-                commandExpectOk("AUTH", new String(password));
-            else
-                commandExpectOk("AUTH", username, new String(password));
+            byte[] encoded = encode(password);
+            try {
+                if (username == null || username.isBlank())
+                    commandExpectOk(new byte[][]{ascii("AUTH"), encoded});
+                else
+                    commandExpectOk(new byte[][]{ascii("AUTH"), username.getBytes(StandardCharsets.UTF_8), encoded});
+            } finally {
+                Arrays.fill(encoded, (byte) 0);
+            }
         }
         commandExpect("PING", "PONG");
         commandExpectOk("REPLCONF", "listening-port", "0");
         commandExpectOk("REPLCONF", "capa", "eof", "capa", "psync2");
         codec.writeCommand("PSYNC", replicationId == null ? "?" : replicationId, Long.toString(offset));
-        String response = simple(codec.read());
+        String response = simple(readPsyncReply());
         if (response.startsWith("FULLRESYNC ")) {
             String[] parts = response.split(" ");
             if (parts.length != 3)
@@ -65,6 +73,26 @@ public final class ReplicationHandshake {
     private void commandExpectOk(String... command) throws IOException {
         commandExpect(command, "OK");
     }
+
+    private RespValue readPsyncReply() throws IOException {
+        InputStream input = codec.input();
+        if (!(input instanceof PushbackInputStream pushback))
+            return codec.read();
+        int marker;
+        do {
+            marker = pushback.read();
+            if (marker < 0)
+                throw new EOFException("PSYNC response ended");
+        } while (marker == '\r' || marker == '\n');
+        pushback.unread(marker);
+        return codec.read();
+    }
+    private void commandExpectOk(byte[][] command) throws IOException {
+        codec.writeCommand(command);
+        String value = simple(codec.read());
+        if (!"OK".equalsIgnoreCase(value))
+            throw new RespProtocolException("AUTH failed: " + value);
+    }
     private void commandExpect(String first, String expected) throws IOException {
         commandExpect(new String[]{first}, expected);
     }
@@ -95,5 +123,22 @@ public final class ReplicationHandshake {
             out.write(current);
             previous = current;
         }
+    }
+
+    private static byte[] encode(char[] value) {
+        try {
+            ByteBuffer encoded = StandardCharsets.UTF_8.newEncoder().encode(CharBuffer.wrap(value));
+            byte[] result = new byte[encoded.remaining()];
+            encoded.get(result);
+            if (encoded.hasArray())
+                Arrays.fill(encoded.array(), (byte) 0);
+            return result;
+        } catch (Exception error) {
+            throw new RespProtocolException("cannot encode Redis password", error);
+        }
+    }
+
+    private static byte[] ascii(String value) {
+        return value.getBytes(StandardCharsets.US_ASCII);
     }
 }

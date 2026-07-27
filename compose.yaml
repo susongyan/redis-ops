@@ -25,6 +25,16 @@ services:
       interval: 3s
       timeout: 2s
       retries: 20
+  redis-sync-target:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "no"]
+    ports:
+      - "6381:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
   redis-auth:
     image: redis:7.4-alpine
     command: ["redis-server", "--appendonly", "no", "--aclfile", "/etc/redis/users.acl"]

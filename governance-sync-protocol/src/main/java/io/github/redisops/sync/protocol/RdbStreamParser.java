@@ -24,6 +24,7 @@ public final class RdbStreamParser {
     private final InputStream input;
     private int rdbVersion, database;
     private long expireAt = -1;
+    private long crc;
 
     public RdbStreamParser(InputStream input) {
         this.input = new BufferedInputStream(input, 64 * 1024);
@@ -46,7 +47,10 @@ public final class RdbStreamParser {
             int type = readUnsigned(null);
             switch (type) {
                 case OPCODE_EOF -> {
-                    readExact(8, null);
+                    byte[] checksum = readExactRaw(8);
+                    long expected = littleEndianLong(checksum);
+                    if (expected != 0 && expected != crc)
+                        throw new RespProtocolException("RDB checksum mismatch");
                     consumer.accept(RdbEvent.End.INSTANCE);
                     return;
                 }
@@ -126,15 +130,69 @@ public final class RdbStreamParser {
                 });
             }
             case TYPE_STREAM_LISTPACKS, TYPE_STREAM_LISTPACKS_2, TYPE_STREAM_LISTPACKS_3 ->
-                throw new UnsupportedRdbTypeException(type,
-                        "Stream RDB encoding requires the stream compatibility stage");
-            case TYPE_HASH_METADATA_PRE_GA, TYPE_HASH_LISTPACK_EX_PRE_GA, TYPE_HASH_METADATA, TYPE_HASH_LISTPACK_EX ->
-                throw new UnsupportedRdbTypeException(type,
-                        "hash field expiration encoding requires Redis 7.4/8 fixture validation");
+                skipStream(type, record);
+            case TYPE_HASH_METADATA -> skipHashMetadata(record);
+            case TYPE_HASH_LISTPACK_EX -> {
+                readExact(8, record);
+                readString(record);
+            }
+            case TYPE_HASH_METADATA_PRE_GA, TYPE_HASH_LISTPACK_EX_PRE_GA ->
+                throw new UnsupportedRdbTypeException(type, "pre-GA hash field expiration encoding is not supported");
             case TYPE_MODULE, TYPE_MODULE_2 ->
                 throw new UnsupportedRdbTypeException(type, "Redis Module data is not supported");
             default -> throw new UnsupportedRdbTypeException(type, "unknown RDB value type: " + type);
         }
+    }
+
+    private void skipHashMetadata(OutputStream record) throws IOException {
+        readExact(8, record);
+        long count = readLength(record);
+        repeat(count, () -> {
+            readLength(record);
+            readString(record);
+            readString(record);
+        });
+    }
+
+    private void skipStream(int type, OutputStream record) throws IOException {
+        long listpacks = readLength(record);
+        repeat(listpacks, () -> {
+            readString(record);
+            readString(record);
+        });
+        readLength(record); // stream length
+        readLength(record); // last ID ms
+        readLength(record); // last ID sequence
+        if (type >= TYPE_STREAM_LISTPACKS_2) {
+            readLength(record); // first ID ms
+            readLength(record); // first ID sequence
+            readLength(record); // maximal deleted ID ms
+            readLength(record); // maximal deleted ID sequence
+            readLength(record); // entries added
+        }
+        long groups = readLength(record);
+        repeat(groups, () -> {
+            readString(record);
+            readLength(record);
+            readLength(record);
+            if (type >= TYPE_STREAM_LISTPACKS_2)
+                readLength(record); // entries read
+            long globalPel = readLength(record);
+            repeat(globalPel, () -> {
+                readExact(16, record);
+                readExact(8, record);
+                readLength(record);
+            });
+            long consumers = readLength(record);
+            repeat(consumers, () -> {
+                readString(record);
+                readExact(8, record);
+                if (type >= TYPE_STREAM_LISTPACKS_3)
+                    readExact(8, record);
+                long localPel = readLength(record);
+                repeat(localPel, () -> readExact(16, record));
+            });
+        });
     }
 
     private byte[] readString(OutputStream record) throws IOException {
@@ -203,6 +261,7 @@ public final class RdbStreamParser {
         int value = input.read();
         if (value < 0)
             throw new EOFException("truncated RDB");
+        crc = RedisCrc64.update(crc, value);
         if (record != null)
             record.write(value);
         return value;
@@ -213,8 +272,16 @@ public final class RdbStreamParser {
         byte[] value = input.readNBytes(length);
         if (value.length != length)
             throw new EOFException("truncated RDB");
+        crc = RedisCrc64.update(crc, value, 0, value.length);
         if (record != null)
             record.write(value);
+        return value;
+    }
+
+    private byte[] readExactRaw(int length) throws IOException {
+        byte[] value = input.readNBytes(length);
+        if (value.length != length)
+            throw new EOFException("truncated RDB");
         return value;
     }
     private int readLittleEndianShort(OutputStream record) throws IOException {
@@ -231,6 +298,13 @@ public final class RdbStreamParser {
         for (int i = 7; i >= 0; i--)
             value = (value << 8) | (b[i] & 255L);
         return value;
+    }
+
+    private static long littleEndianLong(byte[] value) {
+        long result = 0;
+        for (int i = value.length - 1; i >= 0; i--)
+            result = (result << 8) | (value[i] & 255L);
+        return result;
     }
     private int readBigEndianInt(OutputStream record) throws IOException {
         byte[] b = readExact(4, record);

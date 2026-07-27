@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.redisops.application.relation.ClusterRelationService;
 import io.github.redisops.common.BusinessException;
+import io.github.redisops.common.PageResult;
 import io.github.redisops.domain.asset.*;
 import io.github.redisops.domain.audit.AuditRepository;
 import io.github.redisops.domain.job.JobRepository;
@@ -12,6 +13,7 @@ import io.github.redisops.domain.sync.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -41,7 +43,8 @@ public class SyncService {
     @Transactional
     public SyncTask create(Long relationId, Long sourceId, Long targetId, SyncPurpose purpose, SyncMode mode,
             Integer sourceDb, Integer targetDb, List<String> includes, List<String> excludes,
-            Long rateLimitOps, Long bandwidthLimit, Long spoolLimit, String operator) {
+            Long rateLimitOps, Long bandwidthLimit, Long spoolLimit, Integer fullApplyConcurrency,
+            Integer fullApplyPipelineSize, String operator) {
         long source, target;
         SyncPurpose actualPurpose;
         if (relationId != null) {
@@ -70,8 +73,12 @@ public class SyncService {
         long bandwidth = positiveOrDefault(bandwidthLimit, SyncTask.DEFAULT_BANDWIDTH_LIMIT,
                 "bandwidthLimitBytesPerSecond");
         long spool = positiveOrDefault(spoolLimit, SyncTask.DEFAULT_SPOOL_LIMIT, "spoolLimitBytes");
+        int concurrency = boundedOrDefault(fullApplyConcurrency, SyncTask.DEFAULT_FULL_APPLY_CONCURRENCY,
+                1, 64, "fullApplyConcurrency");
+        int pipelineSize = boundedOrDefault(fullApplyPipelineSize, SyncTask.DEFAULT_FULL_APPLY_PIPELINE_SIZE,
+                1, 10_000, "fullApplyPipelineSize");
         var task = newTask(relationId, source, target, actualPurpose, actualSourceDb, actualTargetDb,
-                toJson(actualIncludes), toJson(actualExcludes), ops, bandwidth, spool);
+                toJson(actualIncludes), toJson(actualExcludes), ops, bandwidth, spool, concurrency, pipelineSize);
         var saved = sync.saveTask(task, operator, "native Java sync task created");
         audit(operator, "SYNC_TASK_CREATE", "SYNC_TASK", saved.id());
         return saved;
@@ -85,13 +92,22 @@ public class SyncService {
             relationService.get(relationId);
         return sync.findTasks(relationId);
     }
-    public List<SyncTaskEvent> events(long id) {
+    public PageResult<SyncTaskEvent> events(long id, int page, int size) {
         get(id);
-        return sync.findEvents(id);
+        if (page < 1)
+            throw invalid("page must be at least 1");
+        int actualSize = Math.max(1, Math.min(size, 100));
+        int offset = Math.multiplyExact(page - 1, actualSize);
+        return new PageResult<>(sync.findEvents(id, offset, actualSize), sync.countEvents(id), page, actualSize);
     }
     public Optional<SyncRuntime> runtime(long id) {
         get(id);
         return sync.findRuntime(id);
+    }
+
+    public void appendEngineEvent(long id, String message, String engine) {
+        get(id);
+        sync.appendTaskEvent(id, engine, message);
     }
     public List<SyncChannelCheckpoint> channels(long id) {
         get(id);
@@ -192,20 +208,30 @@ public class SyncService {
 
     @Transactional
     public SyncTask updateLimits(long id, long version, long rateLimit, long bandwidth, long spoolLimit,
-            String operator, String requestKey) {
+            Integer fullApplyConcurrency, Integer fullApplyPipelineSize, String operator, String requestKey) {
         var old = get(id);
         long ops = positiveOrDefault(rateLimit, 0, "rateLimitOps");
         long bytes = positiveOrDefault(bandwidth, 0, "bandwidthLimitBytesPerSecond");
         long spool = positiveOrDefault(spoolLimit, 0, "spoolLimitBytes");
+        int concurrency = boundedOrDefault(fullApplyConcurrency, old.fullApplyConcurrency(),
+                1, 64, "fullApplyConcurrency");
+        int pipelineSize = boundedOrDefault(fullApplyPipelineSize, old.fullApplyPipelineSize(),
+                1, 10_000, "fullApplyPipelineSize");
+        if ((concurrency != old.fullApplyConcurrency() || pipelineSize != old.fullApplyPipelineSize())
+                && running(old.status()))
+            throw invalid("full apply tuning cannot be changed after synchronization has started");
         var changed = new SyncTask(old.id(), old.taskNo(), old.relationId(), old.sourceClusterId(),
                 old.targetClusterId(),
                 old.purpose(), old.syncMode(), old.status(), old.toolType(), old.sourceDb(), old.targetDb(),
-                old.includePatternsJson(), old.excludePatternsJson(), ops, bytes, spool, SyncAction.RATE_LIMIT.name(),
+                old.includePatternsJson(), old.excludePatternsJson(), ops, bytes, spool, concurrency, pipelineSize,
+                SyncAction.RATE_LIMIT.name(),
                 old.writeFenced(), old.writeFenceNote(), old.blockedReason(), old.fullSyncEpoch(), old.lastRpoSeconds(),
                 old.lastError(), old.version(), old.createdAt(), Instant.now(), old.finishedAt());
         update(changed, version, operator, "sync limits updated");
-        enqueue(SyncAction.RATE_LIMIT, id, requestKey, Map.of("taskId", id, "rateLimitOps", ops,
-                "bandwidthLimitBytesPerSecond", bytes, "spoolLimitBytes", spool));
+        if (runnerActive(old.status()))
+            enqueue(SyncAction.RATE_LIMIT, id, requestKey, Map.of("taskId", id, "rateLimitOps", ops,
+                    "bandwidthLimitBytesPerSecond", bytes, "spoolLimitBytes", spool,
+                    "fullApplyConcurrency", concurrency, "fullApplyPipelineSize", pipelineSize));
         return get(id);
     }
 
@@ -225,6 +251,7 @@ public class SyncService {
                     changed.sourceDb(), changed.targetDb(), changed.includePatternsJson(),
                     changed.excludePatternsJson(),
                     changed.rateLimitOps(), changed.bandwidthLimitBytesPerSecond(), changed.spoolLimitBytes(),
+                    changed.fullApplyConcurrency(), changed.fullApplyPipelineSize(),
                     changed.desiredAction(), changed.writeFenced(), changed.writeFenceNote(), changed.blockedReason(),
                     changed.fullSyncEpoch(), rpo, changed.lastError(), changed.version(), changed.createdAt(),
                     changed.updatedAt(), changed.finishedAt());
@@ -302,7 +329,7 @@ public class SyncService {
         var reverse = sync.saveTask(newTask(relation.id(), relation.standbyClusterId(), relation.primaryClusterId(),
                 SyncPurpose.DISASTER_RECOVERY, oldTask.targetDb(), oldTask.sourceDb(), oldTask.includePatternsJson(),
                 oldTask.excludePatternsJson(), oldTask.rateLimitOps(), oldTask.bandwidthLimitBytesPerSecond(),
-                oldTask.spoolLimitBytes()), operator,
+                oldTask.spoolLimitBytes(), oldTask.fullApplyConcurrency(), oldTask.fullApplyPipelineSize()), operator,
                 "reverse full-sync task created; requires precheck and target flush confirmation");
         var done = new Switchover(sw.id(), sw.relationId(), sw.oldPrimaryClusterId(), sw.oldStandbyClusterId(),
                 sw.stoppedTaskId(), reverse.id(), SwitchoverStatus.CONFIRMED, sw.operator(),
@@ -354,22 +381,34 @@ public class SyncService {
         if (byChannel.isEmpty() || byChannel.values().stream().anyMatch(x -> x.size() < 3))
             throw invalid("every sync channel needs three recent RPO samples");
         Instant freshAfter = Instant.now().minusSeconds(5);
-        boolean invalid = byChannel.values().stream()
-                .anyMatch(samples -> samples.stream().limit(3)
-                        .anyMatch(x -> x.collectedAt().isBefore(freshAfter) || x.timestampLagSeconds() == null ||
-                                x.timestampLagSeconds() > desiredRpo));
+        boolean invalid = byChannel.values().stream().anyMatch(samples -> {
+            List<SyncMetricSnapshot> latest = samples.stream()
+                    .sorted(Comparator.comparing(SyncMetricSnapshot::collectedAt).reversed())
+                    .limit(3).toList();
+            if (latest.stream().anyMatch(x -> x.collectedAt().isBefore(freshAfter)
+                    || x.timestampLagSeconds() == null
+                    || x.timestampLagSeconds() < -2
+                    || x.timestampLagSeconds() > desiredRpo))
+                return true;
+            for (int i = 1; i < latest.size(); i++)
+                if (Duration.between(latest.get(i).collectedAt(), latest.get(i - 1).collectedAt()).toMillis() > 2500)
+                    return true;
+            return false;
+        });
         if (invalid)
             throw invalid("RPO is stale or exceeds relation target");
     }
 
     private SyncTask newTask(Long relationId, long source, long target, SyncPurpose purpose, int sourceDb, int targetDb,
-            String includes, String excludes, long ops, long bandwidth, long spool) {
+            String includes, String excludes, long ops, long bandwidth, long spool, int fullApplyConcurrency,
+            int fullApplyPipelineSize) {
         var now = Instant.now();
         return new SyncTask(null,
                 "SYNC-" + UUID.randomUUID().toString().replace("-", "").substring(0, 20).toUpperCase(),
                 relationId, source, target, purpose, SyncMode.FULL_AND_INCREMENTAL, SyncTaskStatus.CREATED,
                 "NATIVE_JAVA",
-                sourceDb, targetDb, includes, excludes, ops, bandwidth, spool, null, false, null, null, null,
+                sourceDb, targetDb, includes, excludes, ops, bandwidth, spool, fullApplyConcurrency,
+                fullApplyPipelineSize, null, false, null, null, null,
                 null, null, 0, now, now, null);
     }
 
@@ -378,7 +417,8 @@ public class SyncService {
         return new SyncTask(old.id(), old.taskNo(), old.relationId(), old.sourceClusterId(), old.targetClusterId(),
                 old.purpose(), old.syncMode(), status, old.toolType(), old.sourceDb(), old.targetDb(),
                 old.includePatternsJson(), old.excludePatternsJson(), old.rateLimitOps(),
-                old.bandwidthLimitBytesPerSecond(), old.spoolLimitBytes(), desired, fenced, fenceNote, blocked,
+                old.bandwidthLimitBytesPerSecond(), old.spoolLimitBytes(), old.fullApplyConcurrency(),
+                old.fullApplyPipelineSize(), desired, fenced, fenceNote, blocked,
                 epoch == null ? old.fullSyncEpoch() : epoch, old.lastRpoSeconds(), error, old.version(),
                 old.createdAt(),
                 Instant.now(), status.terminal() ? Instant.now() : null);
@@ -401,7 +441,7 @@ public class SyncService {
     private static int validateDb(String field, ClusterMode mode, Integer value) {
         if (mode == ClusterMode.CLUSTER) {
             if (value != null && value != 0)
-                throw invalid(field + " must be 0 for Redis Cluster");
+                throw invalid(field + " must be 0 when the cluster mode is CLUSTER");
             return 0;
         }
         if (value == null)
@@ -426,6 +466,23 @@ public class SyncService {
         if (value <= 0)
             throw invalid(field + " must be positive");
         return value;
+    }
+    private static int boundedOrDefault(Integer value, int fallback, int minimum, int maximum, String field) {
+        int result = value == null ? fallback : value;
+        if (result < minimum || result > maximum)
+            throw invalid(field + " must be between " + minimum + " and " + maximum);
+        return result;
+    }
+    private static boolean running(SyncTaskStatus status) {
+        return !(status == SyncTaskStatus.CREATED || status == SyncTaskStatus.CHECKING ||
+                status == SyncTaskStatus.READY || status == SyncTaskStatus.FAILED ||
+                status == SyncTaskStatus.BLOCKED);
+    }
+    private static boolean runnerActive(SyncTaskStatus status) {
+        return status == SyncTaskStatus.STARTING || status == SyncTaskStatus.FULL_SYNCING ||
+                status == SyncTaskStatus.INCR_SYNCING || status == SyncTaskStatus.CAUGHT_UP ||
+                status == SyncTaskStatus.PAUSING || status == SyncTaskStatus.PAUSED ||
+                status == SyncTaskStatus.RESUMING || status == SyncTaskStatus.STOPPING;
     }
     private static void validateVersionDirection(Long relationId, String source, String target) {
         if (source == null || target == null)

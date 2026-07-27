@@ -24,7 +24,16 @@ sync:
     instance-id: ${SYNC_ENGINE_INSTANCE_ID:${HOSTNAME:local-sync}}
     poll-interval-ms: ${SYNC_ENGINE_POLL_INTERVAL_MS:500}
     lease-seconds: ${SYNC_ENGINE_LEASE_SECONDS:30}
+    lease-renew-interval-ms: ${SYNC_ENGINE_LEASE_RENEW_INTERVAL_MS:5000}
+    lease-safety-margin-ms: ${SYNC_ENGINE_LEASE_SAFETY_MARGIN_MS:2000}
+    recovery-scan-interval-ms: ${SYNC_ENGINE_RECOVERY_SCAN_INTERVAL_MS:2000}
+    metric-interval-ms: ${SYNC_ENGINE_METRIC_INTERVAL_MS:1000}
     max-concurrent-tasks: ${SYNC_ENGINE_MAX_CONCURRENT_TASKS:2}
     data-dir: ${SYNC_ENGINE_DATA_DIR:./data/sync}
     segment-bytes: ${SYNC_ENGINE_SEGMENT_BYTES:268435456}
     fsync-interval-ms: ${SYNC_ENGINE_FSYNC_INTERVAL_MS:200}
+    connect-timeout-ms: ${SYNC_ENGINE_CONNECT_TIMEOUT_MS:10000}
+    full-apply-concurrency: ${SYNC_ENGINE_FULL_APPLY_CONCURRENCY:4}
+    full-apply-queue-capacity: ${SYNC_ENGINE_FULL_APPLY_QUEUE_CAPACITY:2000}
+    full-apply-pipeline-size: ${SYNC_ENGINE_FULL_APPLY_PIPELINE_SIZE:100}
+    full-apply-transaction-max-bytes: ${SYNC_ENGINE_FULL_APPLY_TRANSACTION_MAX_BYTES:4194304}

@@ -37,4 +37,19 @@ class RdbStreamParserTest {
                 () -> new RdbStreamParser(new ByteArrayInputStream(input)).parse(x -> {
                 }));
     }
+
+    @Test
+    void rejectsChecksumMismatch() throws Exception {
+        var bytes = new java.io.ByteArrayOutputStream();
+        bytes.write("REDIS0009".getBytes(StandardCharsets.US_ASCII));
+        bytes.write(255);
+        long crc = RedisCrc64.calculate(bytes.toByteArray());
+        for (int i = 0; i < 8; i++)
+            bytes.write((int) (crc >>> (8 * i)) & 0xff);
+        byte[] corrupted = bytes.toByteArray();
+        corrupted[5] ^= 1;
+        assertThrows(RespProtocolException.class,
+                () -> new RdbStreamParser(new ByteArrayInputStream(corrupted)).parse(x -> {
+                }));
+    }
 }

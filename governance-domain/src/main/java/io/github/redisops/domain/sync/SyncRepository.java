@@ -6,7 +6,8 @@ public interface SyncRepository {
     List<SyncTask> findTasks(Long relationId);
     Optional<SyncTask> findLatestTask(long relationId);
     boolean updateTask(SyncTask task, long version, String operator, String message);
-    List<SyncTaskEvent> findEvents(long taskId);
+    List<SyncTaskEvent> findEvents(long taskId, int offset, int limit);
+    long countEvents(long taskId);
     long countActiveTasks(long relationId);
     Switchover saveSwitchover(Switchover switchover);
     Optional<Switchover> findSwitchover(long id);
@@ -18,6 +19,10 @@ public interface SyncRepository {
     boolean claimRuntime(long taskId, String runtimeId, String owner, long leaseSeconds);
     boolean renewRuntime(long taskId, String owner, long leaseSeconds, String phase, long spoolBytes);
     void releaseRuntime(long taskId, String owner, String phase, String error);
+    void updateRuntimeObservation(long taskId, String owner, String phase, Long targetFenceGeneration,
+            java.time.Instant fencePublishedAt, String recoveryAction, String error);
+    List<SyncTask> findExpiredRecoverableTasks(int limit);
+    void appendTaskEvent(long taskId, String operator, String message);
     List<SyncChannelCheckpoint> findChannels(long taskId);
     void upsertChannel(SyncChannelCheckpoint checkpoint);
     Optional<SyncPrecheckReport> findLatestPrecheck(long taskId);

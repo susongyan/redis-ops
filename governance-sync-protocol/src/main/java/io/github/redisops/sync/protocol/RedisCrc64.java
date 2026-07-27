@@ -18,6 +18,9 @@ public final class RedisCrc64 {
             crc = TABLE[((int) crc ^ value[i]) & 0xff] ^ (crc >>> 8);
         return crc;
     }
+    public static long update(long crc, int value) {
+        return TABLE[((int) crc ^ value) & 0xff] ^ (crc >>> 8);
+    }
     public static long calculate(byte[] value) {
         return update(0, value, 0, value.length);
     }
