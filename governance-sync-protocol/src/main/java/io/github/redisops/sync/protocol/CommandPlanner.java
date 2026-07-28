@@ -1,32 +1,30 @@
 package io.github.redisops.sync.protocol;
 
+import io.github.redisops.domain.sync.SyncCommandCapabilities;
+import io.github.redisops.domain.sync.SyncCommandPolicy;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 public final class CommandPlanner {
-    private static final Set<String> SINGLE_KEY = Set.of("SET", "SETEX", "PSETEX", "SETNX", "APPEND", "GETSET",
-            "INCR", "DECR", "INCRBY", "DECRBY", "INCRBYFLOAT", "HSET", "HMSET", "HSETNX", "HDEL", "HINCRBY",
-            "HINCRBYFLOAT", "LPUSH", "RPUSH", "LPOP", "RPOP", "LSET", "LTRIM", "LREM", "LINSERT", "SADD", "SREM",
-            "ZADD", "ZREM", "ZINCRBY", "ZREMRANGEBYRANK", "ZREMRANGEBYSCORE", "ZREMRANGEBYLEX", "EXPIRE",
-            "PEXPIRE", "EXPIREAT", "PEXPIREAT", "PERSIST", "SETBIT", "BITFIELD", "PFADD", "XADD", "XACK", "XDEL",
-            "XTRIM", "XSETID", "XGROUP", "RESTORE", "UNLINK");
-    private static final Set<String> SPLIT_KEYS = Set.of("DEL", "UNLINK");
-    private static final Set<String> UNSUPPORTED_MULTI = Set.of("MSETNX", "RENAME", "RENAMENX", "BITOP",
-            "SUNIONSTORE", "SINTERSTORE", "SDIFFSTORE", "ZUNIONSTORE", "ZINTERSTORE", "ZDIFFSTORE", "SMOVE",
-            "LMOVE", "RPOPLPUSH", "BRPOPLPUSH", "COPY", "SORT", "EVAL", "EVALSHA", "FCALL", "FCALL_RO");
     private static final byte[] INTERNAL_NAMESPACE = "__redis_ops_sync_".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] INTERNAL_HEARTBEAT = "__redis_ops_sync_hb__:".getBytes(StandardCharsets.US_ASCII);
     private final KeyFilter filter;
     private final boolean clusterTarget;
     private final byte[] allowedHeartbeat;
+    private final SyncCommandPolicy policy;
 
     public CommandPlanner(KeyFilter filter, boolean clusterTarget) {
-        this(filter, clusterTarget, null);
+        this(filter, clusterTarget, null, SyncCommandPolicy.strict());
     }
     public CommandPlanner(KeyFilter filter, boolean clusterTarget, byte[] allowedHeartbeat) {
+        this(filter, clusterTarget, allowedHeartbeat, SyncCommandPolicy.strict());
+    }
+    public CommandPlanner(
+            KeyFilter filter, boolean clusterTarget, byte[] allowedHeartbeat, SyncCommandPolicy policy) {
         this.filter = filter;
         this.clusterTarget = clusterTarget;
         this.allowedHeartbeat = allowedHeartbeat == null ? null : allowedHeartbeat.clone();
+        this.policy = Objects.requireNonNull(policy, "policy");
     }
 
     public CommandPlan plan(ReplicationCommand command) {
@@ -34,10 +32,16 @@ public final class CommandPlanner {
         if (args.isEmpty())
             return CommandPlan.block("empty replication command");
         String name = command.name();
-        if (name.equals("SELECT") || name.equals("PING") || name.equals("REPLCONF"))
+        if (SyncCommandCapabilities.skipped(name))
             return CommandPlan.skip();
-        if (name.equals("FLUSHDB") && clusterTarget)
-            return CommandPlan.block("FLUSHDB requires an explicit all-master target operation");
+        if (SyncCommandCapabilities.hardBlocked(name))
+            return CommandPlan.block("command cannot be safely transformed: " + name);
+        if (SyncCommandCapabilities.destructive(name) && clusterTarget)
+            return CommandPlan.block(name + " requires an explicit all-master target operation");
+        if (policy.additionallyBlocks(name))
+            return CommandPlan.block("command blocked by task policy: " + name);
+        if (SyncCommandCapabilities.destructive(name) && !policy.allowDestructiveCommands())
+            return CommandPlan.block("destructive command is disabled by task policy: " + name);
         if (name.equals("FLUSHDB"))
             return new CommandPlan(CommandPlan.Disposition.APPLY, List.of(new CommandPlan.PlannedCommand(-1, args)),
                     null);
@@ -49,16 +53,17 @@ public final class CommandPlanner {
                             List.of("FLUSHDB".getBytes(StandardCharsets.US_ASCII)))),
                     null);
         }
-        if (name.equals("MSET"))
+        if (name.equals("MSET")) {
+            if (!policy.allowSafeSplit())
+                return CommandPlan.block("safe command splitting is disabled by task policy: MSET");
             return splitMset(args);
-        if (SPLIT_KEYS.contains(name))
+        }
+        if ((name.equals("DEL") || name.equals("UNLINK")) && args.size() > 2 && !policy.allowSafeSplit())
+            return CommandPlan.block("safe command splitting is disabled by task policy: " + name);
+        if (name.equals("DEL") || name.equals("UNLINK"))
             return splitKeys(args);
-        if (SINGLE_KEY.contains(name))
+        if (SyncCommandCapabilities.singleKey(name))
             return single(args);
-        if (UNSUPPORTED_MULTI.contains(name))
-            return CommandPlan.block("command cannot be safely transformed: " + name);
-        if (name.equals("MULTI") || name.equals("EXEC") || name.equals("DISCARD"))
-            return CommandPlan.block("transaction boundaries must be planned as a transaction");
         return CommandPlan.block("unsupported replication command: " + name);
     }
 

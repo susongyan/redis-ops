@@ -14,7 +14,10 @@ import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 
 public final class TargetCommandSession implements AutoCloseable {
@@ -78,6 +81,28 @@ public final class TargetCommandSession implements AutoCloseable {
 
     Optional<TargetCheckpoint> cursor(long taskId, String channel, int slot) throws IOException {
         return checkpoint(command(bytes("GET"), ClusterSlotKeyspace.cursor(taskId, channel, slot)));
+    }
+
+    public Map<String, Long> commandStats() throws IOException {
+        RespValue response = command("INFO", "commandstats");
+        if (!(response instanceof RespValue.Bulk bulk))
+            throw new RespProtocolException("INFO commandstats returned an unexpected response");
+        String info = new String(bulk.value(), StandardCharsets.UTF_8);
+        Map<String, Long> result = new LinkedHashMap<>();
+        for (String line : info.split("\\r?\\n")) {
+            if (!line.startsWith("cmdstat_"))
+                continue;
+            int separator = line.indexOf(':');
+            int calls = line.indexOf("calls=", separator);
+            if (separator < 0 || calls < 0)
+                continue;
+            int end = line.indexOf(',', calls);
+            String command = line.substring("cmdstat_".length(), separator)
+                    .replace('|', ' ').toUpperCase(Locale.ROOT);
+            String count = line.substring(calls + "calls=".length(), end < 0 ? line.length() : end);
+            result.merge(command, Long.parseLong(count), Long::sum);
+        }
+        return Map.copyOf(result);
     }
 
     public Optional<TargetFence> currentFence() throws IOException {

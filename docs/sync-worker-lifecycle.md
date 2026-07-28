@@ -27,6 +27,34 @@
 6. **先持久化再 ACK**：增量数据写入加密 spool 并 fsync 后，才能向源端 ACK received offset。
 7. **失败关闭**：遇到未知 RDB 类型、不可安全拆分命令或 checkpoint 冲突时停止，不静默跳过。
 8. **秘密不进入控制链路**：控制命令和任务 payload 只保存资源 ID，Worker 本地读取并解密密码。
+
+### 2.1 命令兼容策略
+
+同步任务创建时会固化一份 `commandPolicyJson`，Worker 始终按该快照判断增量命令，后续平台默认值
+变化不会影响已创建任务。策略包含：
+
+- `allowSafeSplit`：是否允许 `MSET`、`DEL`、`UNLINK` 按 Key/Slot 拆分。拆分后数据能够收敛，
+  但不承诺原命令的跨 Key 原子性。
+- `allowDestructiveCommands`：是否允许 Standalone/Sentinel 目标执行 `FLUSHDB`、`FLUSHALL`。
+  Cluster 目标始终禁止，因为增量通道不能原子地完成全 master 清空。
+- `additionalBlockedCommands`：任务级额外屏蔽命令，只能收紧能力，不能放开硬阻塞命令。
+- `policyVersion`：策略语义版本，当前为 `v1`。
+
+`MSETNX`、`RENAME/RENAMENX`、聚合写入、Lua/Function 调用、事务边界等无法保证等价转换或
+原子性的命令属于硬阻塞，不提供放开配置。未登记的新命令采用失败关闭策略，运行时进入
+`BLOCKED_UNSUPPORTED_COMMAND`，不会静默跳过。
+
+创建任务前可调用 `GET /api/v1/sync-command-capabilities`，按目标部署模式和拟采用策略查看完整能力
+清单。预检查还会读取源端 `INFO commandstats`，将历史上出现过的已知阻塞命令列为 `WARNING`。
+该统计只代表历史调用，不代表命令一定会进入本任务的复制流，也无法证明未来不会出现；最终仍以
+Worker 收到的真实复制命令为准。
+
+页面展示位置包括：
+
+- 新增同步任务弹窗中的“命令兼容策略”和“完整命令清单”。
+- 任务详情中的策略快照。
+- 预检查明细中的 `COMMAND_POLICY` 与 `SOURCE_COMMAND_HISTORY`。
+- 任务阻塞提示和事件记录中的阻塞码、命令名、复制 offset；事件禁止记录原始 Key 和 Value。
 9. **切换不等于流量变更**：Worker 负责追平和停止复制，不修改 DNS、代理或应用配置。
 
 ## 3. 组件架构

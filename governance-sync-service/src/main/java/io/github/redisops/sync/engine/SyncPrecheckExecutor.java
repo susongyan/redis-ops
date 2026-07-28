@@ -46,10 +46,12 @@ public class SyncPrecheckExecutor {
         passed &= check(checks, "VERSION_COMPATIBILITY", () -> compatibleVersions(task));
         passed &= check(checks, "DATABASE_MAPPING", () -> validDatabases(task));
         passed &= check(checks, "RUNNER_TOPOLOGY", () -> supportedTopology(task));
+        passed &= check(checks, "COMMAND_POLICY", () -> commandPolicySummary(task));
         passed &= check(checks, "SOURCE_CONNECTION", () -> discover(task.sourceClusterId()));
         passed &= check(checks, "TARGET_CONNECTION", () -> discover(task.targetClusterId()));
         passed &= check(checks, "RESERVED_NAMESPACE", () -> reservedNamespace(task));
         passed &= check(checks, "WORKER_SPOOL_STORAGE", this::spoolStorage);
+        commandHistoryRisk(checks, task);
         Instant checked = Instant.now();
         String report;
         try {
@@ -142,6 +144,78 @@ public class SyncPrecheckExecutor {
         if (usable < segmentBytes)
             throw new IllegalStateException("worker data volume cannot hold one configured spool segment");
         return "usableBytes=" + usable + ", segmentBytes=" + segmentBytes;
+    }
+
+    private String commandPolicySummary(SyncTask task) throws Exception {
+        SyncCommandPolicy policy = commandPolicy(task);
+        RedisCluster target = clusters.findById(task.targetClusterId()).orElseThrow();
+        long blocked = SyncCommandCapabilities.all(target.mode() == ClusterMode.CLUSTER, policy).stream()
+                .filter(SyncCommandCapability::currentlyBlocked)
+                .count();
+        return "policy=" + policy.policyVersion() + ", blockedKnownCommands=" + blocked
+                + ", unknownCommands=BLOCK";
+    }
+
+    private void commandHistoryRisk(List<Map<String, Object>> checks, SyncTask task) {
+        try {
+            RedisCluster sourceCluster = clusters.findById(task.sourceClusterId()).orElseThrow();
+            RedisCluster targetCluster = clusters.findById(task.targetClusterId()).orElseThrow();
+            SyncCommandPolicy policy = commandPolicy(task);
+            Map<String, Long> stats = sourceCommandStats(task, sourceCluster.mode());
+            List<Map<String, Object>> risks = stats.entrySet().stream()
+                    .map(entry -> Map.entry(entry,
+                            SyncCommandCapabilities.classify(entry.getKey().split(" ", 2)[0],
+                                    targetCluster.mode() == ClusterMode.CLUSTER, policy)))
+                    .filter(entry -> entry.getValue().currentlyBlocked())
+                    .sorted(Comparator.<Map.Entry<Map.Entry<String, Long>, SyncCommandCapability>>comparingLong(
+                            entry -> entry.getKey().getValue()).reversed())
+                    .limit(50)
+                    .map(entry -> Map.<String, Object>of(
+                            "command", entry.getKey().getKey(),
+                            "calls", entry.getKey().getValue(),
+                            "category", entry.getValue().category(),
+                            "reason", entry.getValue().reason()))
+                    .toList();
+            if (risks.isEmpty()) {
+                checks.add(Map.of("name", "SOURCE_COMMAND_HISTORY", "status", "PASSED",
+                        "message", "INFO commandstats 中未发现已知的阻塞命令"));
+            } else {
+                checks.add(Map.of("name", "SOURCE_COMMAND_HISTORY", "status", "WARNING",
+                        "message", "源端历史统计中存在可能阻塞同步的命令；历史调用不代表同步期间一定发生",
+                        "risks", risks));
+            }
+        } catch (Exception error) {
+            checks.add(Map.of("name", "SOURCE_COMMAND_HISTORY", "status", "WARNING",
+                    "message", "无法读取 INFO commandstats，不影响预检查通过：" + safe(error.getMessage())));
+        }
+    }
+
+    private Map<String, Long> sourceCommandStats(SyncTask task, ClusterMode mode) throws Exception {
+        Map<String, Long> aggregated = new LinkedHashMap<>();
+        try (RedisConnectionProfile profile = profiles.get(task.sourceClusterId())) {
+            if (mode == ClusterMode.CLUSTER) {
+                Set<RedisEndpoint> masters = new LinkedHashSet<>();
+                for (RedisDataEndpointResolver.ClusterMaster master : endpoints.resolveClusterMasters(profile))
+                    masters.add(master.endpoint());
+                for (RedisEndpoint master : masters) {
+                    try (TargetCommandSession source = TargetCommandSession.clusterSlot(profile, master, task.id(),
+                            java.time.Duration.ofSeconds(10), "precheck-source", 0)) {
+                        source.commandStats().forEach((command, calls) -> aggregated.merge(command, calls, Long::sum));
+                    }
+                }
+            } else {
+                try (TargetCommandSession source = new TargetCommandSession(profile,
+                        endpoints.resolvePrimary(profile), task.sourceDb(), task.id(),
+                        java.time.Duration.ofSeconds(10))) {
+                    aggregated.putAll(source.commandStats());
+                }
+            }
+        }
+        return aggregated;
+    }
+
+    private SyncCommandPolicy commandPolicy(SyncTask task) throws Exception {
+        return json.readValue(task.commandPolicyJson(), SyncCommandPolicy.class);
     }
     private static int[] version(String value) {
         try {

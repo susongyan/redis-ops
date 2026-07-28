@@ -4,6 +4,7 @@ import io.github.redisops.api.*;
 import io.github.redisops.application.IdempotencyService;
 import io.github.redisops.application.sync.SyncService;
 import io.github.redisops.common.PageResult;
+import io.github.redisops.domain.asset.ClusterMode;
 import io.github.redisops.domain.sync.*;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -31,13 +32,29 @@ public class SyncController {
                 () -> service.create(body.relationId, body.sourceClusterId, body.targetClusterId, body.purpose,
                         body.syncMode, body.sourceDb, body.targetDb, body.includePatterns, body.excludePatterns,
                         body.rateLimitOps, body.bandwidthLimitBytesPerSecond, body.spoolLimitBytes,
-                        body.fullApplyConcurrency, body.fullApplyPipelineSize, operator),
+                        body.fullApplyConcurrency, body.fullApplyPipelineSize,
+                        body.commandPolicy == null ? null : body.commandPolicy.allowDestructiveCommands,
+                        body.commandPolicy == null ? null : body.commandPolicy.allowSafeSplit,
+                        body.commandPolicy == null ? null : body.commandPolicy.additionalBlockedCommands, operator),
                 x -> x.id().toString(), id -> service.get(Long.parseLong(id))), request);
     }
 
     @GetMapping("/api/v1/sync-tasks")
     ApiResponse<List<SyncTask>> list(@RequestParam(required = false) Long relationId, HttpServletRequest request) {
         return wrap(service.list(relationId), request);
+    }
+
+    @GetMapping("/api/v1/sync-command-capabilities")
+    ApiResponse<CommandCapabilityResponse> commandCapabilities(
+            @RequestParam ClusterMode targetMode,
+            @RequestParam(defaultValue = "false") boolean allowDestructiveCommands,
+            @RequestParam(defaultValue = "true") boolean allowSafeSplit,
+            @RequestParam(required = false) Set<String> additionalBlockedCommands,
+            HttpServletRequest request) {
+        var policy = new SyncCommandPolicy(allowDestructiveCommands, allowSafeSplit,
+                additionalBlockedCommands, SyncCommandPolicy.CURRENT_VERSION);
+        return wrap(new CommandCapabilityResponse(targetMode, policy, "BLOCK",
+                SyncCommandCapabilities.all(targetMode == ClusterMode.CLUSTER, policy)), request);
     }
 
     @GetMapping("/api/v1/sync-tasks/{id}")
@@ -170,7 +187,19 @@ public class SyncController {
             @Positive Long rateLimitOps, @Positive Long bandwidthLimitBytesPerSecond,
             @Positive Long spoolLimitBytes,
             @Min(1) @Max(64) Integer fullApplyConcurrency,
-            @Min(1) @Max(10000) Integer fullApplyPipelineSize) {
+            @Min(1) @Max(10000) Integer fullApplyPipelineSize,
+            @Valid SyncCommandPolicyRequest commandPolicy) {
+    }
+    public record SyncCommandPolicyRequest(
+            Boolean allowDestructiveCommands,
+            Boolean allowSafeSplit,
+            @Size(max = 100) Set<@Pattern(regexp = "[A-Za-z][A-Za-z0-9_-]{0,63}") String> additionalBlockedCommands) {
+    }
+    public record CommandCapabilityResponse(
+            ClusterMode targetMode,
+            SyncCommandPolicy policy,
+            String unknownCommandPolicy,
+            List<SyncCommandCapability> commands) {
     }
     public record StartRequest(boolean writeFenced, @NotBlank String writeFenceNote, boolean allowTargetFlush,
             @NotBlank String confirmationTaskNo) {

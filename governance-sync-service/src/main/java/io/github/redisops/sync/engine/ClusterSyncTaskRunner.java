@@ -266,6 +266,14 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         }
     }
 
+    private SyncCommandPolicy commandPolicy() {
+        try {
+            return json.readValue(task.commandPolicyJson(), SyncCommandPolicy.class);
+        } catch (IOException error) {
+            throw new IllegalArgumentException("invalid sync command policy", error);
+        }
+    }
+
     private void requirePrepared() {
         if (channels.isEmpty() || generation < 1)
             throw new IllegalStateException("Cluster runner is not prepared and leased");
@@ -417,7 +425,8 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                     ? ClusterSlotKeyspace.heartbeat(task.id(), spec.channel(), heartbeatSlot)
                     : ("__redis_ops_sync_hb__:{" + task.id() + "}:" + spec.channel())
                             .getBytes(StandardCharsets.US_ASCII);
-            this.planner = new CommandPlanner(filter, targetProfile.mode() == ClusterMode.CLUSTER, heartbeatKey);
+            this.planner = new CommandPlanner(filter, targetProfile.mode() == ClusterMode.CLUSTER, heartbeatKey,
+                    commandPolicy());
             this.spool = new EncryptedSpool(dataDirectory, task.id(), spec.channel(),
                     spoolKeys.taskKey(task.id()), segmentBytes, spoolLimit);
             this.executor = Executors.newFixedThreadPool(2, runnable -> {

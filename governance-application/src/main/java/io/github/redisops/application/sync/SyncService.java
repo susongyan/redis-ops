@@ -45,6 +45,17 @@ public class SyncService {
             Integer sourceDb, Integer targetDb, List<String> includes, List<String> excludes,
             Long rateLimitOps, Long bandwidthLimit, Long spoolLimit, Integer fullApplyConcurrency,
             Integer fullApplyPipelineSize, String operator) {
+        return create(relationId, sourceId, targetId, purpose, mode, sourceDb, targetDb, includes, excludes,
+                rateLimitOps, bandwidthLimit, spoolLimit, fullApplyConcurrency, fullApplyPipelineSize,
+                null, null, null, operator);
+    }
+
+    @Transactional
+    public SyncTask create(Long relationId, Long sourceId, Long targetId, SyncPurpose purpose, SyncMode mode,
+            Integer sourceDb, Integer targetDb, List<String> includes, List<String> excludes,
+            Long rateLimitOps, Long bandwidthLimit, Long spoolLimit, Integer fullApplyConcurrency,
+            Integer fullApplyPipelineSize, Boolean allowDestructiveCommands, Boolean allowSafeSplit,
+            Set<String> additionalBlockedCommands, String operator) {
         long source, target;
         SyncPurpose actualPurpose;
         if (relationId != null) {
@@ -77,8 +88,12 @@ public class SyncService {
                 1, 64, "fullApplyConcurrency");
         int pipelineSize = boundedOrDefault(fullApplyPipelineSize, SyncTask.DEFAULT_FULL_APPLY_PIPELINE_SIZE,
                 1, 10_000, "fullApplyPipelineSize");
+        var commandPolicy = new SyncCommandPolicy(Boolean.TRUE.equals(allowDestructiveCommands),
+                allowSafeSplit == null || allowSafeSplit, additionalBlockedCommands,
+                SyncCommandPolicy.CURRENT_VERSION);
         var task = newTask(relationId, source, target, actualPurpose, actualSourceDb, actualTargetDb,
-                toJson(actualIncludes), toJson(actualExcludes), ops, bandwidth, spool, concurrency, pipelineSize);
+                toJson(actualIncludes), toJson(actualExcludes), toJson(commandPolicy), ops, bandwidth, spool,
+                concurrency, pipelineSize);
         var saved = sync.saveTask(task, operator, "native Java sync task created");
         audit(operator, "SYNC_TASK_CREATE", "SYNC_TASK", saved.id());
         return saved;
@@ -223,7 +238,8 @@ public class SyncService {
         var changed = new SyncTask(old.id(), old.taskNo(), old.relationId(), old.sourceClusterId(),
                 old.targetClusterId(),
                 old.purpose(), old.syncMode(), old.status(), old.toolType(), old.sourceDb(), old.targetDb(),
-                old.includePatternsJson(), old.excludePatternsJson(), ops, bytes, spool, concurrency, pipelineSize,
+                old.includePatternsJson(), old.excludePatternsJson(), old.commandPolicyJson(), ops, bytes, spool,
+                concurrency, pipelineSize,
                 SyncAction.RATE_LIMIT.name(),
                 old.writeFenced(), old.writeFenceNote(), old.blockedReason(), old.fullSyncEpoch(), old.lastRpoSeconds(),
                 old.lastError(), old.version(), old.createdAt(), Instant.now(), old.finishedAt());
@@ -249,7 +265,7 @@ public class SyncService {
                     changed.targetClusterId(), changed.purpose(), changed.syncMode(), changed.status(),
                     changed.toolType(),
                     changed.sourceDb(), changed.targetDb(), changed.includePatternsJson(),
-                    changed.excludePatternsJson(),
+                    changed.excludePatternsJson(), changed.commandPolicyJson(),
                     changed.rateLimitOps(), changed.bandwidthLimitBytesPerSecond(), changed.spoolLimitBytes(),
                     changed.fullApplyConcurrency(), changed.fullApplyPipelineSize(),
                     changed.desiredAction(), changed.writeFenced(), changed.writeFenceNote(), changed.blockedReason(),
@@ -328,7 +344,8 @@ public class SyncService {
         var oldTask = get(sw.stoppedTaskId());
         var reverse = sync.saveTask(newTask(relation.id(), relation.standbyClusterId(), relation.primaryClusterId(),
                 SyncPurpose.DISASTER_RECOVERY, oldTask.targetDb(), oldTask.sourceDb(), oldTask.includePatternsJson(),
-                oldTask.excludePatternsJson(), oldTask.rateLimitOps(), oldTask.bandwidthLimitBytesPerSecond(),
+                oldTask.excludePatternsJson(), oldTask.commandPolicyJson(), oldTask.rateLimitOps(),
+                oldTask.bandwidthLimitBytesPerSecond(),
                 oldTask.spoolLimitBytes(), oldTask.fullApplyConcurrency(), oldTask.fullApplyPipelineSize()), operator,
                 "reverse full-sync task created; requires precheck and target flush confirmation");
         var done = new Switchover(sw.id(), sw.relationId(), sw.oldPrimaryClusterId(), sw.oldStandbyClusterId(),
@@ -400,14 +417,14 @@ public class SyncService {
     }
 
     private SyncTask newTask(Long relationId, long source, long target, SyncPurpose purpose, int sourceDb, int targetDb,
-            String includes, String excludes, long ops, long bandwidth, long spool, int fullApplyConcurrency,
-            int fullApplyPipelineSize) {
+            String includes, String excludes, String commandPolicy, long ops, long bandwidth, long spool,
+            int fullApplyConcurrency, int fullApplyPipelineSize) {
         var now = Instant.now();
         return new SyncTask(null,
                 "SYNC-" + UUID.randomUUID().toString().replace("-", "").substring(0, 20).toUpperCase(),
                 relationId, source, target, purpose, SyncMode.FULL_AND_INCREMENTAL, SyncTaskStatus.CREATED,
                 "NATIVE_JAVA",
-                sourceDb, targetDb, includes, excludes, ops, bandwidth, spool, fullApplyConcurrency,
+                sourceDb, targetDb, includes, excludes, commandPolicy, ops, bandwidth, spool, fullApplyConcurrency,
                 fullApplyPipelineSize, null, false, null, null, null,
                 null, null, 0, now, now, null);
     }
@@ -416,7 +433,7 @@ public class SyncService {
             String blocked, String epoch, String error) {
         return new SyncTask(old.id(), old.taskNo(), old.relationId(), old.sourceClusterId(), old.targetClusterId(),
                 old.purpose(), old.syncMode(), status, old.toolType(), old.sourceDb(), old.targetDb(),
-                old.includePatternsJson(), old.excludePatternsJson(), old.rateLimitOps(),
+                old.includePatternsJson(), old.excludePatternsJson(), old.commandPolicyJson(), old.rateLimitOps(),
                 old.bandwidthLimitBytesPerSecond(), old.spoolLimitBytes(), old.fullApplyConcurrency(),
                 old.fullApplyPipelineSize(), desired, fenced, fenceNote, blocked,
                 epoch == null ? old.fullSyncEpoch() : epoch, old.lastRpoSeconds(), error, old.version(),

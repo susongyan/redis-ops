@@ -19,7 +19,13 @@ import {
   Tag,
   Tooltip,
 } from 'antd'
-import { InfoCircleOutlined, PlusOutlined, SettingOutlined } from '@ant-design/icons'
+import {
+  InfoCircleOutlined,
+  PlusOutlined,
+  SafetyCertificateOutlined,
+  SettingOutlined,
+  WarningOutlined,
+} from '@ant-design/icons'
 import { api } from '../api.js'
 
 const editableFullApplyStatuses = new Set(['CREATED', 'CHECKING', 'READY', 'FAILED', 'BLOCKED'])
@@ -54,6 +60,14 @@ const statusMeta = {
 }
 const mib = 1024 * 1024
 const gib = 1024 * 1024 * 1024
+const capabilityMeta = {
+  SUPPORTED: ['直接同步', 'success'],
+  TRANSFORMABLE: ['转换后同步', 'warning'],
+  HARD_BLOCKED: ['硬阻塞', 'error'],
+  POLICY_BLOCKED: ['策略阻塞', 'error'],
+  UNKNOWN_BLOCKED: ['未知即阻塞', 'error'],
+  IGNORED: ['协议忽略', 'default'],
+}
 
 function TipLabel({ label, tip }) {
   return (
@@ -84,6 +98,11 @@ export default function SyncTasksPage() {
   const metricSignatureRef = useRef('')
   const [startTask, setStartTask] = useState(null)
   const [finishTask, setFinishTask] = useState(null)
+  const [capabilities, setCapabilities] = useState(null)
+  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false)
+  const [capabilityLoading, setCapabilityLoading] = useState(false)
+  const [capabilityContext, setCapabilityContext] = useState('')
+  const [capabilityCategory, setCapabilityCategory] = useState()
   const [form] = Form.useForm()
   const [tuningForm] = Form.useForm()
   const [startForm] = Form.useForm()
@@ -91,6 +110,10 @@ export default function SyncTasksPage() {
   const relationId = Form.useWatch('relationId', form)
   const selectedSourceClusterId = Form.useWatch('sourceClusterId', form)
   const selectedTargetClusterId = Form.useWatch('targetClusterId', form)
+  const allowDestructiveCommands = Form.useWatch(
+    ['commandPolicy', 'allowDestructiveCommands'],
+    form,
+  )
   const selectedRelation = relations.find((relation) => relation.id === relationId)
   const sourceCluster = clusters.find((cluster) => (
     cluster.id === (selectedRelation?.primaryClusterId || selectedSourceClusterId)
@@ -100,6 +123,40 @@ export default function SyncTasksPage() {
   ))
   const sourceDbRequired = ['STANDALONE', 'SENTINEL'].includes(sourceCluster?.mode)
   const targetDbRequired = ['STANDALONE', 'SENTINEL'].includes(targetCluster?.mode)
+  const clusterTarget = targetCluster?.mode === 'CLUSTER'
+
+  useEffect(() => {
+    if (clusterTarget && allowDestructiveCommands) {
+      form.setFieldValue(['commandPolicy', 'allowDestructiveCommands'], false)
+    }
+  }, [clusterTarget, allowDestructiveCommands, form])
+
+  const commandPolicy = (task) => {
+    if (!task?.commandPolicyJson) return {}
+    try {
+      return JSON.parse(task.commandPolicyJson)
+    } catch {
+      return {}
+    }
+  }
+
+  const blockedReasonLabel = (reason) => ({
+    BLOCKED_UNSUPPORTED_COMMAND: '检测到不兼容或被策略屏蔽的 Redis 命令',
+    BLOCKED_FILTER_BOUNDARY: '命令跨越 Key 过滤边界，无法保证等价同步',
+    BLOCKED_REQUIRES_FULL_RESYNC: '复制积压不足，需要人工确认重新全量同步',
+    BLOCKED_RESERVED_NAMESPACE: '目标端保留命名空间存在冲突',
+  }[reason] || reason || '同步任务执行失败')
+
+  const precheckChecks = (report) => {
+    try {
+      return JSON.parse(report?.reportJson || '{}').checks || []
+    } catch {
+      return []
+    }
+  }
+
+  const precheckWarningCount = (report) => precheckChecks(report)
+    .filter((check) => check.status === 'WARNING').length
 
   const channelSignature = (channels = []) => channels.map((channel) => [
     channel.channelId,
@@ -172,6 +229,7 @@ export default function SyncTasksPage() {
   }, [rows, detail?.task?.id])
 
   const name = (id) => clusters.find((cluster) => cluster.id === id)?.name || id
+  const mode = (id) => clusters.find((cluster) => cluster.id === id)?.mode
   const clusterLabel = (id) => {
     const cluster = clusters.find((item) => item.id === id)
     const idc = idcs.find((item) => item.id === cluster?.idcId)
@@ -218,8 +276,32 @@ export default function SyncTasksPage() {
       spoolLimitGiB: 50,
       fullApplyConcurrency: 4,
       fullApplyPipelineSize: 100,
+      commandPolicy: {
+        allowDestructiveCommands: false,
+        allowSafeSplit: true,
+        additionalBlockedCommands: [],
+      },
     })
     setOpen(true)
+  }
+
+  const showCapabilities = async (targetMode = targetCluster?.mode, policy, context = '新建任务') => {
+    try {
+      if (!targetMode) {
+        message.warning('请先选择目标集群')
+        return
+      }
+      setCapabilityLoading(true)
+      const values = policy || form.getFieldValue('commandPolicy') || {}
+      setCapabilities(await api.syncCommandCapabilities(targetMode, values))
+      setCapabilityContext(`${context} · ${targetMode}`)
+      setCapabilityCategory(undefined)
+      setCapabilitiesOpen(true)
+    } catch (error) {
+      message.error(error.message)
+    } finally {
+      setCapabilityLoading(false)
+    }
   }
 
   const openTuning = (task) => {
@@ -371,6 +453,18 @@ export default function SyncTasksPage() {
     return <Tag color={color}>{label}</Tag>
   }
 
+  const normalizeBlockedCommands = (commands = []) => [...new Set(commands
+    .map((command) => command.trim().toUpperCase())
+    .filter(Boolean))]
+
+  const visibleCapabilities = (capabilities?.commands || [])
+    .filter((item) => !capabilityCategory || item.category === capabilityCategory)
+
+  const capabilityCounts = (capabilities?.commands || []).reduce((counts, item) => ({
+    ...counts,
+    [item.category]: (counts[item.category] || 0) + 1,
+  }), {})
+
   const columns = [
     {
       title: '任务号',
@@ -422,7 +516,16 @@ export default function SyncTasksPage() {
       </div>
       <Table rowKey="id" dataSource={rows} columns={columns} scroll={{ x: 1100 }} />
 
-      <Modal title="新增同步任务" width={720} open={open} onCancel={() => setOpen(false)} onOk={create}>
+      <Modal
+        title="新增同步任务"
+        width={760}
+        open={open}
+        okText="创建任务"
+        cancelText="取消"
+        styles={{ body: { maxHeight: '72vh', overflowY: 'auto', paddingRight: 8 } }}
+        onCancel={() => setOpen(false)}
+        onOk={create}
+      >
         <Form form={form} layout="vertical">
           <Form.Item name="relationId" label="长期主备关系（可选）">
             <Select
@@ -533,6 +636,99 @@ export default function SyncTasksPage() {
               </Form.Item>
             </Col>
           </Row>
+          <section className="sync-command-policy-section">
+            <div className="sync-command-policy-header">
+              <div>
+                <h3>命令兼容策略</h3>
+                <div className="muted">策略会随任务固化，任务创建后不再跟随平台默认值变化</div>
+              </div>
+              <Button
+                icon={<SafetyCertificateOutlined />}
+                loading={capabilityLoading}
+                onClick={() => showCapabilities()}
+              >
+                查看完整命令清单
+              </Button>
+            </div>
+            <Alert
+              type="info"
+              showIcon
+              message="未知命令和无法安全转换的命令始终阻塞任务"
+              description="配置只能收紧策略，或显式允许已知的安全拆分和危险命令；硬阻塞命令不能放开。"
+              style={{ marginBottom: 16 }}
+            />
+            <Row gutter={16}>
+              <Col xs={24} md={12}>
+                <div className="sync-policy-option">
+                  <Form.Item
+                    name={['commandPolicy', 'allowSafeSplit']}
+                    valuePropName="checked"
+                    noStyle
+                  >
+                    <Checkbox>允许安全拆分多 Key 命令</Checkbox>
+                  </Form.Item>
+                  <div className="sync-policy-option-help">
+                    MSET、DEL、UNLINK 可按 Key/Slot 拆分，但不保留跨 Key 原子性。
+                  </div>
+                </div>
+              </Col>
+              <Col xs={24} md={12}>
+                <div className={`sync-policy-option ${clusterTarget ? 'sync-policy-option-disabled' : ''}`}>
+                  <Form.Item
+                    name={['commandPolicy', 'allowDestructiveCommands']}
+                    valuePropName="checked"
+                    noStyle
+                  >
+                    <Checkbox disabled={clusterTarget}>允许 FLUSHDB / FLUSHALL</Checkbox>
+                  </Form.Item>
+                  <div className="sync-policy-option-help">
+                    {clusterTarget
+                      ? 'Cluster 目标始终禁止，无法在增量流中原子清空全部 Master。'
+                      : '默认禁止；仅在确认源端清空操作应同步到目标时启用。'}
+                  </div>
+                </div>
+              </Col>
+            </Row>
+            {allowDestructiveCommands && !clusterTarget && (
+              <Alert
+                type="warning"
+                showIcon
+                icon={<WarningOutlined />}
+                message="已允许危险清空命令"
+                description="同步流中的 FLUSHDB / FLUSHALL 会清空目标 DB，请确认这符合迁移或容灾语义。"
+                style={{ marginTop: 12 }}
+              />
+            )}
+            <Form.Item
+              name={['commandPolicy', 'additionalBlockedCommands']}
+              label="额外屏蔽命令"
+              extra="输入命令名后回车，最多 100 个；只会进一步收紧，不会覆盖硬阻塞规则"
+              rules={[
+                {
+                  validator: (_, commands = []) => commands.length <= 100
+                    ? Promise.resolve()
+                    : Promise.reject(new Error('最多配置 100 个额外屏蔽命令')),
+                },
+                {
+                  validator: (_, commands = []) => commands.every(
+                    (command) => /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(command),
+                  )
+                    ? Promise.resolve()
+                    : Promise.reject(new Error('命令名只能包含字母、数字、下划线和连字符')),
+                },
+              ]}
+            >
+              <Select
+                mode="tags"
+                tokenSeparators={[',', ' ']}
+                placeholder="例如 DEL、EXPIRE"
+                onChange={(commands) => form.setFieldValue(
+                  ['commandPolicy', 'additionalBlockedCommands'],
+                  normalizeBlockedCommands(commands),
+                )}
+              />
+            </Form.Item>
+          </section>
           <Form.Item name="syncMode" hidden><Input /></Form.Item>
         </Form>
       </Modal>
@@ -670,7 +866,7 @@ export default function SyncTasksPage() {
               <Alert
                 type="error"
                 showIcon
-                message={detail.task.blockedReason || '同步任务执行失败'}
+                message={blockedReasonLabel(detail.task.blockedReason)}
                 description={detail.task.lastError}
                 style={{ marginBottom: 16 }}
               />
@@ -687,22 +883,95 @@ export default function SyncTasksPage() {
                 { key: 'pipeline', label: 'Pipeline', children: detail.task.fullApplyPipelineSize },
                 { key: 'rate', label: '最大 ops/s', children: detail.task.rateLimitOps },
                 { key: 'bandwidth', label: '带宽', children: `${detail.task.bandwidthLimitBytesPerSecond / mib} MiB/s` },
+                {
+                  key: 'commandPolicy',
+                  label: '命令策略',
+                  children: (() => {
+                    const policy = commandPolicy(detail.task)
+                    return (
+                      <Space wrap>
+                        <Tag color={policy.allowSafeSplit === false ? 'default' : 'blue'}>
+                          安全拆分：{policy.allowSafeSplit === false ? '关闭' : '开启'}
+                        </Tag>
+                        <Tag color={policy.allowDestructiveCommands ? 'warning' : 'success'}>
+                          清空命令：{policy.allowDestructiveCommands ? '允许' : '禁止'}
+                        </Tag>
+                        <Tag>额外屏蔽：{(policy.additionalBlockedCommands || []).length}</Tag>
+                        <Button
+                          type="link"
+                          size="small"
+                          onClick={() => showCapabilities(
+                            mode(detail.task.targetClusterId),
+                            policy,
+                            detail.task.taskNo,
+                          )}
+                        >
+                          查看清单
+                        </Button>
+                      </Space>
+                    )
+                  })(),
+                },
               ]}
             />
           </>
         )}
         <h3>预检查</h3>
         {detail?.precheck ? (
-          <Descriptions
-            bordered
-            size="small"
-            column={3}
-            items={[
-              { key: 'status', label: '结果', children: <Tag color={detail.precheck.status === 'PASSED' ? 'success' : 'error'}>{detail.precheck.status}</Tag> },
-              { key: 'checkedAt', label: '检查时间', children: detail.precheck.checkedAt },
-              { key: 'validUntil', label: '有效期至', children: detail.precheck.validUntil },
-            ]}
-          />
+          <>
+            <Descriptions
+              bordered
+              size="small"
+              column={3}
+              items={[
+                {
+                  key: 'status',
+                  label: '结果',
+                  children: (
+                    <Space>
+                      <Tag color={detail.precheck.status === 'PASSED' ? 'success' : 'error'}>
+                        {detail.precheck.status}
+                      </Tag>
+                      {precheckWarningCount(detail.precheck) > 0 && (
+                        <Tag color="warning">{precheckWarningCount(detail.precheck)} 项风险提示</Tag>
+                      )}
+                    </Space>
+                  ),
+                },
+                { key: 'checkedAt', label: '检查时间', children: detail.precheck.checkedAt },
+                { key: 'validUntil', label: '有效期至', children: detail.precheck.validUntil },
+              ]}
+            />
+            <Table
+              rowKey="name"
+              size="small"
+              pagination={false}
+              style={{ marginTop: 12 }}
+              dataSource={precheckChecks(detail.precheck)}
+              columns={[
+                { title: '检查项', dataIndex: 'name', width: 210 },
+                {
+                  title: '结果',
+                  dataIndex: 'status',
+                  width: 100,
+                  render: (value) => <Tag color={value === 'PASSED' ? 'success' : value === 'WARNING' ? 'warning' : 'error'}>{value}</Tag>,
+                },
+                {
+                  title: '说明',
+                  render: (_, row) => (
+                    <div>
+                      <div>{row.message}</div>
+                      {(row.risks || []).map((risk) => (
+                        <Tag color="warning" key={risk.command} style={{ marginTop: 6 }}>
+                          {risk.command} · 历史 {risk.calls} 次 · {risk.reason}
+                        </Tag>
+                      ))}
+                    </div>
+                  ),
+                },
+              ]}
+            />
+          </>
         ) : <div className="muted">尚未执行预检查</div>}
 
         <h3>运行实例</h3>
@@ -874,6 +1143,82 @@ export default function SyncTasksPage() {
           ]}
         />
       </Drawer>
+      <Modal
+        title="同步命令能力清单"
+        open={capabilitiesOpen}
+        width={960}
+        footer={null}
+        styles={{ body: { maxHeight: '72vh', overflowY: 'auto', paddingRight: 8 } }}
+        onCancel={() => setCapabilitiesOpen(false)}
+      >
+        <div className="sync-capability-toolbar">
+          <div>
+            <div className="sync-capability-context">{capabilityContext}</div>
+            <Space wrap size={[6, 6]}>
+              {Object.entries(capabilityCounts).map(([category, count]) => (
+                <Tag
+                  key={category}
+                  color={capabilityMeta[category]?.[1]}
+                  className="sync-capability-summary-tag"
+                  onClick={() => setCapabilityCategory(
+                    capabilityCategory === category ? undefined : category,
+                  )}
+                >
+                  {capabilityMeta[category]?.[0] || category} {count}
+                </Tag>
+              ))}
+            </Space>
+          </div>
+          <Select
+            allowClear
+            value={capabilityCategory}
+            placeholder="筛选处理方式"
+            style={{ width: 180 }}
+            onChange={setCapabilityCategory}
+            options={Object.entries(capabilityMeta).map(([value, meta]) => ({
+              value,
+              label: meta[0],
+            }))}
+          />
+        </div>
+        <Alert
+          type="warning"
+          showIcon
+          message={`未知命令处理：${capabilities?.unknownCommandPolicy === 'BLOCK' ? '阻塞任务' : capabilities?.unknownCommandPolicy}`}
+          description="源端 INFO commandstats 只能提供历史风险提示，真正进入复制流时仍以本任务的策略快照判定。"
+          style={{ marginBottom: 16 }}
+        />
+        <Table
+          rowKey="command"
+          size="small"
+          pagination={{
+            pageSize: 15,
+            showSizeChanger: false,
+            showTotal: (total) => `共 ${total} 条`,
+          }}
+          dataSource={visibleCapabilities}
+          columns={[
+            { title: '命令', dataIndex: 'command', width: 150 },
+            {
+              title: '处理方式',
+              dataIndex: 'category',
+              width: 170,
+              render: (value) => (
+                <Tag color={capabilityMeta[value]?.[1]}>
+                  {capabilityMeta[value]?.[0] || value}
+                </Tag>
+              ),
+            },
+            { title: '说明', dataIndex: 'reason' },
+            {
+              title: '可配置',
+              dataIndex: 'configurable',
+              width: 90,
+              render: (value) => value ? '是' : '否',
+            },
+          ]}
+        />
+      </Modal>
     </>
   )
 }

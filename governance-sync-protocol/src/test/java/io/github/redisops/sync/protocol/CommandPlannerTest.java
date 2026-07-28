@@ -1,8 +1,10 @@
 package io.github.redisops.sync.protocol;
 
+import io.github.redisops.domain.sync.SyncCommandPolicy;
 import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CommandPlannerTest {
@@ -19,13 +21,32 @@ class CommandPlannerTest {
 
     @Test
     void mapsSourceFlushAllToSelectedStandaloneTargetDatabaseOnly() {
-        CommandPlanner planner = new CommandPlanner(new KeyFilter(List.of("*"), List.of()), false);
+        CommandPlanner planner = new CommandPlanner(new KeyFilter(List.of("*"), List.of()), false, null,
+                new SyncCommandPolicy(true, true, Set.of(), "v1"));
 
         CommandPlan plan = planner.plan(command("FLUSHALL"));
 
         assertEquals(CommandPlan.Disposition.APPLY, plan.disposition());
         assertEquals("FLUSHDB", new String(plan.commands().get(0).arguments().get(0),
                 java.nio.charset.StandardCharsets.US_ASCII));
+    }
+
+    @Test
+    void strictPolicyBlocksDestructiveCommands() {
+        CommandPlanner planner = new CommandPlanner(new KeyFilter(List.of("*"), List.of()), false);
+
+        assertEquals(CommandPlan.Disposition.BLOCK, planner.plan(command("FLUSHDB")).disposition());
+        assertEquals(CommandPlan.Disposition.BLOCK, planner.plan(command("FLUSHALL")).disposition());
+    }
+
+    @Test
+    void taskPolicyCanDisableSafeSplittingAndAddBlocks() {
+        CommandPlanner planner = new CommandPlanner(new KeyFilter(List.of("*"), List.of()), false, null,
+                new SyncCommandPolicy(false, false, Set.of("SET"), "v1"));
+
+        assertEquals(CommandPlan.Disposition.BLOCK, planner.plan(command("SET", "a", "1")).disposition());
+        assertEquals(CommandPlan.Disposition.BLOCK, planner.plan(command("DEL", "a", "b")).disposition());
+        assertEquals(CommandPlan.Disposition.APPLY, planner.plan(command("DEL", "a")).disposition());
     }
 
     @Test

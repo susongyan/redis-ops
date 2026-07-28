@@ -9,7 +9,8 @@ public interface SyncMapper {
     String TASK_COLUMNS = "id,task_no,relation_id,source_cluster_id,target_cluster_id,purpose,sync_mode,status,tool_type,"
             +
             "source_db,target_db,CAST(include_patterns_json AS CHAR) include_patterns_json," +
-            "CAST(exclude_patterns_json AS CHAR) exclude_patterns_json,rate_limit_ops,bandwidth_limit_bytes_per_second,"
+            "CAST(exclude_patterns_json AS CHAR) exclude_patterns_json," +
+            "CAST(command_policy_json AS CHAR) command_policy_json,rate_limit_ops,bandwidth_limit_bytes_per_second,"
             +
             "spool_limit_bytes,full_apply_concurrency,full_apply_pipeline_size,desired_action,write_fenced,"
             + "write_fence_note,blocked_reason,full_sync_epoch," +
@@ -17,12 +18,13 @@ public interface SyncMapper {
     String SWITCH_COLUMNS = "id,relation_id,old_primary_cluster_id,old_standby_cluster_id,stopped_task_id,reverse_task_id,status,operator_id AS operator,source_write_fenced,source_fence_note,last_error,version,created_at,updated_at,confirmed_at";
     @Insert("""
             INSERT INTO sync_task(task_no,relation_id,source_cluster_id,target_cluster_id,purpose,sync_mode,status,
-              tool_type,source_db,target_db,include_patterns_json,exclude_patterns_json,rate_limit_ops,
+              tool_type,source_db,target_db,include_patterns_json,exclude_patterns_json,command_policy_json,rate_limit_ops,
               bandwidth_limit_bytes_per_second,spool_limit_bytes,desired_action,write_fenced,write_fence_note,
               full_apply_concurrency,full_apply_pipeline_size,blocked_reason,full_sync_epoch,last_rpo_seconds,
               last_error,finished_at)
             VALUES(#{taskNo},#{relationId},#{sourceClusterId},#{targetClusterId},#{purpose},#{syncMode},#{status},
               #{toolType},#{sourceDb},#{targetDb},CAST(#{includePatternsJson} AS JSON),CAST(#{excludePatternsJson} AS JSON),
+              CAST(#{commandPolicyJson} AS JSON),
               #{rateLimitOps},#{bandwidthLimitBytesPerSecond},#{spoolLimitBytes},#{desiredAction},#{writeFenced},
               #{writeFenceNote},#{fullApplyConcurrency},#{fullApplyPipelineSize},#{blockedReason},#{fullSyncEpoch},
               #{lastRpoSeconds},#{lastError},#{finishedAt})
@@ -121,7 +123,8 @@ public interface SyncMapper {
             SELECT t.id,t.task_no,t.relation_id,t.source_cluster_id,t.target_cluster_id,t.purpose,t.sync_mode,
               t.status,t.tool_type,t.source_db,t.target_db,
               CAST(t.include_patterns_json AS CHAR) include_patterns_json,
-              CAST(t.exclude_patterns_json AS CHAR) exclude_patterns_json,t.rate_limit_ops,
+              CAST(t.exclude_patterns_json AS CHAR) exclude_patterns_json,
+              CAST(t.command_policy_json AS CHAR) command_policy_json,t.rate_limit_ops,
               t.bandwidth_limit_bytes_per_second,t.spool_limit_bytes,t.full_apply_concurrency,
               t.full_apply_pipeline_size,t.desired_action,t.write_fenced,t.write_fence_note,t.blocked_reason,
               t.full_sync_epoch,t.last_rpo_seconds,t.last_error,t.version,t.created_at,t.updated_at,t.finished_at
@@ -188,7 +191,8 @@ public interface SyncMapper {
         public int sourceDb, targetDb, fullApplyConcurrency, fullApplyPipelineSize;
         public boolean writeFenced;
         public String taskNo, purpose, syncMode, status, toolType, includePatternsJson,
-                excludePatternsJson, desiredAction, writeFenceNote, blockedReason, fullSyncEpoch, lastError;
+                excludePatternsJson, commandPolicyJson, desiredAction, writeFenceNote, blockedReason, fullSyncEpoch,
+                lastError;
         public java.time.Instant finishedAt;
         static TaskRow from(SyncTask x) {
             var r = new TaskRow();
@@ -205,6 +209,7 @@ public interface SyncMapper {
             r.targetDb = x.targetDb();
             r.includePatternsJson = x.includePatternsJson();
             r.excludePatternsJson = x.excludePatternsJson();
+            r.commandPolicyJson = x.commandPolicyJson();
             r.rateLimitOps = x.rateLimitOps();
             r.bandwidthLimitBytesPerSecond = x.bandwidthLimitBytesPerSecond();
             r.spoolLimitBytes = x.spoolLimitBytes();

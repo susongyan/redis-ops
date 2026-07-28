@@ -47,6 +47,15 @@ export const api={
   ,startSwitchover:id=>request(`/api/v1/cluster-relations/${id}/switchovers`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:'{}'})
   ,syncTasks:(relationId)=>request(`/api/v1/sync-tasks${relationId?`?relationId=${relationId}`:''}`)
   ,syncTask:id=>request(`/api/v1/sync-tasks/${id}`)
+  ,syncCommandCapabilities:(targetMode,policy={})=>{
+    const params=new URLSearchParams({
+      targetMode,
+      allowDestructiveCommands:String(!!policy.allowDestructiveCommands),
+      allowSafeSplit:String(policy.allowSafeSplit!==false),
+    })
+    ;(policy.additionalBlockedCommands||[]).forEach(command=>params.append('additionalBlockedCommands',command))
+    return request(`/api/v1/sync-command-capabilities?${params}`)
+  }
   ,syncTaskEvents:(id,page=1,size=20)=>request(`/api/v1/sync-tasks/${id}/events?page=${page}&size=${size}`)
   ,createSyncTask:data=>request('/api/v1/sync-tasks',{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:JSON.stringify(data)})
   ,precheckSyncTask:(id,version)=>request(`/api/v1/sync-tasks/${id}/prechecks`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})

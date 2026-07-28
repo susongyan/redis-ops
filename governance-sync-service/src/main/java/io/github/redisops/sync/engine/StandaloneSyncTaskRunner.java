@@ -140,7 +140,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             targetEndpoint = endpoints.resolvePrimary(targetProfile);
             filter = new KeyFilter(patterns(originalTask.includePatternsJson()),
                     patterns(originalTask.excludePatternsJson()));
-            planner = new CommandPlanner(filter, false, heartbeatKey);
+            planner = new CommandPlanner(filter, false, heartbeatKey, commandPolicy());
             prepareSpool();
             target = new TargetCommandSession(targetProfile, targetEndpoint, originalTask.targetDb(), originalTask.id(),
                     connectTimeout);
@@ -796,6 +796,14 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             return json.readValue(value, STRING_LIST);
         } catch (IOException error) {
             throw new IllegalArgumentException("invalid sync key filter", error);
+        }
+    }
+
+    private SyncCommandPolicy commandPolicy() {
+        try {
+            return json.readValue(originalTask.commandPolicyJson(), SyncCommandPolicy.class);
+        } catch (IOException error) {
+            throw new IllegalArgumentException("invalid sync command policy", error);
         }
     }
 
