@@ -1,0 +1,21 @@
+CREATE TABLE sync_full_progress (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    task_id BIGINT NOT NULL,
+    full_sync_epoch VARCHAR(64) NOT NULL,
+    channel_id VARCHAR(128) NOT NULL,
+    lane INT NOT NULL DEFAULT -1,
+    stage VARCHAR(32) NOT NULL,
+    total_bytes BIGINT NULL,
+    received_bytes BIGINT NOT NULL DEFAULT 0,
+    parsed_bytes BIGINT NOT NULL DEFAULT 0,
+    total_keys BIGINT NULL,
+    parsed_keys BIGINT NOT NULL DEFAULT 0,
+    applied_keys BIGINT NOT NULL DEFAULT 0,
+    applied_bytes BIGINT NOT NULL DEFAULT 0,
+    status VARCHAR(32) NOT NULL,
+    started_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    UNIQUE KEY uk_sync_full_progress_channel_lane(task_id, full_sync_epoch, channel_id, lane),
+    KEY idx_sync_full_progress_task(task_id),
+    CONSTRAINT fk_sync_full_progress_task FOREIGN KEY (task_id) REFERENCES sync_task(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

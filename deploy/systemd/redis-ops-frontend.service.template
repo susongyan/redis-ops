@@ -1,0 +1,19 @@
+[Unit]
+Description=Redis Governance Frontend
+After=network-online.target redis-ops-platform.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@@DEPLOY_USER@@
+Group=@@DEPLOY_GROUP@@
+WorkingDirectory=@@INSTALL_DIR@@
+EnvironmentFile=@@INSTALL_DIR@@/conf/redis-ops.env
+ExecStart=@@INSTALL_DIR@@/bin/redis-opsctl run frontend
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

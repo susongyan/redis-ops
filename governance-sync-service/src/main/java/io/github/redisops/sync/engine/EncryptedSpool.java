@@ -17,6 +17,7 @@ import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.*;
 import java.security.SecureRandom;
 import java.util.*;
+import java.util.function.LongConsumer;
 
 public final class EncryptedSpool implements AutoCloseable {
     private static final byte[] RDB_MAGIC = {'R', 'S', 'P', '1'};
@@ -80,6 +81,12 @@ public final class EncryptedSpool implements AutoCloseable {
     }
 
     public long writeRdb(InputStream source, long length, String eofMarker) throws IOException {
+        return writeRdb(source, length, eofMarker, ignored -> {
+        });
+    }
+
+    public long writeRdb(InputStream source, long length, String eofMarker, LongConsumer progress)
+            throws IOException {
         Path target = directory.resolve("full.rdb.enc");
         Path temporary = directory.resolve("full.rdb.enc.tmp");
         byte[] iv = randomIv();
@@ -98,8 +105,8 @@ public final class EncryptedSpool implements AutoCloseable {
             };
             try (CipherOutputStream encrypted = new CipherOutputStream(nonClosing, cipher)) {
                 plainBytes = length >= 0
-                        ? copyFixed(source, encrypted, length)
-                        : copyUntilMarker(source, encrypted, Objects.requireNonNull(eofMarker));
+                        ? copyFixed(source, encrypted, length, progress)
+                        : copyUntilMarker(source, encrypted, Objects.requireNonNull(eofMarker), progress);
             }
             file.getChannel().force(true);
         }
@@ -389,7 +396,8 @@ public final class EncryptedSpool implements AutoCloseable {
         return iv;
     }
 
-    private static long copyFixed(InputStream input, OutputStream output, long length) throws IOException {
+    private static long copyFixed(InputStream input, OutputStream output, long length, LongConsumer progress)
+            throws IOException {
         byte[] buffer = new byte[64 * 1024];
         long remaining = length;
         while (remaining > 0) {
@@ -398,11 +406,13 @@ public final class EncryptedSpool implements AutoCloseable {
                 throw new EOFException("truncated fixed-length RDB transfer");
             output.write(buffer, 0, read);
             remaining -= read;
+            progress.accept(length - remaining);
         }
         return length;
     }
 
-    private static long copyUntilMarker(InputStream source, OutputStream output, String markerValue)
+    private static long copyUntilMarker(InputStream source, OutputStream output, String markerValue,
+            LongConsumer progress)
             throws IOException {
         if (!(source instanceof PushbackInputStream input))
             throw new IllegalArgumentException("diskless RDB source must support pushback");
@@ -421,6 +431,7 @@ public final class EncryptedSpool implements AutoCloseable {
             if (markerAt >= 0) {
                 output.write(combined, 0, markerAt);
                 written += markerAt;
+                progress.accept(written);
                 int after = combined.length - markerAt - marker.length;
                 if (after > 0)
                     input.unread(combined, markerAt + marker.length, after);
@@ -429,6 +440,7 @@ public final class EncryptedSpool implements AutoCloseable {
             int safe = Math.max(0, combined.length - marker.length + 1);
             output.write(combined, 0, safe);
             written += safe;
+            progress.accept(written);
             tail = Arrays.copyOfRange(combined, safe, combined.length);
         }
     }

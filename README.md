@@ -29,6 +29,28 @@ mvn verify
 cd frontend && npm install && npm run build
 ```
 
+## Linux 快速部署
+
+生成包含 Platform、Sync Worker、前端静态文件、Nginx/systemd 模板和统一控制脚本的自包含
+发布包：
+
+```bash
+./scripts/build-release.sh
+```
+
+解压后复制并保护配置，再按角色启动：
+
+```bash
+cp conf/redis-ops.env.example conf/redis-ops.env
+chmod 600 conf/redis-ops.env
+bin/redis-opsctl doctor all
+bin/redis-opsctl start all
+```
+
+支持 `platform`、`frontend`、`worker` 分角色部署，也支持可选 systemd 安装。完整说明见
+[Platform 前后端构建与部署](docs/platform-deployment.md) 和
+[Sync Worker 构建、部署与扩容](docs/sync-worker-deployment.md)。
+
 ## 本地运行
 
 ```bash
@@ -65,6 +87,8 @@ mvn package
 [同步管理面与 Worker 分离](docs/sync-control-worker-separation.md)、
 [同步 Worker 管理流程与生命周期](docs/sync-worker-lifecycle.md)、
 [同步服务部署与恢复手册](docs/sync-operations-runbook.md)、
+[Platform 前后端构建与部署](docs/platform-deployment.md)、
+[Sync Worker 构建、部署与扩容](docs/sync-worker-deployment.md)、
 [RPO 计算与切换判定](docs/rpo-calculation-and-switchover.md) 和
 [Phase 1 任务拆分](docs/phase1-tasks.md)。
 

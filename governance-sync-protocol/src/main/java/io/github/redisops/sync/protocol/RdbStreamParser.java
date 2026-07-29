@@ -32,6 +32,10 @@ public final class RdbStreamParser {
         this.input = new BufferedInputStream(input, 64 * 1024);
     }
 
+    public long position() {
+        return position;
+    }
+
     public void parse(Consumer<RdbEvent> consumer) throws IOException {
         byte[] header = readExact(9, null);
         String signature = new String(header, StandardCharsets.US_ASCII);

@@ -1,0 +1,402 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+CONF_FILE="${REDIS_OPS_ENV_FILE:-${INSTALL_DIR}/conf/redis-ops.env}"
+EXAMPLE_CONF="${INSTALL_DIR}/conf/redis-ops.env.example"
+
+die() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+info() {
+  printf '%s\n' "$*"
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  redis-opsctl doctor platform|frontend|worker|all
+  redis-opsctl start platform|frontend|worker|all
+  redis-opsctl stop platform|frontend|worker|all
+  redis-opsctl restart platform|frontend|worker|all
+  redis-opsctl status [platform|frontend|worker|all]
+  redis-opsctl health [platform|frontend|worker|all]
+  redis-opsctl logs platform|frontend|worker
+  redis-opsctl run platform|frontend|worker
+  redis-opsctl install-systemd platform|frontend|worker|all
+EOF
+}
+
+require_role() {
+  case "${1:-}" in
+    platform|frontend|worker|all) ;;
+    *) usage; die "role must be platform, frontend, worker, or all" ;;
+  esac
+}
+
+load_config() {
+  [[ -f "${CONF_FILE}" ]] || die "missing ${CONF_FILE}; copy ${EXAMPLE_CONF} and chmod 600 it"
+  local mode
+  mode="$(stat -c '%a' "${CONF_FILE}" 2>/dev/null || stat -f '%Lp' "${CONF_FILE}" 2>/dev/null || true)"
+  [[ -n "${mode}" ]] || die "cannot inspect permissions for ${CONF_FILE}"
+  if (( (8#${mode} & 8#177) != 0 )); then
+    die "${CONF_FILE} permissions are ${mode}; run: chmod 600 ${CONF_FILE}"
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  source "${CONF_FILE}"
+  set +a
+
+  PLATFORM_PORT="${PLATFORM_PORT:-8080}"
+  SYNC_SERVICE_PORT="${SYNC_SERVICE_PORT:-8081}"
+  FRONTEND_PORT="${FRONTEND_PORT:-8088}"
+  FRONTEND_BIND="${FRONTEND_BIND:-0.0.0.0}"
+  PLATFORM_PROXY_URL="${PLATFORM_PROXY_URL:-http://127.0.0.1:${PLATFORM_PORT}}"
+  PLATFORM_JAVA_OPTS="${PLATFORM_JAVA_OPTS:--Xms512m -Xmx1024m}"
+  SYNC_WORKER_JAVA_OPTS="${SYNC_WORKER_JAVA_OPTS:--Xms1g -Xmx2g}"
+  STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-90}"
+  STOP_TIMEOUT_SECONDS="${STOP_TIMEOUT_SECONDS:-30}"
+  LOG_DIR="${LOG_DIR:-${INSTALL_DIR}/var/log}"
+  SYNC_ENGINE_DATA_DIR="${SYNC_ENGINE_DATA_DIR:-${INSTALL_DIR}/var/data/sync}"
+  SYNC_ENGINE_INSTANCE_ID="${SYNC_ENGINE_INSTANCE_ID:-$(hostname)-sync-1}"
+
+  export SYNC_SERVICE_PORT SYNC_ENGINE_DATA_DIR SYNC_ENGINE_INSTANCE_ID
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+require_value() {
+  local name="$1"
+  [[ -n "${!name:-}" ]] || die "required configuration is empty: ${name}"
+}
+
+validate_number() {
+  [[ "$2" =~ ^[0-9]+$ ]] || die "$1 must be an integer: $2"
+}
+
+validate_port() {
+  validate_number "$1" "$2"
+  (( "$2" >= 1 && "$2" <= 65535 )) || die "$1 must be between 1 and 65535: $2"
+}
+
+ensure_dirs() {
+  mkdir -p "${INSTALL_DIR}/var/run" "${LOG_DIR}" "${INSTALL_DIR}/var/nginx/client_body" \
+    "${INSTALL_DIR}/var/nginx/proxy" "${INSTALL_DIR}/var/nginx/fastcgi" \
+    "${INSTALL_DIR}/var/nginx/uwsgi" "${INSTALL_DIR}/var/nginx/scgi"
+}
+
+pid_file() {
+  printf '%s/var/run/%s.pid' "${INSTALL_DIR}" "$1"
+}
+
+log_file() {
+  printf '%s/%s.log' "${LOG_DIR}" "$1"
+}
+
+expected_process_pattern() {
+  case "$1" in
+    platform) printf '%s' 'platform\.jar|redis-opsctl run platform' ;;
+    worker) printf '%s' 'sync-worker\.jar|redis-opsctl run worker' ;;
+    frontend) printf '%s' 'nginx.*nginx\.conf|redis-opsctl run frontend' ;;
+  esac
+}
+
+read_live_pid() {
+  local role="$1" file pid command pattern
+  file="$(pid_file "${role}")"
+  [[ -f "${file}" ]] || return 1
+  read -r pid <"${file}" || true
+  [[ "${pid:-}" =~ ^[0-9]+$ ]] || {
+    rm -f "${file}"
+    return 1
+  }
+  kill -0 "${pid}" 2>/dev/null || {
+    rm -f "${file}"
+    return 1
+  }
+  command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+  pattern="$(expected_process_pattern "${role}")"
+  if [[ ! "${command}" =~ ${pattern} ]]; then
+    info "Ignoring stale ${role} PID file (PID ${pid} belongs to another process)."
+    rm -f "${file}"
+    return 1
+  fi
+  printf '%s' "${pid}"
+}
+
+validate_common_backend() {
+  require_command java
+  require_value REDIS_OPS_CREDENTIAL_KEYS
+}
+
+validate_platform() {
+  validate_common_backend
+  require_value DB_URL
+  require_value DB_USERNAME
+  require_value DB_PASSWORD
+  [[ -r "${INSTALL_DIR}/app/platform.jar" ]] || die "missing app/platform.jar"
+  validate_port PLATFORM_PORT "${PLATFORM_PORT}"
+}
+
+validate_worker() {
+  validate_common_backend
+  require_value SYNC_DB_USERNAME
+  require_value SYNC_DB_PASSWORD
+  require_value DB_URL
+  require_value SYNC_ENGINE_INSTANCE_ID
+  [[ -r "${INSTALL_DIR}/app/sync-worker.jar" ]] || die "missing app/sync-worker.jar"
+  validate_port SYNC_SERVICE_PORT "${SYNC_SERVICE_PORT}"
+  mkdir -p "${SYNC_ENGINE_DATA_DIR}"
+  [[ -w "${SYNC_ENGINE_DATA_DIR}" ]] || die "worker data directory is not writable: ${SYNC_ENGINE_DATA_DIR}"
+}
+
+render_nginx_config() {
+  validate_port FRONTEND_PORT "${FRONTEND_PORT}"
+  [[ "${FRONTEND_BIND}" =~ ^[A-Za-z0-9:.%-]+$ ]] || die "FRONTEND_BIND contains unsupported characters"
+  [[ "${PLATFORM_PROXY_URL}" =~ ^https?://[^[:space:]/]+(:[0-9]+)?$ ]] \
+    || die "PLATFORM_PROXY_URL must look like http://host:port"
+  local template="${INSTALL_DIR}/conf/nginx.conf.template"
+  local rendered="${INSTALL_DIR}/var/nginx/nginx.conf"
+  [[ -r "${template}" ]] || die "missing ${template}"
+  sed \
+    -e "s|@@INSTALL_DIR@@|${INSTALL_DIR//|/\\|}|g" \
+    -e "s|@@FRONTEND_PORT@@|${FRONTEND_PORT}|g" \
+    -e "s|@@FRONTEND_BIND@@|${FRONTEND_BIND}|g" \
+    -e "s|@@PLATFORM_PROXY_URL@@|${PLATFORM_PROXY_URL//|/\\|}|g" \
+    "${template}" >"${rendered}"
+}
+
+validate_frontend() {
+  require_command nginx
+  [[ -r "${INSTALL_DIR}/frontend/index.html" ]] || die "frontend files are missing"
+  render_nginx_config
+  nginx -t -p "${INSTALL_DIR}/" -c "${INSTALL_DIR}/var/nginx/nginx.conf"
+}
+
+port_is_busy() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn "sport = :${port}" 2>/dev/null | tail -n +2 | grep -q .
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1
+  else
+    return 1
+  fi
+}
+
+doctor_one() {
+  local role="$1" port
+  case "${role}" in
+    platform) validate_platform; port="${PLATFORM_PORT}" ;;
+    frontend) validate_frontend; port="${FRONTEND_PORT}" ;;
+    worker) validate_worker; port="${SYNC_SERVICE_PORT}" ;;
+  esac
+  if ! read_live_pid "${role}" >/dev/null && port_is_busy "${port}"; then
+    die "${role} port ${port} is already in use"
+  fi
+  info "${role}: configuration and prerequisites OK"
+}
+
+for_roles() {
+  local requested="$1" operation="$2"
+  if [[ "${requested}" == all ]]; then
+    "${operation}" platform
+    "${operation}" frontend
+    "${operation}" worker
+  else
+    "${operation}" "${requested}"
+  fi
+}
+
+health_url() {
+  case "$1" in
+    platform) printf 'http://127.0.0.1:%s/actuator/health' "${PLATFORM_PORT}" ;;
+    worker) printf 'http://127.0.0.1:%s/actuator/health' "${SYNC_SERVICE_PORT}" ;;
+    frontend) printf 'http://127.0.0.1:%s/' "${FRONTEND_PORT}" ;;
+  esac
+}
+
+wait_healthy() {
+  require_command curl
+  local role="$1" url deadline
+  url="$(health_url "${role}")"
+  deadline=$((SECONDS + STARTUP_TIMEOUT_SECONDS))
+  while (( SECONDS < deadline )); do
+    if curl --silent --show-error --fail --max-time 2 "${url}" >/dev/null 2>&1; then
+      info "${role}: healthy (${url})"
+      return 0
+    fi
+    if ! read_live_pid "${role}" >/dev/null; then
+      die "${role} exited during startup; inspect $(log_file "${role}")"
+    fi
+    sleep 1
+  done
+  die "${role} health check timed out after ${STARTUP_TIMEOUT_SECONDS}s; inspect $(log_file "${role}")"
+}
+
+run_component() {
+  local role="$1"
+  ensure_dirs
+  printf '%s\n' "$$" >"$(pid_file "${role}")"
+  case "${role}" in
+    platform)
+      validate_platform
+      # shellcheck disable=SC2086
+      exec java ${PLATFORM_JAVA_OPTS} -jar "${INSTALL_DIR}/app/platform.jar" \
+        --server.port="${PLATFORM_PORT}"
+      ;;
+    worker)
+      validate_worker
+      # shellcheck disable=SC2086
+      exec java ${SYNC_WORKER_JAVA_OPTS} -jar "${INSTALL_DIR}/app/sync-worker.jar"
+      ;;
+    frontend)
+      validate_frontend
+      exec nginx -p "${INSTALL_DIR}/" -c "${INSTALL_DIR}/var/nginx/nginx.conf" -g 'daemon off;'
+      ;;
+  esac
+}
+
+start_one() {
+  local role="$1" file output pid
+  if pid="$(read_live_pid "${role}")"; then
+    info "${role}: already running (PID ${pid})"
+    return 0
+  fi
+  doctor_one "${role}"
+  ensure_dirs
+  file="$(pid_file "${role}")"
+  output="$(log_file "${role}")"
+  nohup "${INSTALL_DIR}/bin/redis-opsctl" run "${role}" >>"${output}" 2>&1 &
+  pid=$!
+  printf '%s\n' "${pid}" >"${file}"
+  wait_healthy "${role}"
+}
+
+stop_one() {
+  local role="$1" pid deadline
+  if ! pid="$(read_live_pid "${role}")"; then
+    info "${role}: not running"
+    return 0
+  fi
+  info "${role}: stopping PID ${pid}"
+  kill -TERM "${pid}"
+  deadline=$((SECONDS + STOP_TIMEOUT_SECONDS))
+  while kill -0 "${pid}" 2>/dev/null && (( SECONDS < deadline )); do
+    sleep 1
+  done
+  if kill -0 "${pid}" 2>/dev/null; then
+    info "${role}: graceful stop timed out; sending SIGKILL"
+    kill -KILL "${pid}"
+  fi
+  rm -f "$(pid_file "${role}")"
+  info "${role}: stopped"
+}
+
+status_one() {
+  local role="$1" pid
+  if pid="$(read_live_pid "${role}")"; then
+    info "${role}: RUNNING (PID ${pid})"
+  else
+    info "${role}: STOPPED"
+  fi
+}
+
+health_one() {
+  local role="$1" url
+  require_command curl
+  url="$(health_url "${role}")"
+  if curl --silent --show-error --fail --max-time 3 "${url}" >/dev/null; then
+    info "${role}: HEALTHY (${url})"
+  else
+    info "${role}: UNHEALTHY (${url})"
+    return 1
+  fi
+}
+
+install_systemd() {
+  local requested="$1" unit source rendered deploy_user deploy_group
+  require_command sudo
+  deploy_user="${DEPLOY_USER:-$(id -un)}"
+  deploy_group="${DEPLOY_GROUP:-$(id -gn)}"
+  local roles=("${requested}")
+  [[ "${requested}" == all ]] && roles=(platform frontend worker)
+  for unit in "${roles[@]}"; do
+    source="${INSTALL_DIR}/systemd/redis-ops-${unit}.service.template"
+    rendered="${INSTALL_DIR}/var/run/redis-ops-${unit}.service"
+    sed \
+      -e "s|@@INSTALL_DIR@@|${INSTALL_DIR//|/\\|}|g" \
+      -e "s|@@DEPLOY_USER@@|${deploy_user}|g" \
+      -e "s|@@DEPLOY_GROUP@@|${deploy_group}|g" \
+      "${source}" >"${rendered}"
+    sudo install -m 0644 "${rendered}" "/etc/systemd/system/redis-ops-${unit}.service"
+  done
+  sudo systemctl daemon-reload
+  for unit in "${roles[@]}"; do
+    sudo systemctl enable "redis-ops-${unit}.service"
+  done
+  info "systemd units installed. Start them with: sudo systemctl start redis-ops-<role>"
+}
+
+main() {
+  local command="${1:-}" role="${2:-}"
+  [[ -n "${command}" ]] || { usage; exit 1; }
+  case "${command}" in
+    doctor|start|stop|restart|run|install-systemd)
+      require_role "${role}"
+      ;;
+    status|health)
+      role="${role:-all}"
+      require_role "${role}"
+      ;;
+    logs)
+      case "${role}" in platform|frontend|worker) ;; *) usage; die "logs requires one role" ;; esac
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage
+      die "unknown command: ${command}"
+      ;;
+  esac
+
+  load_config
+  ensure_dirs
+  case "${command}" in
+    doctor) for_roles "${role}" doctor_one ;;
+    start) for_roles "${role}" start_one ;;
+    stop)
+      if [[ "${role}" == all ]]; then
+        stop_one worker
+        stop_one frontend
+        stop_one platform
+      else
+        stop_one "${role}"
+      fi
+      ;;
+    restart)
+      "$0" stop "${role}"
+      "$0" start "${role}"
+      ;;
+    status) for_roles "${role}" status_one ;;
+    health) for_roles "${role}" health_one ;;
+    logs)
+      touch "$(log_file "${role}")"
+      exec tail -n 200 -F "$(log_file "${role}")"
+      ;;
+    run)
+      [[ "${role}" != all ]] || die "run does not accept all"
+      run_component "${role}"
+      ;;
+    install-systemd) install_systemd "${role}" ;;
+  esac
+}
+
+main "$@"

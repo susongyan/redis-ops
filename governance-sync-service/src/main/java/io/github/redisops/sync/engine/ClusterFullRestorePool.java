@@ -13,18 +13,20 @@ final class ClusterFullRestorePool implements AutoCloseable {
     private final LeaseGuard leaseGuard;
     private final Runnable beforeApply;
     private final Runnable afterApply;
+    private final FullRestoreProgressListener progress;
     private final BlockingQueue<Item> queue;
     private final ExecutorService executor;
     private final List<Future<?>> workers;
     private final AtomicReference<Throwable> failure = new AtomicReference<>();
 
     ClusterFullRestorePool(ClusterTargetRouter target, TargetFence fence, LeaseGuard leaseGuard, int concurrency,
-            int queueCapacity, Runnable beforeApply, Runnable afterApply) {
+            int queueCapacity, Runnable beforeApply, Runnable afterApply, FullRestoreProgressListener progress) {
         this.target = target;
         this.fence = fence;
         this.leaseGuard = leaseGuard;
         this.beforeApply = beforeApply;
         this.afterApply = afterApply;
+        this.progress = progress;
         this.queue = new ArrayBlockingQueue<>(queueCapacity);
         this.executor = Executors.newFixedThreadPool(concurrency, runnable -> {
             Thread thread = new Thread(runnable, "redis-cluster-full-restore");
@@ -82,6 +84,7 @@ final class ClusterFullRestorePool implements AutoCloseable {
                 beforeApply.run();
                 try {
                     target.restore(item.request(), fence, leaseGuard, lane);
+                    progress.applied(lane, 1, estimatedBytes(item.request()));
                 } finally {
                     afterApply.run();
                 }
@@ -105,5 +108,9 @@ final class ClusterFullRestorePool implements AutoCloseable {
     }
 
     private record Item(TargetCommandSession.RestoreRequest request) {
+    }
+
+    private static long estimatedBytes(TargetCommandSession.RestoreRequest request) {
+        return request.key().length + request.payload().length + 128L;
     }
 }

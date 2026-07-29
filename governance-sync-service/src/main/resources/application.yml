@@ -2,7 +2,7 @@ spring:
   application:
     name: redis-governance-sync-service
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    url: ${DB_URL:jdbc:mysql://localhost:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
     username: ${SYNC_DB_USERNAME:${DB_USERNAME:redis_governance}}
     password: ${SYNC_DB_PASSWORD:${DB_PASSWORD:redis_governance}}
   flyway:

@@ -7,6 +7,7 @@ import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.time.Duration;
+import java.util.function.LongConsumer;
 
 public final class SourceReplicationSession implements AutoCloseable {
     private final Socket socket;
@@ -37,7 +38,13 @@ public final class SourceReplicationSession implements AutoCloseable {
     }
 
     public long spoolRdb(ReplicationReply.FullResync reply, EncryptedSpool spool) throws IOException {
-        long bytes = spool.writeRdb(input, reply.transfer().length(), reply.transfer().eofMarker());
+        return spoolRdb(reply, spool, ignored -> {
+        });
+    }
+
+    public long spoolRdb(ReplicationReply.FullResync reply, EncryptedSpool spool, LongConsumer progress)
+            throws IOException {
+        long bytes = spool.writeRdb(input, reply.transfer().length(), reply.transfer().eofMarker(), progress);
         CountingInputStream counting = new CountingInputStream(input);
         commands = new ReplicationCommandReader(new RespCodec(counting, output), counting, reply.offset());
         return bytes;

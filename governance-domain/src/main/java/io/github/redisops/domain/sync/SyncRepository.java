@@ -29,4 +29,6 @@ public interface SyncRepository {
     SyncPrecheckReport savePrecheck(SyncPrecheckReport report);
     List<SyncMetricSnapshot> findMetrics(long taskId, int limit);
     void saveMetric(SyncMetricSnapshot metric);
+    List<SyncFullProgress> findFullProgress(long taskId);
+    void upsertFullProgress(SyncFullProgress progress);
 }

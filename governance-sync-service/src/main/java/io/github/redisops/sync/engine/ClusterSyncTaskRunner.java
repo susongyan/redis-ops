@@ -344,6 +344,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     private synchronized void channelFailed(Channel channel, Throwable error) {
         if (cancelled.get())
             return;
+        channel.fullProgress.failed();
         String safe = safe(error);
         lastFailure = channel.spec.channel() + " (" + channel.sourceEndpoint + ", RDB "
                 + channel.fullRdbBytes + " bytes): " + safe;
@@ -387,6 +388,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         private final int restoreQueueCapacity;
         private final byte[] heartbeatKey;
         private final EncryptedSpool spool;
+        private final FullSyncProgressTracker fullProgress;
         private final BlockingQueue<ReplicationCommand> queue = new LinkedBlockingQueue<>(10_000);
         private final ExecutorService executor;
         private final AtomicLong received = new AtomicLong(-1);
@@ -429,6 +431,8 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                     commandPolicy());
             this.spool = new EncryptedSpool(dataDirectory, task.id(), spec.channel(),
                     spoolKeys.taskKey(task.id()), segmentBytes, spoolLimit);
+            this.fullProgress = new FullSyncProgressTracker(task.id(), task.fullSyncEpoch(), spec.channel(),
+                    restoreConcurrency, sync);
             this.executor = Executors.newFixedThreadPool(2, runnable -> {
                 Thread thread = new Thread(runnable, "redis-cluster-sync-" + task.id() + "-" + spec.channel());
                 thread.setDaemon(true);
@@ -490,7 +494,9 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                 replicationId = full.replicationId();
                 received.set(full.offset());
                 applied.set(full.offset());
-                fullRdbBytes = source.spoolRdb(full, spool);
+                fullProgress.startReceiving(full.transfer().length());
+                fullRdbBytes = source.spoolRdb(full, spool, fullProgress::received);
+                fullProgress.rdbReceived(fullRdbBytes);
                 spool.saveFullMetadata(full.replicationId(), full.offset());
                 source.acknowledge(full.offset());
                 source.readTimeout(Duration.ofSeconds(1));
@@ -535,6 +541,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
             else
                 singleTarget.apply(List.of(), checkpoint, channelFence, leaseGuard);
             applied.set(baseOffset);
+            fullProgress.completed();
             spool.discardFullRdb();
             incremental = true;
             updateChannel("INCR_SYNCING");
@@ -545,7 +552,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
             try (var restores = new ClusterFullRestorePool(routedTarget, channelFence, leaseGuard,
                     restoreConcurrency,
                     restoreQueueCapacity, ClusterSyncTaskRunner.this::beforeApply,
-                    ClusterSyncTaskRunner.this::afterApply);
+                    ClusterSyncTaskRunner.this::afterApply, fullProgress::applied);
                     var input = spool.openRdb()) {
                 parseRdb(input, restores::submit, payload -> routedTarget.loadFunction(payload, channelFence,
                         leaseGuard));
@@ -558,7 +565,8 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                     spec.channel(), connectTimeout, restoreConcurrency, restoreQueueCapacity,
                     limits.fullApplyPipelineSize() > 0 ? limits.fullApplyPipelineSize() : fullPipelineSize,
                     fullTransactionBytes, channelFence, leaseGuard,
-                    ClusterSyncTaskRunner.this::beforeApply, ClusterSyncTaskRunner.this::afterApply);
+                    ClusterSyncTaskRunner.this::beforeApply, ClusterSyncTaskRunner.this::afterApply,
+                    fullProgress::applied);
                     var input = spool.openRdb()) {
                 parseRdb(input, restores::submit,
                         payload -> singleTarget.loadFunction(payload, channelFence, leaseGuard));
@@ -569,20 +577,26 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         private void parseRdb(java.io.InputStream input, RestoreConsumer restores, FunctionConsumer functions)
                 throws IOException {
             try {
-                new RdbStreamParser(input).parse(event -> {
+                RdbStreamParser parser = new RdbStreamParser(input);
+                parser.parse(event -> {
                     try {
+                        boolean accepted = false;
                         if (event instanceof RdbEvent.KeyValue keyValue
                                 && keyValue.database() == task.sourceDb()
                                 && filter.accepts(keyValue.key())
-                                && sourceOwns(keyValue.key()))
+                                && sourceOwns(keyValue.key())) {
                             restores.accept(new TargetCommandSession.RestoreRequest(keyValue.key(),
                                     keyValue.absoluteExpireMillis(), keyValue.dumpPayload()));
-                        else if (event instanceof RdbEvent.FunctionLibrary function)
+                            accepted = true;
+                        } else if (event instanceof RdbEvent.FunctionLibrary function) {
                             functions.accept(function.payload());
+                        }
+                        fullProgress.parsed(parser.position(), accepted);
                     } catch (IOException error) {
                         throw new UncheckedIOException(error);
                     }
                 });
+                fullProgress.parsingComplete(parser.position());
             } catch (UncheckedIOException error) {
                 throw error.getCause();
             }

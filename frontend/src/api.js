@@ -47,6 +47,7 @@ export const api={
   ,startSwitchover:id=>request(`/api/v1/cluster-relations/${id}/switchovers`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:'{}'})
   ,syncTasks:(relationId)=>request(`/api/v1/sync-tasks${relationId?`?relationId=${relationId}`:''}`)
   ,syncTask:id=>request(`/api/v1/sync-tasks/${id}`)
+  ,syncTaskFullProgress:id=>request(`/api/v1/sync-tasks/${id}/full-progress`)
   ,syncCommandCapabilities:(targetMode,policy={})=>{
     const params=new URLSearchParams({
       targetMode,

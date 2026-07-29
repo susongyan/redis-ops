@@ -61,6 +61,10 @@ Worker 收到的真实复制命令为准。
 
 ![Redis 同步 Worker 架构](images/sync-worker-architecture.svg)
 
+同步任务从源集群、加密 spool、全量并发处理、增量命令屏蔽到目标集群原子写入的完整数据通道见：
+
+![Redis 同步任务数据通道架构](images/sync-task-data-pipeline.svg)
+
 ### 3.1 Platform 管理面
 
 Platform 负责：
@@ -96,13 +100,14 @@ Sync Worker 负责：
 
 Sync Worker 不允许直接修改 `cluster_relation` 的主备方向。
 
-## 4. 四类持久状态及事实优先级
+## 4. 持久状态及事实优先级
 
 | 数据 | 存储位置 | 用途 | 正确性优先级 |
 |---|---|---|---|
 | 目标 checkpoint | 目标 Redis | 已原子应用到目标的最终 offset | 最高 |
 | spool segment 和 manifest | Worker 本地持久卷 | 已接收但可能尚未应用的数据 | 第二 |
 | channel checkpoint 摘要 | MySQL | received/applied offset、通道状态和页面查询 | 第三 |
+| full progress | MySQL | RDB 接收、解析、RESTORE Lane 进度观测 | 观测状态 |
 | runtime | MySQL | 当前执行实例、租约、阶段、spool 用量 | 管理状态 |
 | sync task | MySQL | 业务配置、期望动作和对外状态 | 管理状态 |
 | async job | MySQL | 一次控制命令的可靠投递与重试 | 控制状态 |
@@ -113,6 +118,20 @@ Sync Worker 不允许直接修改 `cluster_relation` 的主备方向。
 2. 校验本地 spool manifest，确定可重放到哪个 `receivedOffset`。
 3. 校验源端 replId 和 backlog 是否仍支持 PSYNC。
 4. 更新 MySQL channel 摘要；不得反过来用 MySQL offset 覆盖目标 checkpoint。
+
+### 4.1 全量进度观测
+
+`sync_full_progress` 按 `taskId + fullSyncEpoch + channelId + lane` 保存当前全量进度：
+
+- `lane=-1` 是源通道汇总，记录 RDB 总量、接收和解析字节、解析及应用 Key 数。
+- `lane>=0` 是 RESTORE 并发 Lane，记录该 Lane 已成功提交的 Key 数和估算写入字节数。
+- 固定长度 RDB 在接收时可直接计算字节百分比；diskless EOF 模式在接收完成后补齐总字节数。
+- 只有目标 Redis 的 RESTORE 事务成功后才增加 `appliedKeys`，队列中的 Key 不算已完成。
+- Worker 最多每秒上报一次运行进度；页面每五秒刷新，不把高频进度写入任务事件。
+- 进度表仅用于观测和页面展示，恢复和去重仍以目标 Redis checkpoint、Fence 和本地 spool 为准。
+
+页面总体进度采用阶段权重：RDB 接收 30%、解析 20%、RESTORE 写入 50%。多源 Cluster 对各源
+Master 通道取平均值，同时保留逐通道和逐 Lane 明细。该百分比用于运维观察，不参与一致性判定。
 
 ## 5. 三条独立生命周期
 

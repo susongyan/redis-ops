@@ -136,6 +136,10 @@ public class SyncService {
         get(id);
         return sync.findMetrics(id, limit);
     }
+    public List<SyncFullProgress> fullProgress(long id) {
+        get(id);
+        return sync.findFullProgress(id);
+    }
 
     @Transactional
     public SyncTask requestPrecheck(long id, long version, String operator, String requestKey) {

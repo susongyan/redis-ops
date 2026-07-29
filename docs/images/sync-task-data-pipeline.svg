@@ -1,0 +1,348 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1040" viewBox="0 0 1600 1040">
+  <defs>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #172033; }
+      .title { font-size: 28px; font-weight: 700; }
+      .subtitle { font-size: 14px; fill: #526174; }
+      .section { font-size: 18px; font-weight: 700; }
+      .head { font-size: 15px; font-weight: 700; }
+      .body { font-size: 13px; }
+      .small { font-size: 12px; fill: #526174; }
+      .tiny { font-size: 11px; fill: #66758a; }
+      .canvas { fill: #f4f7fb; }
+      .panel { fill: #ffffff; stroke: #c7d2e2; stroke-width: 1.5; }
+      .source-panel { fill: #fff7ed; stroke: #f2b84b; stroke-width: 2; }
+      .worker-panel { fill: #eefbf4; stroke: #54b982; stroke-width: 2; }
+      .target-panel { fill: #eef4ff; stroke: #729bea; stroke-width: 2; }
+      .control-panel { fill: #f3f0ff; stroke: #9a86db; stroke-width: 1.5; }
+      .node { fill: #ffffff; stroke: #b8c4d6; stroke-width: 1.4; }
+      .node-blue { fill: #f5f8ff; stroke: #89a9e8; stroke-width: 1.4; }
+      .node-green { fill: #f4fcf7; stroke: #71c397; stroke-width: 1.4; }
+      .node-orange { fill: #fffaf1; stroke: #e6b65c; stroke-width: 1.4; }
+      .node-red { fill: #fff2f1; stroke: #df7771; stroke-width: 1.5; }
+      .node-gray { fill: #f8fafc; stroke: #aeb9c8; stroke-width: 1.2; }
+      .arrow { fill: none; stroke: #396bc7; stroke-width: 1.45; marker-end: url(#arrow); }
+      .arrow-green { fill: none; stroke: #278b58; stroke-width: 1.45; marker-end: url(#arrowGreen); }
+      .arrow-orange { fill: none; stroke: #bd7417; stroke-width: 1.45; marker-end: url(#arrowOrange); }
+      .arrow-red { fill: none; stroke: #c63d38; stroke-width: 1.45; marker-end: url(#arrowRed); }
+      .dash { fill: none; stroke: #6f7f94; stroke-width: 1.2; stroke-dasharray: 6 5; marker-end: url(#arrowGray); }
+      .flow-blue { fill: none; stroke: #396bc7; stroke-width: 1.45; }
+      .flow-orange { fill: none; stroke: #bd7417; stroke-width: 1.45; }
+      .divider { stroke: #cbd5e1; stroke-width: 1.2; stroke-dasharray: 5 5; }
+      .tag-green { fill: #dff6e9; stroke: #70c193; }
+      .tag-red { fill: #fee4e2; stroke: #df7771; }
+      .tag-blue { fill: #e3ebff; stroke: #89a9e8; }
+      .tag-gray { fill: #edf1f5; stroke: #aeb9c8; }
+      .disk-body { fill: #eef4ff; stroke: #6f95df; stroke-width: 1.6; }
+      .disk-top { fill: #dce8ff; stroke: #6f95df; stroke-width: 1.6; }
+      .file-rdb { fill: #e4ebff; stroke: #7698df; stroke-width: 1.3; }
+      .file-resp { fill: #e3f6ea; stroke: #65b688; stroke-width: 1.3; }
+      .redis-body { fill: #ffffff; stroke: #779be1; stroke-width: 1.4; }
+    </style>
+    <marker id="arrow" markerWidth="6" markerHeight="6" refX="5.5" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 z" fill="#396bc7"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="6" markerHeight="6" refX="5.5" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 z" fill="#278b58"/>
+    </marker>
+    <marker id="arrowOrange" markerWidth="6" markerHeight="6" refX="5.5" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 z" fill="#bd7417"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="6" markerHeight="6" refX="5.5" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 z" fill="#c63d38"/>
+    </marker>
+    <marker id="arrowGray" markerWidth="6" markerHeight="6" refX="5.5" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 z" fill="#6f7f94"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#172033" flood-opacity=".10"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="1040" class="canvas"/>
+  <text x="42" y="46" class="title">Redis 同步任务数据通道架构</text>
+  <text x="42" y="72" class="subtitle">全量 RDB 与增量 RESP 共用加密 Spool；全量阶段通过可配置 RESTORE 并发池写入，增量阶段经过命令识别、过滤、屏蔽和原子 Checkpoint</text>
+
+  <!-- Control plane -->
+  <rect x="42" y="96" width="1516" height="112" rx="15" class="control-panel"/>
+  <text x="64" y="126" class="section">Platform 管理面 / 共享 MySQL</text>
+  <g transform="translate(1460 108)">
+    <rect x="0" y="7" width="50" height="24" fill="#ffffff" stroke="#9a86db" stroke-width="1.3"/>
+    <ellipse cx="25" cy="7" rx="25" ry="7" fill="#eee9ff" stroke="#9a86db" stroke-width="1.3"/>
+    <ellipse cx="25" cy="31" rx="25" ry="7" fill="#ffffff" stroke="#9a86db" stroke-width="1.3"/>
+    <text x="11" y="23" class="tiny">MySQL</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="70" y="145" width="280" height="43" rx="9" class="node"/>
+    <text x="88" y="171" class="body">sync_task：源目标、DB、过滤规则、限速</text>
+    <rect x="378" y="145" width="300" height="43" rx="9" class="node"/>
+    <text x="396" y="171" class="body">commandPolicy 快照：拆分 / 危险命令 / 额外屏蔽</text>
+    <rect x="706" y="145" width="268" height="43" rx="9" class="node"/>
+    <text x="724" y="171" class="body">runtime / channel / metric：运行摘要</text>
+    <rect x="1002" y="145" width="250" height="43" rx="9" class="node"/>
+    <text x="1020" y="171" class="body">控制命令：START / PAUSE / RESUME</text>
+    <rect x="1280" y="145" width="250" height="43" rx="9" class="node"/>
+    <text x="1298" y="171" class="body">事件：阻塞码、命令名、offset</text>
+  </g>
+
+  <!-- Main zones -->
+  <rect x="42" y="238" width="230" height="720" rx="17" class="source-panel"/>
+  <text x="64" y="271" class="section">源 Redis 集群</text>
+
+  <rect x="296" y="238" width="950" height="720" rx="17" class="worker-panel"/>
+  <text x="318" y="271" class="section">governance-sync-service · 数据面</text>
+
+  <rect x="1270" y="238" width="288" height="720" rx="17" class="target-panel"/>
+  <text x="1292" y="271" class="section">目标 Redis 集群</text>
+
+  <!-- Source -->
+  <g filter="url(#shadow)">
+    <rect x="67" y="306" width="180" height="72" rx="11" class="node-orange"/>
+    <circle cx="218" cy="330" r="7" fill="#f3b447"/>
+    <line x1="218" y1="337" x2="218" y2="350" stroke="#bd7417" stroke-width="1.5"/>
+    <circle cx="218" cy="356" r="5" fill="#fff" stroke="#bd7417" stroke-width="1.5"/>
+    <text x="86" y="333" class="head">Standalone</text>
+    <text x="86" y="357" class="small">指定实例 · 手工选择 DB</text>
+
+    <rect x="67" y="400" width="180" height="82" rx="11" class="node-orange"/>
+    <circle cx="218" cy="425" r="6" fill="#f3b447"/>
+    <circle cx="204" cy="445" r="5" fill="#fff" stroke="#bd7417" stroke-width="1.4"/>
+    <circle cx="232" cy="445" r="5" fill="#fff" stroke="#bd7417" stroke-width="1.4"/>
+    <path d="M218 431 L204 440 M218 431 L232 440" stroke="#bd7417" stroke-width="1.4"/>
+    <text x="86" y="427" class="head">Sentinel</text>
+    <text x="86" y="451" class="small">解析当前 Master</text>
+    <text x="86" y="469" class="small">failover 后重建通道</text>
+
+    <rect x="67" y="504" width="180" height="112" rx="11" class="node-orange"/>
+    <circle cx="218" cy="529" r="6" fill="#f3b447"/>
+    <circle cx="204" cy="547" r="5" fill="#fff" stroke="#bd7417" stroke-width="1.3"/>
+    <circle cx="232" cy="547" r="5" fill="#fff" stroke="#bd7417" stroke-width="1.3"/>
+    <path d="M218 535 L204 542 M218 535 L232 542 M204 552 L232 552" stroke="#bd7417" stroke-width="1.3"/>
+    <text x="86" y="531" class="head">Redis Cluster</text>
+    <text x="86" y="555" class="small">Master A · Slots 0–5460</text>
+    <text x="86" y="575" class="small">Master B · Slots 5461–10922</text>
+    <text x="86" y="595" class="small">Master C · Slots 10923–16383</text>
+  </g>
+  <rect x="67" y="655" width="180" height="94" rx="11" class="node-gray"/>
+  <text x="86" y="683" class="head">复制协议</text>
+  <text x="86" y="707" class="small">AUTH → REPLCONF → PSYNC</text>
+  <text x="86" y="728" class="small">FULLRESYNC / CONTINUE</text>
+
+  <rect x="67" y="794" width="180" height="112" rx="11" class="node-gray"/>
+  <text x="86" y="822" class="head">源端安全边界</text>
+  <text x="86" y="846" class="small">Spool fsync 后才 ACK</text>
+  <text x="86" y="866" class="small">90% 容量停止读取</text>
+  <text x="86" y="886" class="small">租约失效停止 ACK</text>
+
+  <!-- Ingest -->
+  <text x="322" y="310" class="head">① 复制通道</text>
+  <g filter="url(#shadow)">
+    <rect x="322" y="330" width="185" height="78" rx="11" class="node-green"/>
+    <text x="341" y="357" class="head">Topology Resolver</text>
+    <text x="341" y="381" class="small">每个源 Master 一个 Channel</text>
+
+    <rect x="322" y="436" width="185" height="112" rx="11" class="node-green"/>
+    <text x="341" y="463" class="head">Source Reader</text>
+    <text x="341" y="487" class="small">读取 RDB 与后续 RESP 流</text>
+    <text x="341" y="507" class="small">计数输入流计算 offset</text>
+    <text x="341" y="527" class="small">周期 REPLCONF ACK</text>
+  </g>
+
+  <!-- Spool -->
+  <text x="546" y="310" class="head">② 加密 Spool</text>
+  <g filter="url(#shadow)">
+    <!-- Local disk: cylinder plus concrete segment files -->
+    <rect x="540" y="342" width="206" height="194" class="disk-body"/>
+    <ellipse cx="643" cy="342" rx="103" ry="18" class="disk-top"/>
+    <ellipse cx="643" cy="536" rx="103" ry="18" class="disk-body"/>
+    <text x="566" y="348" class="head">本地加密持久盘</text>
+
+    <path d="M560 378 H626 L638 390 V431 H560 Z" class="file-rdb"/>
+    <path d="M626 378 V390 H638" fill="none" stroke="#7698df" stroke-width="1.3"/>
+    <text x="571" y="404" class="head">RDB</text>
+    <text x="571" y="421" class="tiny">001…N.seg</text>
+
+    <path d="M648 378 H714 L726 390 V431 H648 Z" class="file-resp"/>
+    <path d="M714 378 V390 H726" fill="none" stroke="#65b688" stroke-width="1.3"/>
+    <text x="657" y="404" class="head">RESP</text>
+    <text x="657" y="421" class="tiny">N+1….seg</text>
+
+    <path d="M560 446 H572 L578 452 H726 V491 H560 Z" fill="#ffffff" stroke="#8798ad" stroke-width="1.3"/>
+    <text x="573" y="469" class="body">manifest + CRC + GCM Tag</text>
+    <text x="573" y="484" class="tiny">var/data/sync/{task}/{epoch}/{channel}</text>
+
+    <text x="560" y="510" class="small">256 MiB 分段 · fsync 200 ms/4 MiB</text>
+    <text x="560" y="528" class="small">暂停可重放，Checkpoint 后回收文件</text>
+  </g>
+  <rect x="540" y="574" width="206" height="103" rx="11" class="node-gray"/>
+  <text x="560" y="602" class="head">容量与背压</text>
+  <text x="560" y="626" class="small">任务默认 50 GiB，可配置</text>
+  <text x="560" y="646" class="small">70% 告警 · 90% 停止源读取</text>
+  <text x="560" y="666" class="small">应用完成后回收 Segment</text>
+
+  <!-- Split -->
+  <circle cx="790" cy="438" r="26" fill="#ffffff" stroke="#54b982" stroke-width="2"/>
+  <text x="776" y="443" class="head">分流</text>
+  <text x="765" y="481" class="small">RDB / RESP</text>
+
+  <!-- Full path -->
+  <rect x="830" y="294" width="386" height="310" rx="14" fill="#f5f8ff" stroke="#89a9e8" stroke-width="1.5"/>
+  <text x="850" y="324" class="section">全量阶段 · 并发 RESTORE 写入</text>
+
+  <rect x="850" y="345" width="154" height="76" rx="10" class="node"/>
+  <text x="869" y="372" class="head">RDB Stream Parser</text>
+  <text x="869" y="396" class="small">类型 / TTL / DB / 原始 Dump</text>
+
+  <rect x="1030" y="345" width="162" height="76" rx="10" class="node"/>
+  <text x="1049" y="372" class="head">Key Filter</text>
+  <text x="1049" y="396" class="small">include / exclude / 保留前缀</text>
+
+  <rect x="850" y="447" width="342" height="54" rx="10" class="node"/>
+  <text x="869" y="470" class="head">Restore Dispatcher</text>
+  <text x="1010" y="470" class="small">按 Key/Slot 路由到并发 Lane</text>
+  <text x="869" y="490" class="tiny">队列容量、并发数、pipeline size、事务最大字节数均可配置</text>
+
+  <rect x="850" y="519" width="103" height="62" rx="9" class="tag-blue"/>
+  <text x="868" y="544" class="head">Lane 1</text>
+  <text x="868" y="564" class="tiny">独立连接</text>
+  <rect x="968" y="519" width="103" height="62" rx="9" class="tag-blue"/>
+  <text x="986" y="544" class="head">Lane 2</text>
+  <text x="986" y="564" class="tiny">独立连接</text>
+  <rect x="1086" y="519" width="106" height="62" rx="9" class="tag-blue"/>
+  <text x="1104" y="544" class="head">Lane N</text>
+  <text x="1104" y="564" class="tiny">默认 N=4</text>
+
+  <!-- Incremental path -->
+  <rect x="830" y="626" width="386" height="302" rx="14" fill="#fffaf5" stroke="#e7b45d" stroke-width="1.5"/>
+  <text x="850" y="657" class="section">增量阶段 · 命令筛选与安全规划</text>
+
+  <rect x="850" y="678" width="154" height="62" rx="10" class="node"/>
+  <text x="869" y="703" class="head">RESP Decoder</text>
+  <text x="869" y="723" class="small">二进制安全命令与 offset</text>
+
+  <rect x="1030" y="678" width="162" height="62" rx="10" class="node"/>
+  <text x="1049" y="703" class="head">Command Registry</text>
+  <text x="1049" y="723" class="small">Key / DB / 写语义 / Slot</text>
+
+  <rect x="850" y="758" width="342" height="89" rx="10" class="node-orange"/>
+  <!-- Funnel denotes filtering; shield denotes fail-closed policy -->
+  <path d="M1141 766 H1178 L1165 783 V803 L1154 810 V783 Z" fill="#fff" stroke="#bd7417" stroke-width="1.4"/>
+  <path d="M1161 814 L1177 821 V835 C1177 843 1170 849 1161 853 C1152 849 1145 843 1145 835 V821 Z"
+        fill="#fee4e2" stroke="#c63d38" stroke-width="1.4"/>
+  <path d="M1155 829 L1167 841 M1167 829 L1155 841" stroke="#c63d38" stroke-width="1.5"/>
+  <text x="869" y="783" class="head">Command Planner · 命令屏蔽策略</text>
+  <rect x="869" y="797" width="69" height="29" rx="6" class="tag-green"/>
+  <text x="886" y="816" class="tiny">直接同步</text>
+  <rect x="946" y="797" width="69" height="29" rx="6" class="tag-blue"/>
+  <text x="963" y="816" class="tiny">安全拆分</text>
+  <rect x="1023" y="797" width="69" height="29" rx="6" class="tag-gray"/>
+  <text x="1040" y="816" class="tiny">过滤丢弃</text>
+  <rect x="1100" y="797" width="72" height="29" rx="6" class="tag-red"/>
+  <text x="1114" y="816" class="tiny">阻塞任务</text>
+  <text x="869" y="841" class="tiny">硬阻塞 / 额外屏蔽 / 过滤边界 / 跨 Slot 不兼容均失败关闭</text>
+
+  <rect x="850" y="867" width="342" height="42" rx="9" class="node-red"/>
+  <text x="869" y="893" class="body">BLOCKED：只记录命令名、offset、Key 数和 Key 哈希，不记录 Key/Value</text>
+
+  <!-- Target -->
+  <g filter="url(#shadow)">
+    <rect x="1294" y="306" width="240" height="82" rx="11" class="node-blue"/>
+    <text x="1313" y="334" class="head">Target Topology Router</text>
+    <text x="1313" y="358" class="small">Standalone / Sentinel Master</text>
+    <text x="1313" y="377" class="small">Cluster 按 Slot 路由 Master</text>
+
+    <rect x="1294" y="416" width="240" height="137" rx="11" class="node-blue"/>
+    <text x="1313" y="444" class="head">全量写入事务 · 每个 Lane</text>
+    <text x="1313" y="468" class="small">WATCH fenceKey</text>
+    <text x="1313" y="488" class="small">MULTI + RESTORE REPLACE ABSTTL</text>
+    <text x="1313" y="508" class="small">更新 full_progress:{lane}</text>
+    <text x="1313" y="528" class="small">EXEC 冲突拒绝旧 generation</text>
+
+    <rect x="1294" y="581" width="240" height="137" rx="11" class="node-blue"/>
+    <text x="1313" y="609" class="head">增量原子写入批次</text>
+    <text x="1313" y="633" class="small">WATCH fenceKey + checkpointKey</text>
+    <text x="1313" y="653" class="small">MULTI + 业务命令</text>
+    <text x="1313" y="673" class="small">更新 replId / appliedOffset</text>
+    <text x="1313" y="693" class="small">EXEC：业务数据与 checkpoint 同生效</text>
+
+    <rect x="1294" y="748" width="240" height="150" rx="11" class="node-blue"/>
+    <text x="1313" y="777" class="head">目标 Redis 数据节点</text>
+    <g>
+      <rect x="1313" y="800" width="62" height="27" class="redis-body"/>
+      <ellipse cx="1344" cy="800" rx="31" ry="8" fill="#e3ebff" stroke="#779be1" stroke-width="1.4"/>
+      <ellipse cx="1344" cy="827" rx="31" ry="8" class="redis-body"/>
+      <text x="1328" y="816" class="tiny">Node A</text>
+    </g>
+    <g>
+      <rect x="1383" y="800" width="62" height="27" class="redis-body"/>
+      <ellipse cx="1414" cy="800" rx="31" ry="8" fill="#e3ebff" stroke="#779be1" stroke-width="1.4"/>
+      <ellipse cx="1414" cy="827" rx="31" ry="8" class="redis-body"/>
+      <text x="1398" y="816" class="tiny">Node B</text>
+    </g>
+    <g>
+      <rect x="1453" y="800" width="62" height="27" class="redis-body"/>
+      <ellipse cx="1484" cy="800" rx="31" ry="8" fill="#e3ebff" stroke="#779be1" stroke-width="1.4"/>
+      <ellipse cx="1484" cy="827" rx="31" ry="8" class="redis-body"/>
+      <text x="1468" y="816" class="tiny">Node N</text>
+    </g>
+    <text x="1313" y="855" class="small">业务 Key / Value / TTL</text>
+    <text x="1313" y="877" class="small">Fence / Checkpoint / Full Progress</text>
+  </g>
+
+  <!-- Data arrows -->
+  <path d="M247 460 L322 480" class="arrow-orange"/>
+  <text x="260" y="447" class="tiny">每个 Master</text>
+  <path d="M507 490 L540 455" class="arrow-green"/>
+  <text x="510" y="440" class="tiny">先落盘</text>
+  <path d="M540 350 C462 292 330 292 247 330" class="dash"/>
+  <text x="322" y="286" class="tiny">fsync 完成后才 ACK receivedOffset</text>
+  <path d="M746 438 L764 438" class="arrow"/>
+  <path d="M810 426 C822 404 826 389 850 383" class="arrow"/>
+  <path d="M810 451 C822 557 822 684 850 708" class="arrow-orange"/>
+
+  <path d="M1004 383 L1030 383" class="arrow"/>
+  <path d="M1111 421 L1022 447" class="arrow"/>
+  <path d="M1004 709 L1030 709" class="arrow-orange"/>
+  <path d="M1111 740 L1030 758" class="arrow-orange"/>
+
+  <!-- Full and incremental paths join one clean target-routing ingress bus. -->
+  <path d="M1192 474 H1230" class="flow-blue"/>
+  <text x="1198" y="460" class="tiny">N 路并发</text>
+  <path d="M1192 820 H1230 V474" class="flow-orange"/>
+  <text x="1198" y="806" class="tiny">规划后批次</text>
+  <circle cx="1230" cy="474" r="5" fill="#ffffff" stroke="#396bc7" stroke-width="2"/>
+  <path d="M1230 474 V347 H1294" class="arrow"/>
+  <text x="1238" y="407" class="tiny">统一目标路由</text>
+
+  <!-- Router branches without crossing or backward arrows. -->
+  <path d="M1370 388 V402 H1282 V484 H1294" class="arrow"/>
+  <text x="1288" y="405" class="tiny">全量</text>
+  <path d="M1515 388 V400 H1544 V650 H1534" class="arrow-orange"/>
+  <text x="1502" y="557" class="tiny">增量</text>
+
+  <!-- Both writers converge only at the target data nodes. -->
+  <path d="M1310 553 H1278 V732 H1344 V748" class="arrow"/>
+  <path d="M1478 718 V748" class="arrow-orange"/>
+
+  <!-- Control arrows -->
+  <path d="M850 888 C784 888 770 841 746 841" class="arrow-red"/>
+  <rect x="540" y="803" width="206" height="90" rx="11" class="node-red"/>
+  <text x="560" y="831" class="head">阻塞与人工处理</text>
+  <text x="560" y="855" class="small">BLOCKED_UNSUPPORTED_COMMAND</text>
+  <text x="560" y="875" class="small">不跳过、不继续写、不泄露数据</text>
+
+  <!-- Footer legend -->
+  <line x1="42" y1="988" x2="1558" y2="988" class="divider"/>
+  <rect x="56" y="1005" width="13" height="13" rx="3" class="tag-blue"/>
+  <text x="77" y="1016" class="tiny">全量 RDB / RESTORE</text>
+  <rect x="224" y="1005" width="13" height="13" rx="3" class="tag-green"/>
+  <text x="245" y="1016" class="tiny">Spool 与安全持久化</text>
+  <rect x="423" y="1005" width="13" height="13" rx="3" class="tag-red"/>
+  <text x="444" y="1016" class="tiny">命令屏蔽 / 失败关闭</text>
+  <path d="M646 1003 H662 L667 1008 V1021 H646 Z" class="file-rdb"/>
+  <text x="676" y="1016" class="tiny">落盘文件 / Manifest</text>
+  <ellipse cx="840" cy="1011" rx="12" ry="5" class="disk-top"/>
+  <rect x="828" y="1011" width="24" height="8" class="disk-body"/>
+  <text x="861" y="1016" class="tiny">本地持久盘 / Redis 数据节点</text>
+  <text x="1100" y="1016" class="tiny">全量并发默认 4，可按任务调整</text>
+</svg>

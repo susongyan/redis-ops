@@ -62,7 +62,7 @@ public class SyncController {
         PageResult<SyncTaskEvent> events = service.events(id, 1, 20);
         return wrap(new TaskDetail(service.get(id), events.items(), events.total(),
                 service.runtime(id).orElse(null), service.channels(id),
-                service.precheck(id).orElse(null), service.metrics(id, 100)), request);
+                service.precheck(id).orElse(null), service.metrics(id, 100), service.fullProgress(id)), request);
     }
 
     @GetMapping("/api/v1/sync-tasks/{id}/events")
@@ -150,6 +150,10 @@ public class SyncController {
             @RequestParam(defaultValue = "100") int limit, HttpServletRequest request) {
         return wrap(service.metrics(id, limit), request);
     }
+    @GetMapping("/api/v1/sync-tasks/{id}/full-progress")
+    ApiResponse<List<SyncFullProgress>> fullProgress(@PathVariable long id, HttpServletRequest request) {
+        return wrap(service.fullProgress(id), request);
+    }
 
     @GetMapping("/api/v1/switchovers/{id}")
     ApiResponse<Switchover> getSwitchover(@PathVariable long id, HttpServletRequest request) {
@@ -215,7 +219,7 @@ public class SyncController {
     }
     public record TaskDetail(SyncTask task, List<SyncTaskEvent> events, long eventTotal, SyncRuntime runtime,
             List<SyncChannelCheckpoint> channels, SyncPrecheckReport precheck,
-            List<SyncMetricSnapshot> metrics) {
+            List<SyncMetricSnapshot> metrics, List<SyncFullProgress> fullProgress) {
     }
 
     private ApiResponse<SyncTask> action(HttpServletRequest request, String key, String operation, Object body,

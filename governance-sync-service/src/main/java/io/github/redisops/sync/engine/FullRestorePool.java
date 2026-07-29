@@ -26,6 +26,7 @@ final class FullRestorePool implements AutoCloseable {
     private final LeaseGuard leaseGuard;
     private final Runnable beforeApply;
     private final Runnable afterApply;
+    private final FullRestoreProgressListener progress;
     private final BlockingQueue<RestoreItem> queue;
     private final ExecutorService executor;
     private final List<Future<?>> workers;
@@ -35,15 +36,17 @@ final class FullRestorePool implements AutoCloseable {
     FullRestorePool(RedisConnectionProfile profile, RedisDataEndpointResolver endpoints, int database,
             long taskId, Duration connectTimeout,
             int concurrency, int queueCapacity, int pipelineSize, long transactionMaxBytes,
-            TargetFence fence, LeaseGuard leaseGuard, Runnable beforeApply, Runnable afterApply) {
+            TargetFence fence, LeaseGuard leaseGuard, Runnable beforeApply, Runnable afterApply,
+            FullRestoreProgressListener progress) {
         this(profile, endpoints, database, taskId, "standalone", connectTimeout, concurrency, queueCapacity,
-                pipelineSize, transactionMaxBytes, fence, leaseGuard, beforeApply, afterApply);
+                pipelineSize, transactionMaxBytes, fence, leaseGuard, beforeApply, afterApply, progress);
     }
 
     FullRestorePool(RedisConnectionProfile profile, RedisDataEndpointResolver endpoints, int database,
             long taskId, String channel, Duration connectTimeout,
             int concurrency, int queueCapacity, int pipelineSize, long transactionMaxBytes,
-            TargetFence fence, LeaseGuard leaseGuard, Runnable beforeApply, Runnable afterApply) {
+            TargetFence fence, LeaseGuard leaseGuard, Runnable beforeApply, Runnable afterApply,
+            FullRestoreProgressListener progress) {
         if (concurrency < 1 || concurrency > 64)
             throw new IllegalArgumentException("full restore concurrency must be between 1 and 64");
         if (queueCapacity < concurrency)
@@ -64,6 +67,7 @@ final class FullRestorePool implements AutoCloseable {
         this.leaseGuard = leaseGuard;
         this.beforeApply = beforeApply;
         this.afterApply = afterApply;
+        this.progress = progress;
         this.queue = new ArrayBlockingQueue<>(queueCapacity);
         this.executor = Executors.newFixedThreadPool(concurrency, runnable -> {
             Thread thread = new Thread(runnable, "redis-full-restore-" + taskId);
@@ -147,6 +151,7 @@ final class FullRestorePool implements AutoCloseable {
                 beforeApply.run();
                 try {
                     restoreBatch(batch, lane);
+                    progress.applied(lane, batch.size(), batchBytes);
                 } finally {
                     afterApply.run();
                     batch.clear();

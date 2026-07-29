@@ -108,6 +108,12 @@ public class MyBatisSyncRepository implements SyncRepository {
     public void saveMetric(SyncMetricSnapshot metric) {
         mapper.insertMetric(metric);
     }
+    public List<SyncFullProgress> findFullProgress(long taskId) {
+        return mapper.findFullProgress(taskId);
+    }
+    public void upsertFullProgress(SyncFullProgress progress) {
+        mapper.upsertFullProgress(progress);
+    }
     private void event(long id, SyncTaskStatus from, SyncTaskStatus to, String op, String message) {
         var r = new SyncMapper.EventRow();
         r.taskId = id;

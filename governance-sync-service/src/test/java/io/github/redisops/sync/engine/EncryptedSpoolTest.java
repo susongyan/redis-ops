@@ -9,6 +9,7 @@ import java.io.PushbackInputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -51,6 +52,23 @@ class EncryptedSpoolTest {
 
             byte[] encrypted = Files.readAllBytes(spool.directory().resolve("full.rdb.enc"));
             assertFalse(new String(encrypted, StandardCharsets.ISO_8859_1).contains("REDIS0009-payload"));
+        }
+    }
+
+    @Test
+    void reportsCumulativeRdbReceiveProgress() throws Exception {
+        byte[] key = new byte[32];
+        byte[] rdb = new byte[64 * 1024 * 2 + 17];
+        List<Long> progress = new ArrayList<>();
+        try (EncryptedSpool spool = new EncryptedSpool(directory, 12, key, 1024, 1024 * 1024)) {
+            spool.prepare();
+            long written = spool.writeRdb(new ByteArrayInputStream(rdb), rdb.length, null, progress::add);
+
+            assertEquals(rdb.length, written);
+            assertFalse(progress.isEmpty());
+            assertEquals(rdb.length, progress.get(progress.size() - 1));
+            for (int index = 1; index < progress.size(); index++)
+                assertTrue(progress.get(index) > progress.get(index - 1));
         }
     }
 

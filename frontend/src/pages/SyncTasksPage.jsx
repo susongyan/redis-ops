@@ -12,6 +12,7 @@ import {
   message,
   Modal,
   Popconfirm,
+  Progress,
   Row,
   Select,
   Space,
@@ -67,6 +68,32 @@ const capabilityMeta = {
   POLICY_BLOCKED: ['策略阻塞', 'error'],
   UNKNOWN_BLOCKED: ['未知即阻塞', 'error'],
   IGNORED: ['协议忽略', 'default'],
+}
+const fullStageMeta = {
+  RECEIVING_RDB: '接收 RDB',
+  PARSING_RDB: '解析 RDB',
+  RESTORING: '并发写入',
+  COMPLETED: '全量完成',
+}
+
+const fullPercent = (row) => {
+  if (row.status === 'COMPLETED') return 100
+  if (row.stage === 'RECEIVING_RDB') {
+    return row.totalBytes > 0 ? Math.min(30, Math.round(row.receivedBytes * 30 / row.totalBytes)) : 0
+  }
+  if (row.totalKeys != null) {
+    return row.totalKeys === 0 ? 100 : Math.min(99, 50 + Math.round(row.appliedKeys * 50 / row.totalKeys))
+  }
+  if (row.totalBytes > 0) {
+    return Math.min(49, 30 + Math.round(row.parsedBytes * 20 / row.totalBytes))
+  }
+  return 30
+}
+
+const bytesLabel = (value) => {
+  if (value == null) return '-'
+  if (value >= gib) return `${(value / gib).toFixed(1)} GiB`
+  return `${(value / mib).toFixed(1)} MiB`
 }
 
 function TipLabel({ label, tip }) {
@@ -179,9 +206,22 @@ export default function SyncTasksPage() {
     ].join(':') : ''
   }
 
+  const fullProgressSignature = (progress = []) => progress.map((item) => [
+    item.channelId,
+    item.lane,
+    item.stage,
+    item.receivedBytes,
+    item.parsedBytes,
+    item.totalKeys,
+    item.appliedKeys,
+    item.appliedBytes,
+    item.status,
+    item.updatedAt,
+  ].join(':')).join('|')
+
   const applyDetailSnapshot = (result, animate = true) => {
     const nextChannelSignature = channelSignature(result.channels)
-    const nextMetricSignature = metricSignature(result.metrics)
+    const nextMetricSignature = `${metricSignature(result.metrics)}|${fullProgressSignature(result.fullProgress)}`
     if (animate && channelSignatureRef.current && channelSignatureRef.current !== nextChannelSignature) {
       setChannelFlash((value) => value + 1)
     }
@@ -973,6 +1013,109 @@ export default function SyncTasksPage() {
             />
           </>
         ) : <div className="muted">尚未执行预检查</div>}
+
+        <h3 className="sync-live-heading">
+          全量同步进度
+          {metricFlash > 0 && detail?.fullProgress?.length > 0 && (
+            <span key={`full-${metricFlash}`} className="sync-update-pulse" aria-label="全量同步进度已更新" />
+          )}
+        </h3>
+        {detail?.fullProgress?.length > 0 ? (() => {
+          const channels = detail.fullProgress.filter((item) => item.lane === -1)
+          const lanes = detail.fullProgress.filter((item) => item.lane >= 0)
+          const overall = channels.length === 0
+            ? 0
+            : Math.round(channels.reduce((sum, item) => sum + fullPercent(item), 0) / channels.length)
+          const failed = channels.some((item) => item.status === 'FAILED')
+          const completed = channels.length > 0 && channels.every((item) => item.status === 'COMPLETED')
+          return (
+            <div
+              key={`full-progress-${metricFlash}`}
+              className={`sync-live-panel ${metricFlash > 0 ? 'sync-live-panel-updated' : ''}`}
+            >
+              <Descriptions
+                bordered
+                size="small"
+                column={3}
+                items={[
+                  {
+                    key: 'overall',
+                    label: <TipLabel label="总体进度" tip="接收 RDB 占前 30%，解析占 20%，并发 RESTORE 写入占后 50%；多源通道取平均值。" />,
+                    children: (
+                      <Progress
+                        percent={overall}
+                        size="small"
+                        status={failed ? 'exception' : completed ? 'success' : 'active'}
+                      />
+                    ),
+                  },
+                  { key: 'channels', label: '源通道数', children: channels.length },
+                  {
+                    key: 'applied',
+                    label: '已写入 Key',
+                    children: channels.reduce((sum, item) => sum + item.appliedKeys, 0),
+                  },
+                ]}
+              />
+              <Table
+                style={{ marginTop: 12 }}
+                rowKey="channelId"
+                size="small"
+                pagination={false}
+                dataSource={channels}
+                columns={[
+                  { title: '源通道', dataIndex: 'channelId' },
+                  {
+                    title: '阶段',
+                    render: (_, row) => (
+                      <Tag color={row.status === 'FAILED' ? 'error' : row.status === 'COMPLETED' ? 'success' : 'processing'}>
+                        {fullStageMeta[row.stage] || row.stage}
+                      </Tag>
+                    ),
+                  },
+                  {
+                    title: <TipLabel label="通道进度" tip="固定长度 RDB 显示接收字节进度；解析完成后根据 RESTORE Key 数显示写入进度。" />,
+                    width: 190,
+                    render: (_, row) => <Progress percent={fullPercent(row)} size="small" />,
+                  },
+                  {
+                    title: 'RDB 接收',
+                    render: (_, row) => `${bytesLabel(row.receivedBytes)} / ${bytesLabel(row.totalBytes)}`,
+                  },
+                  { title: '已解析 Key', dataIndex: 'parsedKeys' },
+                  {
+                    title: '已写入 Key',
+                    render: (_, row) => `${row.appliedKeys}${row.totalKeys == null ? '' : ` / ${row.totalKeys}`}`,
+                  },
+                  { title: '更新时间', dataIndex: 'updatedAt' },
+                ]}
+              />
+              {lanes.length > 0 && (
+                <>
+                  <h4>RESTORE 并发 Lane</h4>
+                  <Table
+                    rowKey={(row) => `${row.channelId}-${row.lane}`}
+                    size="small"
+                    pagination={false}
+                    dataSource={lanes}
+                    columns={[
+                      { title: '源通道', dataIndex: 'channelId' },
+                      { title: 'Lane', dataIndex: 'lane', render: (lane) => `Lane ${lane + 1}` },
+                      { title: '已写入 Key', dataIndex: 'appliedKeys' },
+                      { title: '写入数据量', dataIndex: 'appliedBytes', render: bytesLabel },
+                      {
+                        title: '状态',
+                        dataIndex: 'status',
+                        render: (status) => <Tag color={status === 'FAILED' ? 'error' : status === 'COMPLETED' ? 'success' : 'processing'}>{status}</Tag>,
+                      },
+                      { title: '更新时间', dataIndex: 'updatedAt' },
+                    ]}
+                  />
+                </>
+              )}
+            </div>
+          )
+        })() : <div className="muted">全量同步启动后显示 RDB 接收、解析和并发 RESTORE 进度</div>}
 
         <h3>运行实例</h3>
         {detail?.runtime ? (

@@ -87,6 +87,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private long lastSourceMasterCheckNanos;
     private boolean caughtUp;
     private volatile long lastAppliedHeartbeatMillis;
+    private volatile FullSyncProgressTracker fullProgress;
     private final byte[] heartbeatKey;
 
     StandaloneSyncTaskRunner(SyncTask task, boolean recovery, RedisConnectionProfileProvider profiles,
@@ -337,7 +338,12 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
 
     private void spoolRdb(SourceReplicationSession session, ReplicationReply.FullResync full) throws Exception {
         leaseGuard.assertValid();
-        session.spoolRdb(full, spool);
+        int restoreConcurrency = taskFullApplyConcurrency();
+        fullProgress = new FullSyncProgressTracker(originalTask.id(), originalTask.fullSyncEpoch(), CHANNEL,
+                restoreConcurrency, sync);
+        fullProgress.startReceiving(full.transfer().length());
+        long rdbBytes = session.spoolRdb(full, spool, fullProgress::received);
+        fullProgress.rdbReceived(rdbBytes);
         leaseGuard.assertValid();
         spool.saveFullMetadata(full.replicationId(), full.offset());
         leaseGuard.assertValid();
@@ -352,15 +358,22 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private void applyRdb(long baseOffset) throws IOException {
         phase = "FULL_SYNCING";
         int restoreConcurrency = taskFullApplyConcurrency();
+        if (fullProgress == null) {
+            fullProgress = new FullSyncProgressTracker(originalTask.id(), originalTask.fullSyncEpoch(), CHANNEL,
+                    restoreConcurrency, sync);
+            fullProgress.startReceiving(-1);
+        }
         int restoreQueueCapacity = Math.max(fullApplyQueueCapacity, restoreConcurrency);
         try (var input = spool.openRdb()) {
             try (var restores = new FullRestorePool(targetProfile, endpoints, originalTask.targetDb(),
                     originalTask.id(), connectTimeout, restoreConcurrency, restoreQueueCapacity,
                     taskFullApplyPipelineSize(),
                     fullApplyTransactionMaxBytes, targetFence, leaseGuard,
-                    this::waitForApplyPermission, this::targetApplyFinished)) {
+                    this::waitForApplyPermission, this::targetApplyFinished, fullProgress::applied)) {
                 try {
-                    new RdbStreamParser(input).parse(event -> applyRdbEvent(event, restores));
+                    RdbStreamParser parser = new RdbStreamParser(input);
+                    parser.parse(event -> fullProgress.parsed(parser.position(), applyRdbEvent(event, restores)));
+                    fullProgress.parsingComplete(parser.position());
                     restores.awaitCompletion();
                 } catch (UncheckedIOException error) {
                     throw error.getCause();
@@ -374,6 +387,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                 new TargetCheckpoint(originalTask.fullSyncEpoch(), generation, replicationId,
                         baseOffset, sourceDatabase, Instant.now()));
         appliedOffset.set(checkpoint.appliedOffset());
+        fullProgress.completed();
         spool.discardFullRdb();
         updateChannel("INCR_SYNCING");
         phase = "INCR_SYNCING";
@@ -381,12 +395,14 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                 "full RDB applied; incremental replication started");
     }
 
-    private void applyRdbEvent(RdbEvent event, FullRestorePool restores) {
+    private boolean applyRdbEvent(RdbEvent event, FullRestorePool restores) {
         try {
             if (event instanceof RdbEvent.KeyValue keyValue) {
-                if (keyValue.database() == originalTask.sourceDb() && filter.accepts(keyValue.key()))
+                if (keyValue.database() == originalTask.sourceDb() && filter.accepts(keyValue.key())) {
                     restores.submit(new TargetCommandSession.RestoreRequest(
                             keyValue.key(), keyValue.absoluteExpireMillis(), keyValue.dumpPayload()));
+                    return true;
+                }
             } else if (event instanceof RdbEvent.FunctionLibrary function) {
                 waitForApplyPermission();
                 try {
@@ -395,6 +411,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                     targetApplyFinished();
                 }
             }
+            return false;
         } catch (IOException error) {
             throw new UncheckedIOException(error);
         }
@@ -859,6 +876,8 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         if (cancelled.get())
             return;
         stoppedByFailure.set(true);
+        if (fullProgress != null)
+            fullProgress.failed();
         lastFailure = safe(error);
         if (error instanceof TargetCommandSession.FencingException
                 || error instanceof LeaseGuard.LeaseLostException) {
