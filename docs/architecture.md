@@ -16,6 +16,9 @@
 
 当前非目标：Redis 集群部署、节点安装、自动扩缩容、slot rebalance、自动故障切换、redis.conf 批量下发、自动重启以及 Redis Proxy。未来 Access Layer 属于可选增强，不是现阶段依赖。
 
+本文描述目标架构；跨模块不可变边界以[架构契约](architecture-contract.md)为准，重大取舍以
+[ADR](adr/README.md)为准。文中列出的后续模块不表示已经上线。
+
 ## 2. 架构原则
 
 1. **旁路治理**：不进入业务请求链路，平台故障不能影响应用访问 Redis。
@@ -159,6 +162,10 @@ API/调度器 → 创建发现或采集 Job → Worker 领取租约 → 连接 R
 
 所有耗时动作统一建模为 Job，业务任务与执行任务分离：SyncTask、ScanTask、ValidationTask、GovernanceTask 表示业务；AsyncJob 表示一次可调度执行。
 
+当前物理形态已将真实同步数据面拆为独立 `governance-sync-service`：Platform 持有控制命令、
+任务期望状态与审计，Sync Worker 以共享 MySQL 租约领取命令并执行 PSYNC、spool、目标写入。
+目标 Redis checkpoint/fence 是同步写入的最终事实；详情见[同步管理面与 Worker 分离](sync-control-worker-separation.md)。
+
 Worker 使用数据库租约或调度平台领取任务，具备心跳、超时接管、有限重试、指数退避、幂等键、checkpoint 和取消信号。任务按 `discovery`、`collector`、`sync-control`、`scan`、`validation`、`governance` 分队列或执行池，防止大扫描耗尽同步监控资源。
 
 治理执行类任务优先级低于同步控制和 P1 采集；每个集群设置并发上限，避免多个扫描或治理任务叠加冲击 Redis。
@@ -178,7 +185,8 @@ Worker 使用数据库租约或调度平台领取任务，具备心跳、超时�
 核心实体组：
 
 - 资产：`redis_cluster`、`redis_cluster_secret`、`redis_node`、`application`、`app_cluster_binding`、`discovery_run`。
-- 同步：`sync_task`、`sync_task_event`、`sync_metric_snapshot`（仅低频摘要）。
+- 同步：`sync_task`、`sync_task_event`、`sync_runtime`、`sync_channel_checkpoint`、
+  `sync_metric_snapshot`（仅低频摘要）和 `sync_full_progress`（按通道/Lane 的观测进度）。
 - 采集告警：`collector_job`、`alert_rule`、`alert_event`、`notification_record`。
 - 数据质量：`validation_task/result`、`scan_task/result`、`governance_task/batch`。
 - 平台控制：`async_job`、`approval_instance`、`rule_definition`、`audit_log`。
@@ -201,7 +209,8 @@ REST API 按领域划分：
 
 ## 9. 安全与风险控制
 
-- 接入企业 SSO/RBAC；高风险动作需要审批和二次确认。
+- 企业 SSO/RBAC 是后续接入项，当前尚未实现授权判定；`X-Operator` 仅用于审计。高风险同步
+  动作已要求预检查、写隔离、二次确认与审计；治理动作在 Phase 3 引入审批后才开放。
 - Redis 密码只以 AES-256-GCM 密文保存，主密钥只来自进程环境变量；查询接口、日志、审计和任务 payload 均不得包含密码或密文。旧 `env://` 仅作为迁移兼容。
 - 平台 Redis 账号按只读采集、同步、治理分别授权；扫描账号不得拥有删除权限。
 - 对 SCAN、MEMORY USAGE、校验和治理设置全局/集群/任务三级限速和熔断。
@@ -227,7 +236,9 @@ API 可多实例无状态部署；Worker 水平扩展并依赖租约避免重复
 | governance-application | 用例编排 | 各领域 Application Service |
 | governance-infrastructure | MySQL、Redis、工具适配 | Collector、Sync Tool、存储适配器 |
 | governance-api | REST 契约 | 各领域 Controller |
-| governance-bootstrap | API + Worker 单进程 | Backend API、Collector/Scan/Validation/Governance Worker |
+| governance-bootstrap | Platform API、Flyway、资产发现调度 | Backend API、Collector/Scan/Validation/Governance Worker |
+| governance-sync-protocol | RESP、PSYNC、RDB、命令规划 | 独立同步协议内核 |
+| governance-sync-service | 独立 Sync Worker、lease/fence/spool | Sync 数据面 Worker |
 
 未来只有在独立发布、团队所有权、故障隔离或资源模型出现明确需求时，才将逻辑模块拆成 `cluster-service`、`sync-service`、`collector-service`、`scan-service`、`alert-service` 和 `ai-analysis-service`。
 
@@ -240,7 +251,10 @@ API 可多实例无状态部署；Worker 水平扩展并依赖租约避免重复
 | Phase 3 | 数据质量治理闭环 | 数据校验、TTL 填充、数据清理、审批、审计和结果报告 |
 | Phase 4 | 运维经验辅助决策 | 告警分析、同步分析、大 Key/校验分析、自动报告 |
 
-Phase 1 的物理形态是单个 API/Worker 进程 + MySQL；Phase 2 引入 Prometheus/Grafana 与采集执行池；只有出现明确隔离或扩缩容需求时才拆分 Worker 进程。Phase 3 才开放有审批保护的数据修改能力；Phase 4 只增加分析能力，不改变生产动作权限边界。
+Phase 1 当前物理形态是 Platform（API、资产发现调度）+ 独立 Sync Worker + MySQL；两者可以同机
+或分机部署。Phase 2 引入 Prometheus/Grafana 与采集执行池；Collector、Scan、Alert 等仍先按
+逻辑模块落地，只有出现明确隔离或扩缩容需求时再拆分 Worker 进程。Phase 3 才开放有审批保护的
+数据修改能力；Phase 4 只增加分析能力，不改变生产动作权限边界。
 
 ## 13. 关键待确认项
 

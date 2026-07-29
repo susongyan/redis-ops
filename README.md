@@ -84,6 +84,7 @@ mvn package
 ```
 
 详细设计见 [架构设计](docs/architecture.md)、[跨机房关系与同步](docs/cross-idc-sync.md)、
+[架构契约](docs/architecture-contract.md)、[架构决策记录](docs/adr/README.md)、
 [同步管理面与 Worker 分离](docs/sync-control-worker-separation.md)、
 [同步 Worker 管理流程与生命周期](docs/sync-worker-lifecycle.md)、
 [同步服务部署与恢复手册](docs/sync-operations-runbook.md)、
