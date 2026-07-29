@@ -246,9 +246,9 @@ API 可多实例无状态部署；Worker 水平扩展并依赖租约避免重复
 
 | 阶段 | 目标 | 主要交付 |
 |---|---|---|
-| [Phase 1](phase1-tasks.md) | 资产和同步可控 | 工程基线、数据库、Cluster CRUD、Node Discovery、Application Binding、Sync Task CRUD 与状态机 |
+| [Phase 1](phase1-tasks.md) | 资产、同步与验收可控 | 工程基线、数据库、Cluster CRUD、Node Discovery、Application Binding、Sync Task、数据校验报告与状态机 |
 | Phase 2 | 风险可见、异常可感知 | Collector、指标采集、同步监控、告警、大 Key 检测 |
-| Phase 3 | 数据质量治理闭环 | 数据校验、TTL 填充、数据清理、审批、审计和结果报告 |
+| Phase 3 | 数据质量治理闭环 | TTL 填充、数据清理、审批、审计和结果报告；数据校验扩展为修复前门禁 |
 | Phase 4 | 运维经验辅助决策 | 告警分析、同步分析、大 Key/校验分析、自动报告 |
 
 Phase 1 当前物理形态是 Platform（API、资产发现调度）+ 独立 Sync Worker + MySQL；两者可以同机

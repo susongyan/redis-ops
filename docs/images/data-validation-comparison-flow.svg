@@ -1,0 +1,178 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="980" viewBox="0 0 1500 980" role="img" aria-labelledby="title desc">
+  <title id="title">Redis 数据校验的数据比对过程</title>
+  <desc id="desc">从任务配置、源端扫描与抽样，到目标端存在性、类型、TTL 和语义摘要比较；严格模式额外反向扫描目标端，最后汇总结果与进度。</desc>
+  <defs>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #172033; }
+      .title { font-size: 29px; font-weight: 700; }
+      .subtitle { font-size: 14px; fill: #526174; }
+      .section { font-size: 17px; font-weight: 700; }
+      .head { font-size: 15px; font-weight: 700; }
+      .body { font-size: 13px; }
+      .small { font-size: 12px; fill: #526174; }
+      .canvas { fill: #f5f7fb; }
+      .panel { fill: #fff; stroke: #c9d5e5; stroke-width: 1.4; }
+      .source { fill: #fff7ed; stroke: #e7b65a; stroke-width: 1.8; }
+      .worker { fill: #effaf4; stroke: #6cbf91; stroke-width: 1.8; }
+      .target { fill: #eef4ff; stroke: #7b9ee7; stroke-width: 1.8; }
+      .result { fill: #f7f2ff; stroke: #aa91dd; stroke-width: 1.8; }
+      .node { fill: #fff; stroke: #aebdce; stroke-width: 1.3; }
+      .node-blue { fill: #f6f9ff; stroke: #8aa9e4; stroke-width: 1.3; }
+      .node-green { fill: #f4fcf7; stroke: #76be96; stroke-width: 1.3; }
+      .node-orange { fill: #fffaf1; stroke: #e2b561; stroke-width: 1.3; }
+      .node-red { fill: #fff2f1; stroke: #db7972; stroke-width: 1.3; }
+      .node-purple { fill: #faf7ff; stroke: #a98ddd; stroke-width: 1.3; }
+      .arrow { fill: none; stroke: #3e6fc2; stroke-width: 1.6; marker-end: url(#arrow); }
+      .arrow-green { fill: none; stroke: #27875a; stroke-width: 1.6; marker-end: url(#arrowGreen); }
+      .arrow-orange { fill: none; stroke: #bc7418; stroke-width: 1.6; marker-end: url(#arrowOrange); }
+      .arrow-purple { fill: none; stroke: #7e62b6; stroke-width: 1.6; marker-end: url(#arrowPurple); }
+      .dash { fill: none; stroke: #718096; stroke-width: 1.35; stroke-dasharray: 6 5; marker-end: url(#arrowGray); }
+      .divider { stroke: #c8d3e2; stroke-width: 1.1; stroke-dasharray: 5 5; }
+      .tag { stroke-width: 1; }
+      .tag-ok { fill: #dff6e8; stroke: #72bd93; }
+      .tag-risk { fill: #fff0c9; stroke: #d8a937; }
+      .tag-bad { fill: #fee4e1; stroke: #dc7770; }
+      .tag-muted { fill: #edf1f5; stroke: #b1bdcb; }
+    </style>
+    <marker id="arrow" markerWidth="7" markerHeight="7" refX="6.1" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#3e6fc2"/></marker>
+    <marker id="arrowGreen" markerWidth="7" markerHeight="7" refX="6.1" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#27875a"/></marker>
+    <marker id="arrowOrange" markerWidth="7" markerHeight="7" refX="6.1" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#bc7418"/></marker>
+    <marker id="arrowPurple" markerWidth="7" markerHeight="7" refX="6.1" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#7e62b6"/></marker>
+    <marker id="arrowGray" markerWidth="7" markerHeight="7" refX="6.1" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#718096"/></marker>
+  </defs>
+
+  <rect width="1500" height="980" class="canvas"/>
+  <text x="42" y="48" class="title">Redis 数据校验：数据比对过程</text>
+  <text x="42" y="73" class="subtitle">读取时只在 Redis 连接内处理数据；持久化的是任务、进度、差异类型、大小/TTL 元数据和用于订正的 Key 标识，不持久化 Value。</text>
+
+  <!-- task setup -->
+  <rect x="42" y="102" width="1416" height="115" rx="16" class="panel"/>
+  <text x="66" y="134" class="section">① 创建并冻结校验范围</text>
+  <g>
+    <rect x="66" y="153" width="276" height="43" rx="8" class="node"/>
+    <text x="84" y="180" class="body">源/目标集群 · DB · include/exclude</text>
+    <rect x="364" y="153" width="224" height="43" rx="8" class="node"/>
+    <text x="382" y="180" class="body">抽样：全量 / 数量 / 百分比</text>
+    <rect x="610" y="153" width="230" height="43" rx="8" class="node"/>
+    <text x="628" y="180" class="body">种子、TTL 容差、严格模式</text>
+    <rect x="862" y="153" width="252" height="43" rx="8" class="node"/>
+    <text x="880" y="180" class="body">大 Key 阈值与深度读取上限</text>
+    <rect x="1136" y="153" width="292" height="43" rx="8" class="node-purple"/>
+    <text x="1154" y="180" class="body">创建 validation_run，进度从 0 开始</text>
+  </g>
+
+  <!-- zones -->
+  <rect x="42" y="246" width="250" height="568" rx="18" class="source"/>
+  <text x="64" y="280" class="section">源 Redis</text>
+  <rect x="316" y="246" width="720" height="568" rx="18" class="worker"/>
+  <text x="338" y="280" class="section">Platform 数据校验 Worker</text>
+  <rect x="1060" y="246" width="398" height="568" rx="18" class="target"/>
+  <text x="1082" y="280" class="section">目标 Redis</text>
+
+  <!-- source -->
+  <g>
+    <rect x="67" y="314" width="198" height="91" rx="11" class="node-orange"/>
+    <text x="86" y="343" class="head">SCAN / Cluster masters</text>
+    <text x="86" y="367" class="small">按 DB、过滤规则枚举源端 Key</text>
+    <text x="86" y="387" class="small">Cluster 为每个 master 扫描</text>
+
+    <rect x="67" y="450" width="198" height="102" rx="11" class="node-orange"/>
+    <text x="86" y="479" class="head">源 Key 快照</text>
+    <text x="86" y="503" class="small">TYPE · TTL · MEMORY USAGE</text>
+    <text x="86" y="523" class="small">必要时按类型分块读取</text>
+
+    <rect x="67" y="601" width="198" height="145" rx="11" class="node-orange"/>
+    <text x="86" y="630" class="head">语义摘要（不保存 Value）</text>
+    <text x="86" y="654" class="small">String / Bitmap：GETRANGE 分块</text>
+    <text x="86" y="674" class="small">Hash / Set / ZSet：SCAN 聚合</text>
+    <text x="86" y="694" class="small">List / Stream：顺序分页摘要</text>
+    <text x="86" y="722" class="small">开始、结束都复查稳定性</text>
+  </g>
+
+  <!-- worker process -->
+  <g>
+    <rect x="350" y="316" width="244" height="88" rx="11" class="node-green"/>
+    <text x="370" y="345" class="head">候选 Key 选择</text>
+    <text x="370" y="369" class="small">过滤 → 固定种子抽样 → 计数</text>
+    <text x="370" y="389" class="small">plannedKeys：待比较源端 Key</text>
+
+    <rect x="350" y="452" width="244" height="99" rx="11" class="node-green"/>
+    <text x="370" y="481" class="head">第一层：存在性与类型</text>
+    <text x="370" y="505" class="small">目标不存在 → MISSING_TARGET</text>
+    <text x="370" y="525" class="small">类型不同 → TYPE_DIFF</text>
+
+    <rect x="350" y="598" width="244" height="110" rx="11" class="node-green"/>
+    <text x="370" y="627" class="head">第二层：TTL 与内容摘要</text>
+    <text x="370" y="651" class="small">超出 TTL 容差 → TTL_DIFF</text>
+    <text x="370" y="671" class="small">摘要不同 → VALUE_DIFF</text>
+    <text x="370" y="691" class="small">读取中发生变化 → INCONCLUSIVE</text>
+
+    <rect x="641" y="316" width="355" height="112" rx="11" class="node-blue"/>
+    <text x="661" y="345" class="head">大 Key 风险门</text>
+    <text x="661" y="369" class="small">超过阈值或单元素/容器遍历超限</text>
+    <text x="661" y="389" class="small">不整值加载、不持久化内容，标记降级</text>
+    <rect x="661" y="398" width="152" height="20" rx="10" class="tag tag-risk"/>
+    <text x="672" y="413" class="small">LARGE_KEY_DEGRADED</text>
+
+    <rect x="641" y="477" width="355" height="120" rx="11" class="node-purple"/>
+    <text x="661" y="506" class="head">严格模式：目标反向扫描</text>
+    <text x="661" y="530" class="small">只在严格模式执行；检查目标端额外 Key</text>
+    <text x="661" y="550" class="small">计入 scannedKeys，不计入 plannedKeys</text>
+    <rect x="661" y="560" width="128" height="20" rx="10" class="tag tag-bad"/>
+    <text x="674" y="575" class="small">EXTRA_TARGET</text>
+
+    <rect x="641" y="652" width="355" height="94" rx="11" class="node"/>
+    <text x="661" y="681" class="head">持续写入可观测进度</text>
+    <text x="661" y="705" class="small">planned / scanned / compared / differences</text>
+    <text x="661" y="725" class="small">degraded / inconclusive / 最近检查时间</text>
+  </g>
+
+  <!-- target -->
+  <g>
+    <rect x="1087" y="314" width="344" height="92" rx="11" class="node-blue"/>
+    <text x="1107" y="343" class="head">按候选 Key 查询</text>
+    <text x="1107" y="367" class="small">EXISTS、TYPE、PTTL、MEMORY USAGE</text>
+    <text x="1107" y="387" class="small">同源端类型策略读取和计算摘要</text>
+
+    <rect x="1087" y="476" width="344" height="95" rx="11" class="node-blue"/>
+    <text x="1107" y="505" class="head">严格模式反向 SCAN</text>
+    <text x="1107" y="529" class="small">过滤后确认 Key 是否存在于源端</text>
+    <text x="1107" y="549" class="small">仅目标存在即记录 EXTRA_TARGET</text>
+
+    <rect x="1087" y="642" width="344" height="104" rx="11" class="node-blue"/>
+    <text x="1107" y="671" class="head">读取安全限制</text>
+    <text x="1107" y="695" class="small">分块 / 分页；不把大 Value 放入内存</text>
+    <text x="1107" y="715" class="small">异常、未知类型或变化都不误报差异</text>
+  </g>
+
+  <!-- arrows left to centre -->
+  <path d="M265 359 H322" class="arrow-orange"/>
+  <path d="M265 500 H350" class="arrow-orange"/>
+  <path d="M265 674 H350" class="arrow-orange"/>
+  <path d="M472 404 V452" class="arrow-green"/>
+  <path d="M472 551 V598" class="arrow-green"/>
+  <path d="M594 360 H641" class="arrow-green"/>
+  <path d="M594 647 H641" class="arrow-green"/>
+  <!-- cross-zone straight lanes -->
+  <path d="M594 468 H1024 V360 H1060" class="arrow"/>
+  <text x="770" y="456" class="small">存在性、类型、TTL、摘要读取</text>
+  <path d="M996 580 H1025 V548 H1060" class="arrow-purple"/>
+  <path d="M1087 558 H1025 V614 H996" class="dash"/>
+  <text x="810" y="611" class="small">目标端反向 Key 集合</text>
+  <path d="M996 699 H1060" class="dash"/>
+
+  <!-- results -->
+  <rect x="42" y="844" width="1416" height="108" rx="16" class="result"/>
+  <text x="66" y="877" class="section">③ 汇总结论与差异报告</text>
+  <g>
+    <rect x="66" y="897" width="298" height="34" rx="8" class="tag tag-ok"/>
+    <text x="82" y="919" class="body">PASSED：无差异、无降级、无未确定</text>
+    <rect x="386" y="897" width="278" height="34" rx="8" class="tag tag-bad"/>
+    <text x="402" y="919" class="body">FAILED：存在可确定的数据差异</text>
+    <rect x="686" y="897" width="350" height="34" rx="8" class="tag tag-risk"/>
+    <text x="702" y="919" class="body">INCONCLUSIVE：大 Key 降级、读取变化或未知类型</text>
+    <rect x="1058" y="897" width="370" height="34" rx="8" class="tag tag-muted"/>
+    <text x="1074" y="919" class="body">差异详情：类型、Key 标识、TTL/大小、原因</text>
+  </g>
+  <path d="M817 746 V844" class="arrow-purple"/>
+</svg>

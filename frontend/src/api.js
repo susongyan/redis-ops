@@ -68,4 +68,10 @@ export const api={
   ,updateSyncLimits:(id,version,data)=>request(`/api/v1/sync-tasks/${id}/limits`,{method:'PUT',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:JSON.stringify(data)})
   ,confirmSwitchover:(id,version)=>request(`/api/v1/switchovers/${id}/confirm`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
   ,cancelSwitchover:(id,version)=>request(`/api/v1/switchovers/${id}/cancel`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
+  ,validationTasks:()=>request('/api/v1/validation-tasks')
+  ,validationTask:id=>request(`/api/v1/validation-tasks/${id}`)
+  ,createValidationTask:data=>request('/api/v1/validation-tasks',{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:JSON.stringify(data)})
+  ,startValidationTask:(id,version)=>request(`/api/v1/validation-tasks/${id}/start`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
+  ,cancelValidationTask:(id,version)=>request(`/api/v1/validation-tasks/${id}/cancel`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
+  ,validationDifferences:(id,page=1,size=20)=>request(`/api/v1/validation-tasks/${id}/differences?page=${page}&size=${size}`)
 }

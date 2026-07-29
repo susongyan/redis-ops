@@ -19,6 +19,8 @@ ADR 记录会长期影响代码结构、运行方式、安全边界或迁移成�
 | [ADR-003](ADR-003-cluster-owned-encrypted-connection-secret.md) | Accepted | 集群内置加密连接秘密 |
 | [ADR-004](ADR-004-fail-closed-sync-safety.md) | Accepted | 同步失败关闭与人工确认重建 |
 | [ADR-005](ADR-005-utc-persistence-time-semantics.md) | Accepted | UTC 持久化时间语义 |
+| [ADR-006](ADR-006-data-validation-sampling-and-big-key-safety.md) | Superseded | 数据校验采用抽样与大 Key 安全降级 |
+| [ADR-007](ADR-007-validation-key-retention-for-remediation.md) | Accepted | 差异保留 Key 名称用于排障与数据订正 |
 
 ## 新建模板
 

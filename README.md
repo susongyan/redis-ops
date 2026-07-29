@@ -1,8 +1,10 @@
 # Redis Governance Platform
 
-Redis 轻量级运维治理平台。Phase 1 已完成 Redis 资产管理，并正在实现自研同步数据面：
+Redis 轻量级运维治理平台。Phase 1 已完成 Redis 资产管理，并已交付数据校验报告能力；自研同步数据面正在持续完善：
 Standalone 全量/增量闭环已经可运行，Sentinel 单通道与 failover 重连代码已经完成，
 Cluster 多 master 通道、目标 Slot 路由和安全接管已经形成闭环。RBAC 暂不实现。
+
+数据校验支持全量、固定数量和百分比抽样，能够发现缺失、额外、类型、TTL 与摘要差异；大 Key 会安全降级，严格模式不会将含降级项的结果作为自动放行结论。
 
 ## 工程结构
 

@@ -459,6 +459,7 @@ export default function SyncTasksPage() {
 
   const lifecycleActions = (task) => (
     <Space wrap>
+      <Button onClick={() => { window.location.hash = `/validations?syncTaskId=${task.id}` }}>数据校验</Button>
       {['CREATED', 'READY', 'FAILED', 'BLOCKED'].includes(task.status) && (
         <Button onClick={() => runAction(task, api.precheckSyncTask, '预检查命令已提交')}>
           {task.status === 'READY' ? '重新预检' : '预检查'}
