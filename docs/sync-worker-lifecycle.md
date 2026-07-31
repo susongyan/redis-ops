@@ -105,7 +105,7 @@ Sync Worker 不允许直接修改 `cluster_relation` 的主备方向。
 | 数据 | 存储位置 | 用途 | 正确性优先级 |
 |---|---|---|---|
 | 目标 checkpoint | 目标 Redis | 已原子应用到目标的最终 offset | 最高 |
-| spool segment 和 manifest | Worker 本地持久卷 | 已接收但可能尚未应用的数据 | 第二 |
+| spool RDB、命令 segment 与元数据文件 | Worker 本地持久卷 | 已接收但可能尚未应用的数据 | 第二 |
 | channel checkpoint 摘要 | MySQL | received/applied offset、通道状态和页面查询 | 第三 |
 | full progress | MySQL | RDB 接收、解析、RESTORE Lane 进度观测 | 观测状态 |
 | runtime | MySQL | 当前执行实例、租约、阶段、spool 用量 | 管理状态 |
@@ -115,7 +115,7 @@ Sync Worker 不允许直接修改 `cluster_relation` 的主备方向。
 恢复时必须按以下顺序取值：
 
 1. 读取目标 checkpoint，确定真正的 `appliedOffset`。
-2. 校验本地 spool manifest，确定可重放到哪个 `receivedOffset`。
+2. 校验本地 spool 目录中的 RDB、`full.meta` 和命令分段，确定可重放到哪个 `receivedOffset`。
 3. 校验源端 replId 和 backlog 是否仍支持 PSYNC。
 4. 更新 MySQL channel 摘要；不得反过来用 MySQL offset 覆盖目标 checkpoint。
 
@@ -132,6 +132,34 @@ Sync Worker 不允许直接修改 `cluster_relation` 的主备方向。
 
 页面总体进度采用阶段权重：RDB 接收 30%、解析 20%、RESTORE 写入 50%。多源 Cluster 对各源
 Master 通道取平均值，同时保留逐通道和逐 Lane 明细。该百分比用于运维观察，不参与一致性判定。
+
+### 4.2 Spool 文件格式与恢复读取
+
+![Sync Spool 文件格式与恢复读取](images/sync-spool-storage-format.svg)
+
+当前 Spool 是 Worker 本地持久盘上的任务级目录。Standalone 使用
+`<SYNC_ENGINE_DATA_DIR>/<taskId>/`；Cluster 在其下按通道名称创建子目录。`.owner.lock` 是独占
+文件锁，同一个目录只能被一个活跃进程打开。当前实现没有 command manifest：恢复时直接列出并按
+`commands-XXXXXXXX.seg` 文件名升序扫描，逐条通过 AES-GCM 认证和 CRC 校验。
+
+全量 RDB 写入 `full.rdb.enc.tmp`，写入 `RSP1`、随机 12 字节 IV 和 AES-256-GCM 密文后执行
+`force(true)`，再原子替换为 `full.rdb.enc`。`full.meta` 以原子替换的属性文件保存
+`replicationId`、`baseOffset`，供全量重放与后续 PSYNC 判断使用。全量成功应用后，RDB 和元数据
+会被删除。
+
+增量命令写入递增编号的分段文件；每条记录独立使用随机 IV 与 GCM 认证标签，解密后包含命令的
+开始/结束 offset、RESP wire bytes 的 CRC32 以及 RESP 编码。记录落盘后立即 `force(false)`；只有
+成功 fsync 才会推进 `receivedOffset` 并向源端 ACK。按预计的加密记录大小滚动分段；单条命令不会
+跨分段，因而一条大命令可使空分段超过 `segmentBytes`。目录实际字节数超过任务的
+`spoolLimitBytes` 时失败关闭。
+
+恢复时以目标 Redis checkpoint 的 `appliedOffset` 为准，仅重放 `endOffset` 更大的命令；目标
+原子提交成功后，已完全应用且不是当前活动文件的分段才会被删除。任何 GCM 认证失败、CRC 不匹配、
+文件截断、无法取得本地锁或无法安全执行 PSYNC 的情况都不得自动清空目标；需要时进入
+`BLOCKED_REQUIRES_FULL_RESYNC`。
+
+Spool 的 AES-256-GCM 密钥由 `REDIS_OPS_CREDENTIAL_KEYS` 的当前主密钥和任务 ID 派生。主密钥、
+Redis 密码、原始命令和 Value 均不得进入 spool 元数据、日志、事件或页面。
 
 ## 5. 三条独立生命周期
 
@@ -307,7 +335,7 @@ PAUSE 是“暂停目标应用”，不是立刻断开源复制：
 RESUME 时：
 
 1. Worker 验证运行租约和 generation。
-2. 读取目标 checkpoint 和 spool manifest。
+2. 读取目标 checkpoint 与本地 spool 目录中的 RDB、元数据和命令分段。
 3. 先重放 spool，再尝试从最后 received offset 执行 PSYNC。
 4. backlog 不足时进入 `BLOCKED_REQUIRES_FULL_RESYNC`，不得自行清空目标。
 5. 恢复成功后返回 `FULL_SYNCING`、`INCR_SYNCING` 或 `CAUGHT_UP`。
@@ -335,7 +363,7 @@ CANCEL 用于放弃任务：
 
 1. 校验数据库、数据目录、密钥环和磁盘权限。
 2. 生成唯一 `instanceId`，注册健康和 Prometheus 指标。
-3. 扫描本地 spool manifest，标记孤儿目录和待恢复任务。
+3. 扫描本地 spool 目录及其 RDB、元数据和命令分段，标记孤儿目录和待恢复任务。
 4. 查询本实例可接管的过期 runtime。
 5. 开始轮询控制 Job；不得仅凭本地目录自动恢复任务。
 
