@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: redis-governance-platform
+    metrics_path: /actuator/prometheus
+    static_configs:
+      # Docker Desktop uses this host alias. For Linux, replace it with the Platform host/IP.
+      - targets: [host.docker.internal:8080]
+  - job_name: redis-governance-sync-worker
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [host.docker.internal:8081]

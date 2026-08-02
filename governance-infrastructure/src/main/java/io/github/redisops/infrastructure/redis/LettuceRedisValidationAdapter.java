@@ -33,6 +33,71 @@ public class LettuceRedisValidationAdapter implements RedisValidationPort {
     }
 
     @Override
+    public List<ScanShard> scanShards(long clusterId, int database) {
+        try (RedisConnectionProfile profile = profiles.get(clusterId)) {
+            if (profile.mode() != ClusterMode.CLUSTER)
+                return List.of(new ScanShard("default"));
+            RedisURI uri = uri(profile.seedEndpoints().get(0), database, profile);
+            RedisClient client = RedisClient.create(uri);
+            try (StatefulRedisConnection<String, String> connection = client.connect()) {
+                return Arrays.stream(connection.sync().clusterNodes().split("\\R")).map(String::trim)
+                        .filter(line -> !line.isBlank()).map(line -> line.split("\\s+"))
+                        .filter(fields -> fields.length >= 3 && fields[2].contains("master")
+                                && !fields[2].contains("fail"))
+                        .map(fields -> new ScanShard(fields[0])).toList();
+            } finally {
+                client.shutdown();
+            }
+        }
+    }
+
+    @Override
+    public ScanPage scan(long clusterId, int database, String shardId, String cursor, int count) {
+        if ("default".equals(shardId))
+            return scan(clusterId, database, cursor, count);
+        try (RedisConnectionProfile profile = profiles.get(clusterId)) {
+            if (profile.mode() != ClusterMode.CLUSTER)
+                throw new IllegalArgumentException("scan shard is only valid for Cluster");
+            RedisURI seed = uri(profile.seedEndpoints().get(0), database, profile);
+            RedisClient seedClient = RedisClient.create(seed);
+            String endpoint;
+            try (StatefulRedisConnection<String, String> connection = seedClient.connect()) {
+                endpoint = Arrays.stream(connection.sync().clusterNodes().split("\\R")).map(String::trim)
+                        .map(line -> line.split("\\s+"))
+                        .filter(fields -> fields.length >= 2 && shardId.equals(fields[0]))
+                        .map(fields -> fields[1].split("@", 2)[0]).findFirst()
+                        .orElseThrow(() -> new IllegalStateException("cluster scan shard disappeared"));
+            } finally {
+                seedClient.shutdown();
+            }
+            RedisClient client = RedisClient.create(uri(endpoint, database, profile));
+            try (StatefulRedisConnection<byte[], byte[]> connection = client.connect(ByteArrayCodec.INSTANCE)) {
+                KeyScanCursor<byte[]> page = "0".equals(cursor)
+                        ? connection.sync().scan(ScanArgs.Builder.limit(count))
+                        : connection.sync().scan(ScanCursor.of(cursor), ScanArgs.Builder.limit(count));
+                return new ScanPage(page.getCursor(), page.getKeys().stream().map(ValidationKey::new).toList());
+            } finally {
+                client.shutdown();
+            }
+        }
+    }
+    @Override
+    public long countKeys(long clusterId, int database) {
+        try (RedisConnectionProfile profile = profiles.get(clusterId)) {
+            long total = 0;
+            for (String endpoint : profile.seedEndpoints()) {
+                RedisClient client = RedisClient.create(uri(endpoint, database, profile));
+                try (StatefulRedisConnection<byte[], byte[]> connection = client.connect(ByteArrayCodec.INSTANCE)) {
+                    total += connection.sync().dbsize();
+                } finally {
+                    client.shutdown();
+                }
+            }
+            return total;
+        }
+    }
+
+    @Override
     public Optional<ValidationValue> inspect(long clusterId, int database, byte[] key, ValidationTask task) {
         try (RedisConnectionProfile profile = profiles.get(clusterId)) {
             List<RedisURI> uris = profile.seedEndpoints().stream().map(endpoint -> uri(endpoint, database, profile))

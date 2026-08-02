@@ -14,6 +14,9 @@ mybatis:
     map-underscore-to-camel-case: true
 management:
   endpoints.web.exposure.include: health,info,prometheus
+collector:
+  enabled: ${COLLECTOR_ENABLED:true}
+  fast-interval-ms: ${COLLECTOR_FAST_INTERVAL_MS:15000}
 worker:
   enabled: ${WORKER_ENABLED:true}
   discovery:

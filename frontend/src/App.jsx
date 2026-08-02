@@ -7,12 +7,15 @@ const LocationsPage=lazy(()=>import('./pages/LocationsPage.jsx'))
 const RelationsPage=lazy(()=>import('./pages/RelationsPage.jsx'))
 const SyncTasksPage=lazy(()=>import('./pages/SyncTasksPage.jsx'))
 const ValidationTasksPage=lazy(()=>import('./pages/ValidationTasksPage.jsx'))
+const RiskScansPage=lazy(()=>import('./pages/RiskScansPage.jsx'))
+const AlertsPage=lazy(()=>import('./pages/AlertsPage.jsx'))
+const MetricsPage=lazy(()=>import('./pages/MetricsPage.jsx'))
 const AuditsPage=lazy(()=>import('./pages/AuditsPage.jsx'))
 
 const {Sider,Header,Content}=Layout
 const pageFromHash=()=>{
   const page=window.location.hash.replace(/^#\/?/,'').split('?')[0]
-  return ['clusters','locations','relations','syncTasks','validations','applications','audits'].includes(page)?page:'clusters'
+  return ['clusters','locations','relations','syncTasks','validations','riskScans','metrics','alerts','applications','audits'].includes(page)?page:'clusters'
 }
 class PageErrorBoundary extends Component{
   state={error:null}
@@ -22,13 +25,16 @@ class PageErrorBoundary extends Component{
 export default function App(){
   const [page,setPage]=useState(pageFromHash)
   const [operator,setOperator]=useState(localStorage.getItem('redis-ops-operator')||'local-admin')
-  const pages={clusters:<ClustersPage/>,applications:<ApplicationsPage/>,locations:<LocationsPage/>,relations:<RelationsPage/>,syncTasks:<SyncTasksPage/>,validations:<ValidationTasksPage/>,audits:<AuditsPage/>}
+  const pages={clusters:<ClustersPage/>,applications:<ApplicationsPage/>,locations:<LocationsPage/>,relations:<RelationsPage/>,syncTasks:<SyncTasksPage/>,validations:<ValidationTasksPage/>,riskScans:<RiskScansPage/>,metrics:<MetricsPage/>,alerts:<AlertsPage/>,audits:<AuditsPage/>}
   const pageOptions=[
     {value:'clusters',label:'Redis 集群'},
     {value:'locations',label:'Region / IDC'},
     {value:'relations',label:'主备关系'},
     {value:'syncTasks',label:'同步任务'},
     {value:'validations',label:'数据校验'},
+    {value:'riskScans',label:'风险扫描'},
+    {value:'metrics',label:'监控指标'},
+    {value:'alerts',label:'告警中心'},
     {value:'applications',label:'业务应用'},
     {value:'audits',label:'审计日志'},
   ]
@@ -52,6 +58,9 @@ export default function App(){
         {key:'relations',label:'主备关系'},
         {key:'syncTasks',label:'同步任务'},
         {key:'validations',label:'数据校验'},
+        {key:'riskScans',label:'风险扫描'},
+        {key:'metrics',label:'监控指标'},
+        {key:'alerts',label:'告警中心'},
         {key:'applications',icon:<AppstoreOutlined/>,label:'业务应用'},
         {key:'audits',icon:<AuditOutlined/>,label:'审计日志'}]}/>
     </Sider>

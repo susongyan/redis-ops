@@ -17,7 +17,7 @@ public interface JobMapper {
     AsyncJob findByKey(String key);
     @Update("""
             UPDATE async_job SET status='RUNNING',lease_owner=#{owner},lease_until=DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL #{leaseSeconds} SECOND),attempts=attempts+1
-            WHERE job_type=#{jobType} AND status IN ('PENDING','RETRY') AND next_run_at <= CURRENT_TIMESTAMP(3)
+            WHERE job_type=#{jobType} AND status IN ('PENDING','RETRY','RUNNING') AND next_run_at <= CURRENT_TIMESTAMP(3)
               AND (lease_until IS NULL OR lease_until < CURRENT_TIMESTAMP(3))
             ORDER BY id LIMIT 1
             """)

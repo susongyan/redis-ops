@@ -117,5 +117,21 @@ services:
       interval: 3s
       timeout: 2s
       retries: 20
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: ["observability"]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  grafana:
+    image: grafana/grafana:12.1.0
+    profiles: ["observability"]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: local-grafana-only
+    depends_on:
+      - prometheus
 volumes:
   redis-governance-mysql:

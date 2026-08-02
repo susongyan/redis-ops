@@ -21,6 +21,8 @@ ADR 记录会长期影响代码结构、运行方式、安全边界或迁移成�
 | [ADR-005](ADR-005-utc-persistence-time-semantics.md) | Accepted | UTC 持久化时间语义 |
 | [ADR-006](ADR-006-data-validation-sampling-and-big-key-safety.md) | Superseded | 数据校验采用抽样与大 Key 安全降级 |
 | [ADR-007](ADR-007-validation-key-retention-for-remediation.md) | Accepted | 差异保留 Key 名称用于排障与数据订正 |
+| [ADR-008](ADR-008-phase2-collector-and-observability.md) | Accepted | Phase 2 内置 Collector 与 Prometheus 指标边界 |
+| [ADR-009](ADR-009-internal-key-retention-for-risk-and-slowlog.md) | Accepted | 企业内部风险扫描与慢日志保留原始 Key |
 
 ## 新建模板
 

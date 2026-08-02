@@ -13,8 +13,8 @@
 | 分类 | 契约 |
 |---|---|
 | 平台定位 | 平台是 Redis 的旁路治理控制面，不承载业务 Redis 流量。 |
-| 已实现基线 | 资产/应用绑定、拓扑发现、跨 IDC 主备关系、原生同步 Worker、同步生命周期、fence/checkpoint、全量进度、数据校验报告与审计。 |
-| 后续领域 | Collector、风险扫描、TTL/清理治理、告警、审批、AI 分析。它们只能按本文的安全和数据边界接入。 |
+| 已实现基线 | 资产/应用绑定、拓扑发现、跨 IDC 主备关系、原生同步 Worker、同步生命周期、fence/checkpoint、全量进度、数据校验、Collector 基础指标、只读大 Key 风险扫描与告警/Webhook 基础链路。 |
+| 后续领域 | TTL/清理治理、告警规则扩展、审批、AI 分析。它们只能按本文的安全和数据边界接入。 |
 | 明确非目标 | Redis 部署、扩缩容、slot rebalance、配置下发、自动重启、业务代理、自动 DNS/流量切换、双向写入。 |
 
 ## 2. 逻辑所有权和依赖
@@ -47,6 +47,7 @@ Sync Worker ── PSYNC / RDB / RESP ──► Source Redis / Target Redis
 | 当前目标写资格 | 目标 Redis fence | 业务命令、checkpoint 与 fence 校验在同一原子边界内提交。 |
 | 全量进度 | `sync_full_progress` | 仅观测，按 task/epoch/channel/lane 单调累积；写入故障不得降低同步安全。 |
 | 高频指标 | Prometheus/TSDB（规划） | MySQL 仅保存低频摘要，禁止把高频采集点持续写入事务库。 |
+| 告警状态 | MySQL `alert_event` | 规则按资源去重收敛；Webhook 投递失败不得改变告警本身状态。 |
 
 所有时间使用 UTC `Instant` 语义，JDBC URL 固定 `serverTimezone=UTC`。已执行的 Flyway
 migration 是不可变历史；任何 schema 演进均新增版本化 migration。
@@ -82,8 +83,11 @@ migration 是不可变历史；任何 schema 演进均新增版本化 migration�
   查询密文表或自行解密。
 - API、日志、异常、审计、幂等记录、spool 元数据和指标中禁止出现密码、密文、主密钥或完整
   Redis value。
-- 扫描/校验优先保存 hash、摘要和 pattern；任何保存原始 key 的场景必须有脱敏、保留期和访问
-  控制设计。
+- Webhook URL 及后续认证 Header、签名密钥均为 write-only AES-256-GCM 密文；其 AAD 必须与
+  Redis 连接密钥的 AAD 隔离。通知投递记录不能保存 URL、认证 Header 或密文。
+- 企业内部排障页面可保存并展示原始 Redis Key，以支持数据订正和慢命令定位；Key 不得进入日志、
+  Prometheus 标签、审计、异步 payload、Webhook 或对外通知。必须设置保留期，并在 RBAC 接入后
+  纳入资源级访问控制。
 - 未来 TTL/清理治理必须遵循：规则版本 → Dry Run → 影响上限 → 审批 → 限速执行 → 校验 →
   审计。删除优先 `UNLINK`。
 
@@ -95,6 +99,8 @@ migration 是不可变历史；任何 schema 演进均新增版本化 migration�
 - API 可横向扩展；Worker 通过 lease、fence 与 checkpoint 保证单一有效写者。
 - 全量进度页面的总体百分比是观测估算：RDB 接收 30%、解析 20%、RESTORE 50%。它不可作为
   数据一致性或切换依据；切换使用 checkpoint、RPO 和预检查规则。
+- Collector 和风险扫描为只读路径：不得调用 `KEYS` 或 Redis 写命令。Collector 抓取高频指标至
+  Prometheus；风险扫描仅保存 key hash、类型、大小/元素数、TTL、节点和风险等级。
 
 ## 8. 变更门槛
 

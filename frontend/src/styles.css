@@ -10,4 +10,5 @@
 .sync-capability-toolbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:16px}
 .sync-capability-context{margin-bottom:8px;color:#172033;font-weight:600}
 .sync-capability-summary-tag{cursor:pointer;user-select:none}
+.metric-bar-row{display:grid;grid-template-columns:130px 1fr 78px;align-items:center;gap:10px;font-size:12px}.metric-bar-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.metric-bar-track{height:10px;border-radius:8px;background:#edf2f7;overflow:hidden}.metric-bar-fill{height:100%;border-radius:8px;background:linear-gradient(90deg,#69b1ff,#1677ff);transition:width .5s ease}.metric-bar-value{text-align:right;color:#44536a;font-variant-numeric:tabular-nums}@media(max-width:800px){.metric-bar-row{grid-template-columns:100px 1fr 68px}}
 @media(max-width:800px){.sync-command-policy-header,.sync-capability-toolbar{align-items:stretch;flex-direction:column}.sync-command-policy-header .ant-btn{width:100%}.sync-policy-option{margin-bottom:12px}}

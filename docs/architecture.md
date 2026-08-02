@@ -90,7 +90,8 @@ Collector 是没有统一访问层时的旁路观测入口，按不同频率采�
 - TTL 风险：筛选 `ttl=-1`，按前缀、业务和类型聚合。
 - 数据清理候选：前缀数据、无 TTL 数据、空集合及规则命中数据。
 
-扫描使用 `SCAN` 和 `MEMORY USAGE`，不得使用生产阻塞命令；结果中的 key 应支持脱敏或只保留 pattern/hash。
+扫描使用 `SCAN` 和 `MEMORY USAGE`，不得使用生产阻塞命令；企业内部排障页面可展示原始 Key，
+但 Key 不进入日志、指标、审计、异步 payload 或对外通知，且必须具备保留期和后续 RBAC 控制。
 
 ### 4.6 Governance Execution
 
