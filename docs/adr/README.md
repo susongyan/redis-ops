@@ -3,6 +3,8 @@
 ADR 记录会长期影响代码结构、运行方式、安全边界或迁移成本的决策。每个 ADR 一经接受不修改
 历史结论；若需要改变，新增一个 superseding ADR，并在旧记录中链接。
 
+实现专题：[Phase 2：采集、风险扫描与告警](../phase2-collector-risk-alert.md)。
+
 ## 状态
 
 - `Proposed`：待讨论，不能作为实现依据。
@@ -23,6 +25,7 @@ ADR 记录会长期影响代码结构、运行方式、安全边界或迁移成�
 | [ADR-007](ADR-007-validation-key-retention-for-remediation.md) | Accepted | 差异保留 Key 名称用于排障与数据订正 |
 | [ADR-008](ADR-008-phase2-collector-and-observability.md) | Accepted | Phase 2 内置 Collector 与 Prometheus 指标边界 |
 | [ADR-009](ADR-009-internal-key-retention-for-risk-and-slowlog.md) | Accepted | 企业内部风险扫描与慢日志保留原始 Key |
+| [ADR-010](ADR-010-phase3-quality-governance.md) | Accepted | Phase 3 质量治理采用 Dry Run 与审批门禁 |
 
 ## 新建模板
 

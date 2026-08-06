@@ -17,7 +17,8 @@
 当前非目标：Redis 集群部署、节点安装、自动扩缩容、slot rebalance、自动故障切换、redis.conf 批量下发、自动重启以及 Redis Proxy。未来 Access Layer 属于可选增强，不是现阶段依赖。
 
 本文描述目标架构；跨模块不可变边界以[架构契约](architecture-contract.md)为准，重大取舍以
-[ADR](adr/README.md)为准。文中列出的后续模块不表示已经上线。
+[ADR](adr/README.md)为准。Phase 2 的当前实现、接口、页面和验收边界见
+[Phase 2：采集、风险扫描与告警](phase2-collector-risk-alert.md)。文中列出的后续模块不表示已经上线。
 
 ## 2. 架构原则
 
@@ -62,7 +63,7 @@ CREATED → CHECKING → READY → FULL_SYNCING → INCR_SYNCING → CAUGHT_UP �
 
 任务保存源/目标集群、同步工具、模式、QPS 限制、检查报告和暂停前状态。工具指标包括全量进度、延迟毫秒数、延迟字节数、处理/失败操作数、重试次数和最后错误。
 
-### 4.3 Redis Collector
+### 4.3 Redis Collector（[Phase 2 专项设计与验收](phase2-collector-risk-alert.md)）
 
 Collector 是没有统一访问层时的旁路观测入口，按不同频率采集：
 
@@ -82,7 +83,7 @@ Collector 是没有统一访问层时的旁路观测入口，按不同频率采�
 
 标准差异类型：`MISSING_TARGET`、`EXTRA_TARGET`、`TYPE_DIFF`、`VALUE_DIFF`、`TTL_DIFF`。校验任务必须记录抽样策略、扫描游标、源目标时刻、容差、差异明细和汇总报告，避免把动态 TTL 的正常偏差误判为失败。
 
-### 4.5 Scan / Risk Detection
+### 4.5 Scan / Risk Detection（[Phase 2 专项设计与验收](phase2-collector-risk-alert.md)）
 
 扫描服务负责发现风险，不直接修改数据。扫描按集群、节点、DB、前缀和业务拆分分片，由 Worker 限速执行并保存 checkpoint。
 
@@ -93,7 +94,7 @@ Collector 是没有统一访问层时的旁路观测入口，按不同频率采�
 扫描使用 `SCAN` 和 `MEMORY USAGE`，不得使用生产阻塞命令；企业内部排障页面可展示原始 Key，
 但 Key 不进入日志、指标、审计、异步 payload 或对外通知，且必须具备保留期和后续 RBAC 控制。
 
-### 4.6 Governance Execution
+### 4.6 Governance Execution（[Phase 3 质量治理](phase3-quality-governance.md)）
 
 治理执行器承接 TTL 填充和数据清理，统一流程为：
 
@@ -103,7 +104,7 @@ Collector 是没有统一访问层时的旁路观测入口，按不同频率采�
 
 所有任务必须可暂停、可恢复、可审计。删除优先使用 `UNLINK`，批次大小和 QPS 可配置；审批对象绑定规则版本和 Dry Run 快照，审批后规则变化必须重新审批。
 
-### 4.7 Alert Service
+### 4.7 Alert Service（[Phase 2 专项设计与验收](phase2-collector-risk-alert.md)）
 
 Alert Service 接收 Collector、Sync、Validation 和 Worker 产生的标准事件，完成规则计算、去重、收敛、静默、升级和通知。
 
@@ -248,8 +249,8 @@ API 可多实例无状态部署；Worker 水平扩展并依赖租约避免重复
 | 阶段 | 目标 | 主要交付 |
 |---|---|---|
 | [Phase 1](phase1-tasks.md) | 资产、同步与验收可控 | 工程基线、数据库、Cluster CRUD、Node Discovery、Application Binding、Sync Task、数据校验报告与状态机 |
-| Phase 2 | 风险可见、异常可感知 | Collector、指标采集、同步监控、告警、大 Key 检测 |
-| Phase 3 | 数据质量治理闭环 | TTL 填充、数据清理、审批、审计和结果报告；数据校验扩展为修复前门禁 |
+| [Phase 2](phase2-collector-risk-alert.md) | 风险可见、异常可感知 | Collector、指标采集、同步监控、告警、大 Key 检测 |
+| [Phase 3](phase3-quality-governance.md) | 数据质量治理闭环 | TTL 填充、数据清理、审批、审计和结果报告；数据校验扩展为修复前门禁 |
 | Phase 4 | 运维经验辅助决策 | 告警分析、同步分析、大 Key/校验分析、自动报告 |
 
 Phase 1 当前物理形态是 Platform（API、资产发现调度）+ 独立 Sync Worker + MySQL；两者可以同机

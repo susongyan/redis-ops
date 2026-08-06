@@ -119,6 +119,24 @@ public class LettuceRedisValidationAdapter implements RedisValidationPort {
             }
         }
     }
+
+    @Override
+    public TtlApplyResult applyTtlIfUnchanged(long clusterId, int database, byte[] key, long expectedTtlSeconds,
+            long targetTtlSeconds) {
+        return withCommands(clusterId, database, commands -> {
+            Long observed = commands.ttl(key);
+            long ttl = normalizeTtl(observed);
+            if (ttl != expectedTtlSeconds || ttl < 0)
+                return new TtlApplyResult(ttl, false, true);
+            boolean applied = Boolean.TRUE.equals(commands.expire(key, targetTtlSeconds));
+            return new TtlApplyResult(ttl, applied, !applied);
+        });
+    }
+
+    @Override
+    public boolean unlinkIfPresent(long clusterId, int database, byte[] key) {
+        return withCommands(clusterId, database, commands -> commands.unlink(key) > 0);
+    }
     private Optional<ValidationValue> inspect(RedisKeyCommands<byte[], byte[]> commands,
             RedisServerCommands<byte[], byte[]> server, RedisStringCommands<byte[], byte[]> strings, byte[] key,
             ValidationTask task) {

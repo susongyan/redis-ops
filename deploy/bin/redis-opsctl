@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 CONF_FILE="${REDIS_OPS_ENV_FILE:-${INSTALL_DIR}/conf/redis-ops.env}"
 EXAMPLE_CONF="${INSTALL_DIR}/conf/redis-ops.env.example"
+REDIS_OPS_PROFILE="${REDIS_OPS_PROFILE:-dev}"
 
 die() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -38,18 +39,23 @@ require_role() {
 }
 
 load_config() {
-  [[ -f "${CONF_FILE}" ]] || die "missing ${CONF_FILE}; copy ${EXAMPLE_CONF} and chmod 600 it"
-  local mode
-  mode="$(stat -c '%a' "${CONF_FILE}" 2>/dev/null || stat -f '%Lp' "${CONF_FILE}" 2>/dev/null || true)"
-  [[ -n "${mode}" ]] || die "cannot inspect permissions for ${CONF_FILE}"
-  if (( (8#${mode} & 8#177) != 0 )); then
-    die "${CONF_FILE} permissions are ${mode}; run: chmod 600 ${CONF_FILE}"
+  if [[ -f "${CONF_FILE}" ]]; then
+    local mode
+    mode="$(stat -c '%a' "${CONF_FILE}" 2>/dev/null || stat -f '%Lp' "${CONF_FILE}" 2>/dev/null || true)"
+    [[ -n "${mode}" ]] || die "cannot inspect permissions for ${CONF_FILE}"
+    if (( (8#${mode} & 8#177) != 0 )); then
+      die "${CONF_FILE} permissions are ${mode}; run: chmod 600 ${CONF_FILE}"
+    fi
+    set -a
+    # shellcheck disable=SC1090
+    source "${CONF_FILE}"
+    set +a
+  else
+    info "${CONF_FILE} not found; using embedded Spring profile '${REDIS_OPS_PROFILE}' configuration"
   fi
-  set -a
-  # shellcheck disable=SC1090
-  source "${CONF_FILE}"
-  set +a
 
+  REDIS_OPS_PROFILE="${REDIS_OPS_PROFILE:-dev}"
+  [[ "${REDIS_OPS_PROFILE}" =~ ^(dev|fat|uat|pro)$ ]] || die "unsupported REDIS_OPS_PROFILE: ${REDIS_OPS_PROFILE}"
   PLATFORM_PORT="${PLATFORM_PORT:-8080}"
   SYNC_SERVICE_PORT="${SYNC_SERVICE_PORT:-8081}"
   FRONTEND_PORT="${FRONTEND_PORT:-8088}"
@@ -131,23 +137,16 @@ read_live_pid() {
 
 validate_common_backend() {
   require_command java
-  require_value REDIS_OPS_CREDENTIAL_KEYS
 }
 
 validate_platform() {
   validate_common_backend
-  require_value DB_URL
-  require_value DB_USERNAME
-  require_value DB_PASSWORD
   [[ -r "${INSTALL_DIR}/app/platform.jar" ]] || die "missing app/platform.jar"
   validate_port PLATFORM_PORT "${PLATFORM_PORT}"
 }
 
 validate_worker() {
   validate_common_backend
-  require_value SYNC_DB_USERNAME
-  require_value SYNC_DB_PASSWORD
-  require_value DB_URL
   require_value SYNC_ENGINE_INSTANCE_ID
   [[ -r "${INSTALL_DIR}/app/sync-worker.jar" ]] || die "missing app/sync-worker.jar"
   validate_port SYNC_SERVICE_PORT "${SYNC_SERVICE_PORT}"
@@ -248,12 +247,14 @@ run_component() {
       validate_platform
       # shellcheck disable=SC2086
       exec java ${PLATFORM_JAVA_OPTS} -jar "${INSTALL_DIR}/app/platform.jar" \
+        --spring.profiles.active="${REDIS_OPS_PROFILE}" \
         --server.port="${PLATFORM_PORT}"
       ;;
     worker)
       validate_worker
       # shellcheck disable=SC2086
-      exec java ${SYNC_WORKER_JAVA_OPTS} -jar "${INSTALL_DIR}/app/sync-worker.jar"
+      exec java ${SYNC_WORKER_JAVA_OPTS} -jar "${INSTALL_DIR}/app/sync-worker.jar" \
+        --spring.profiles.active="${REDIS_OPS_PROFILE}"
       ;;
     frontend)
       validate_frontend

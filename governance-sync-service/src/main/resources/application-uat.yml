@@ -1,0 +1,11 @@
+spring:
+  config:
+    activate:
+      on-profile: uat
+  datasource:
+    url: jdbc:mysql://mysql-uat:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC
+    username: redis_governance
+    password: redis_governance
+redis-ops:
+  credential:
+    keys: v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=

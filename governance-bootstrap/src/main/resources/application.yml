@@ -1,4 +1,6 @@
 spring:
+  profiles:
+    default: dev
   application:
     name: redis-governance-api
   datasource:
@@ -23,5 +25,5 @@ worker:
     poll-interval-ms: ${DISCOVERY_POLL_INTERVAL_MS:1000}
 redis-ops:
   credential:
-    keys: ${REDIS_OPS_CREDENTIAL_KEYS:}
+    keys: ${REDIS_OPS_CREDENTIAL_KEYS:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
     rotation-batch-size: ${CREDENTIAL_ROTATION_BATCH_SIZE:50}

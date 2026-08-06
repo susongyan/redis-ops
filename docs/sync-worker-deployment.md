@@ -25,6 +25,9 @@ chmod 600 conf/redis-ops.env
 
 ## 2. Worker 配置
 
+开发环境默认使用 JAR 内置的 `dev` Profile，直接执行 `bin/redis-opsctl start worker` 即可；
+`conf/redis-ops.env` 为可选覆盖配置。切换环境可设置 `REDIS_OPS_PROFILE=fat|uat|pro`。
+
 必须配置：
 
 ```bash

@@ -1,0 +1,51 @@
+CREATE TABLE operation_command_definition (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  command_name VARCHAR(32) NOT NULL,
+  command_version INT NOT NULL DEFAULT 1,
+  category VARCHAR(32) NOT NULL,
+  access_mode VARCHAR(16) NOT NULL,
+  risk_level VARCHAR(16) NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  parameter_schema_json JSON NOT NULL,
+  key_position INT NOT NULL DEFAULT 1,
+  routing_policy VARCHAR(32) NOT NULL DEFAULT 'SINGLE_KEY',
+  approval_policy VARCHAR(24) NOT NULL DEFAULT 'CONFIRM',
+  max_value_bytes INT NOT NULL DEFAULT 4096,
+  created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uk_operation_command (command_name, command_version)
+);
+CREATE TABLE redis_operation (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  operation_no VARCHAR(48) NOT NULL,
+  cluster_id BIGINT NOT NULL,
+  database_no INT NOT NULL DEFAULT 0,
+  command_name VARCHAR(32) NOT NULL,
+  arguments_json JSON NOT NULL,
+  arguments_digest CHAR(64) NOT NULL,
+  access_mode VARCHAR(16) NOT NULL,
+  risk_level VARCHAR(16) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  preview_json JSON NULL,
+  approval_note VARCHAR(512) NULL,
+  operator_name VARCHAR(128) NOT NULL,
+  approver_name VARCHAR(128) NULL,
+  result_json JSON NULL,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uk_redis_operation_no (operation_no), KEY idx_redis_operation_history (cluster_id, created_at DESC)
+);
+
+INSERT INTO operation_command_definition(command_name,category,access_mode,risk_level,parameter_schema_json,key_position,routing_policy,approval_policy,max_value_bytes) VALUES
+('GET','STRING','READ','LOW','[{"name":"key","type":"REDIS_KEY","required":true}]',1,'SINGLE_KEY','DIRECT',4096),
+('TTL','KEY','READ','LOW','[{"name":"key","type":"REDIS_KEY","required":true}]',1,'SINGLE_KEY','DIRECT',0),
+('TYPE','KEY','READ','LOW','[{"name":"key","type":"REDIS_KEY","required":true}]',1,'SINGLE_KEY','DIRECT',0),
+('EXISTS','KEY','READ','LOW','[{"name":"key","type":"REDIS_KEY","required":true}]',1,'SINGLE_KEY','DIRECT',0),
+('SET','STRING','WRITE','LOW','[{"name":"key","type":"REDIS_KEY","required":true},{"name":"value","type":"VALUE","required":true}]',1,'SINGLE_KEY','CONFIRM',4096),
+('EXPIRE','KEY','WRITE','MEDIUM','[{"name":"key","type":"REDIS_KEY","required":true},{"name":"seconds","type":"INTEGER","required":true}]',1,'SINGLE_KEY','APPROVAL',0),
+('PERSIST','KEY','WRITE','MEDIUM','[{"name":"key","type":"REDIS_KEY","required":true}]',1,'SINGLE_KEY','APPROVAL',0),
+('HGET','HASH','READ','LOW','[{"name":"key","type":"REDIS_KEY","required":true},{"name":"field","type":"TEXT","required":true}]',1,'SINGLE_KEY','DIRECT',4096),
+('HSET','HASH','WRITE','LOW','[{"name":"key","type":"REDIS_KEY","required":true},{"name":"field","type":"TEXT","required":true},{"name":"value","type":"VALUE","required":true}]',1,'SINGLE_KEY','CONFIRM',4096),
+('HDEL','HASH','WRITE','HIGH','[{"name":"key","type":"REDIS_KEY","required":true},{"name":"field","type":"TEXT","required":true}]',1,'SINGLE_KEY','APPROVAL',0),
+('UNLINK','KEY','WRITE','HIGH','[{"name":"key","type":"REDIS_KEY","required":true}]',1,'SINGLE_KEY','APPROVAL',0);

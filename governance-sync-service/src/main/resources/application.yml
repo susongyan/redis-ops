@@ -1,4 +1,6 @@
 spring:
+  profiles:
+    default: dev
   application:
     name: redis-governance-sync-service
   datasource:
@@ -17,7 +19,7 @@ worker:
   enabled: false
 redis-ops:
   credential:
-    keys: ${REDIS_OPS_CREDENTIAL_KEYS:}
+    keys: ${REDIS_OPS_CREDENTIAL_KEYS:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
 sync:
   engine:
     enabled: ${SYNC_ENGINE_ENABLED:true}

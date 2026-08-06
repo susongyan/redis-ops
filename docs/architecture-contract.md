@@ -3,7 +3,9 @@
 > 状态：Active  
 > 适用范围：Redis Governance Platform 全部模块与后续服务拆分  
 > 依据：[项目设计总览](architecture.md)、[同步 Worker 生命周期](sync-worker-lifecycle.md)、
-> [控制面与 Worker 分离](sync-control-worker-separation.md)
+> [控制面与 Worker 分离](sync-control-worker-separation.md)、
+> [Phase 2 采集、风险扫描与告警](phase2-collector-risk-alert.md)、
+> [Phase 3 质量治理](phase3-quality-governance.md)
 
 本契约将总体设计中的原则转化为可验证约束。它不替代详细设计；发生冲突时，安全边界优先，
 并通过 ADR 更新本契约。

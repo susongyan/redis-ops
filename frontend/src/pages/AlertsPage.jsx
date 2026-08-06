@@ -22,7 +22,7 @@ export default function AlertsPage(){
     <Modal open={open} title="新建告警规则" onCancel={()=>setOpen(false)} onOk={()=>form.validateFields().then(v=>action(async()=>{await api.createAlertRule(v);setOpen(false);form.resetFields()}))}>
       <Form form={form} layout="vertical" initialValues={{ruleType:'COLLECTOR_UNAVAILABLE',severity:'P2',durationSeconds:0}}>
         <Form.Item name="name" label="规则名称" rules={[{required:true}]}><Input/></Form.Item>
-        <Form.Item name="ruleType" label="规则类型" rules={[{required:true}]}><Select options={['COLLECTOR_UNAVAILABLE','REDIS_MEMORY_HIGH','LARGE_KEY_FOUND','SYNC_FAILED','SYNC_RPO_EXCEEDED','SPOOL_HIGH_WATERMARK'].map(v=>({value:v,label:v}))}/></Form.Item>
+        <Form.Item name="ruleType" label="规则类型" rules={[{required:true}]}><Select options={['COLLECTOR_UNAVAILABLE','REDIS_MEMORY_HIGH','LARGE_KEY_FOUND','TTL_GOVERNANCE_FAILED','SYNC_FAILED','SYNC_RPO_EXCEEDED','SPOOL_HIGH_WATERMARK'].map(v=>({value:v,label:v}))}/></Form.Item>
         <Form.Item name="severity" label="级别"><Select options={['P1','P2','P3'].map(v=>({value:v,label:v}))}/></Form.Item>
         <Form.Item name="thresholdValue" label="触发阈值（留空则任意值触发）"><InputNumber style={{width:'100%'}} min={0}/></Form.Item>
         <Form.Item name="durationSeconds" label="持续秒数"><InputNumber style={{width:'100%'}} min={0}/></Form.Item><Form.Item name="channelId" label="通知通道"><Select allowClear options={channels.map(c=>({value:c.id,label:`${c.name}（${c.configured?'已配置':'未配置'}）`}))}/></Form.Item>

@@ -9,6 +9,9 @@ public interface RedisValidationPort {
     ScanPage scan(long clusterId, int database, String shardId, String cursor, int count);
     long countKeys(long clusterId, int database);
     Optional<ValidationValue> inspect(long clusterId, int database, byte[] key, ValidationTask task);
+    TtlApplyResult applyTtlIfUnchanged(long clusterId, int database, byte[] key, long expectedTtlSeconds,
+            long targetTtlSeconds);
+    boolean unlinkIfPresent(long clusterId, int database, byte[] key);
 
     record ValidationKey(byte[] bytes) {
     }
@@ -24,5 +27,8 @@ public interface RedisValidationPort {
         public boolean degraded() {
             return degradedReason != null;
         }
+    }
+
+    record TtlApplyResult(long observedTtlSeconds, boolean applied, boolean skipped) {
     }
 }

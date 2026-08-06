@@ -10,12 +10,16 @@ const ValidationTasksPage=lazy(()=>import('./pages/ValidationTasksPage.jsx'))
 const RiskScansPage=lazy(()=>import('./pages/RiskScansPage.jsx'))
 const AlertsPage=lazy(()=>import('./pages/AlertsPage.jsx'))
 const MetricsPage=lazy(()=>import('./pages/MetricsPage.jsx'))
+const TtlGovernancePage=lazy(()=>import('./pages/TtlGovernancePage.jsx'))
+const CleanupGovernancePage=lazy(()=>import('./pages/CleanupGovernancePage.jsx'))
 const AuditsPage=lazy(()=>import('./pages/AuditsPage.jsx'))
+const RedisOperationsPage=lazy(()=>import('./pages/RedisOperationsPage.jsx'))
+const CommandCatalogPage=lazy(()=>import('./pages/CommandCatalogPage.jsx'))
 
 const {Sider,Header,Content}=Layout
 const pageFromHash=()=>{
   const page=window.location.hash.replace(/^#\/?/,'').split('?')[0]
-  return ['clusters','locations','relations','syncTasks','validations','riskScans','metrics','alerts','applications','audits'].includes(page)?page:'clusters'
+  return ['clusters','locations','relations','syncTasks','validations','riskScans','metrics','alerts','ttlGovernance','cleanupGovernance','redisOperations','commandCatalog','applications','audits'].includes(page)?page:'clusters'
 }
 class PageErrorBoundary extends Component{
   state={error:null}
@@ -25,7 +29,7 @@ class PageErrorBoundary extends Component{
 export default function App(){
   const [page,setPage]=useState(pageFromHash)
   const [operator,setOperator]=useState(localStorage.getItem('redis-ops-operator')||'local-admin')
-  const pages={clusters:<ClustersPage/>,applications:<ApplicationsPage/>,locations:<LocationsPage/>,relations:<RelationsPage/>,syncTasks:<SyncTasksPage/>,validations:<ValidationTasksPage/>,riskScans:<RiskScansPage/>,metrics:<MetricsPage/>,alerts:<AlertsPage/>,audits:<AuditsPage/>}
+  const pages={clusters:<ClustersPage/>,applications:<ApplicationsPage/>,locations:<LocationsPage/>,relations:<RelationsPage/>,syncTasks:<SyncTasksPage/>,validations:<ValidationTasksPage/>,riskScans:<RiskScansPage/>,metrics:<MetricsPage/>,alerts:<AlertsPage/>,ttlGovernance:<TtlGovernancePage/>,cleanupGovernance:<CleanupGovernancePage/>,redisOperations:<RedisOperationsPage/>,commandCatalog:<CommandCatalogPage/>,audits:<AuditsPage/>}
   const pageOptions=[
     {value:'clusters',label:'Redis 集群'},
     {value:'locations',label:'Region / IDC'},
@@ -35,9 +39,14 @@ export default function App(){
     {value:'riskScans',label:'风险扫描'},
     {value:'metrics',label:'监控指标'},
     {value:'alerts',label:'告警中心'},
+    {value:'ttlGovernance',label:'TTL 治理'},
+    {value:'cleanupGovernance',label:'数据清理'},
+    {value:'redisOperations',label:'redis console'},
+    {value:'commandCatalog',label:'命令配置'},
     {value:'applications',label:'业务应用'},
     {value:'audits',label:'审计日志'},
   ]
+  const pageTitle=page==='redisOperations'?'Redis Console':'Redis 资源管理'
   const updateOperator=value=>{setOperator(value);localStorage.setItem('redis-ops-operator',value)}
   useEffect(()=>{
     const onHashChange=()=>setPage(pageFromHash())
@@ -61,10 +70,14 @@ export default function App(){
         {key:'riskScans',label:'风险扫描'},
         {key:'metrics',label:'监控指标'},
         {key:'alerts',label:'告警中心'},
+        {key:'ttlGovernance',label:'TTL 治理'},
+        {key:'cleanupGovernance',label:'数据清理'},
+        {key:'redisOperations',label:'redis console'},
+        {key:'commandCatalog',label:'命令配置'},
         {key:'applications',icon:<AppstoreOutlined/>,label:'业务应用'},
         {key:'audits',icon:<AuditOutlined/>,label:'审计日志'}]}/>
     </Sider>
-    <Layout><Header className="topbar"><Typography.Title level={4} className="page-title">Redis 资源管理</Typography.Title>
+    <Layout><Header className="topbar"><Typography.Title level={4} className="page-title">{pageTitle}</Typography.Title>
       <Select className="mobile-page-select" value={page} onChange={navigate} options={pageOptions}/>
       <Space><span className="muted">当前操作者</span><Input value={operator} onChange={e=>updateOperator(e.target.value)} style={{width:180}}/></Space>
     </Header><Content className="content"><PageErrorBoundary key={page}><Suspense fallback={<div className="muted">加载中…</div>}>{pages[page]}</Suspense></PageErrorBoundary></Content></Layout>

@@ -34,6 +34,16 @@ Platform API 与 Nginx 前端。生产 MySQL 和被管理 Redis 均为外部依�
 
 ## 3. 解压和配置
 
+默认使用 JAR 内置的 `dev` Profile，开发环境无需复制配置文件即可启动：
+
+```bash
+bin/redis-opsctl start all
+```
+
+如需切换环境，可在启动前设置 `REDIS_OPS_PROFILE=fat|uat|pro`，或在可选的
+`conf/redis-ops.env` 中配置。该文件不存在时控制脚本不会报错，而是直接使用内置 Profile。
+后续接入 Apollo 时可继续沿用这些 Spring 属性名。
+
 以普通部署用户操作：
 
 ```bash
@@ -44,7 +54,7 @@ cp conf/redis-ops.env.example conf/redis-ops.env
 chmod 600 conf/redis-ops.env
 ```
 
-至少修改以下配置：
+使用外部覆盖文件时，至少修改以下配置：
 
 ```bash
 DB_URL='jdbc:mysql://mysql.example.internal:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC'

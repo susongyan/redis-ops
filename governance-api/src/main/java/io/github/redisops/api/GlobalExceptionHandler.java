@@ -35,6 +35,11 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest()
                 .body(new ErrorBody("VALIDATION_FAILED", "request validation failed", requestId(request), details));
     }
+    @ExceptionHandler(IllegalArgumentException.class)
+    ResponseEntity<ErrorBody> illegalArgument(IllegalArgumentException e, HttpServletRequest request) {
+        String code = e.getMessage() == null || e.getMessage().isBlank() ? "INVALID_REQUEST" : e.getMessage();
+        return ResponseEntity.badRequest().body(new ErrorBody(code, code, requestId(request), List.of()));
+    }
     private static String requestId(HttpServletRequest request) {
         return String.valueOf(request.getAttribute(RequestIdFilter.ATTRIBUTE));
     }
