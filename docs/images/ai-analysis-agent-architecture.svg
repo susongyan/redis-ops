@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1080" viewBox="0 0 1500 1080">
+  <title>模型无关的 AI 分析与 Agent 分层架构</title>
+  <desc>保留层内模块图形，仅用一条主链路表示层间调用关系。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="17" markerHeight="13" refX="15" refY="6.5" orient="auto"><path d="M1,3.2 H8.2 V0.8 L15.8,6.5 L8.2,12.2 V9.8 H1 Z" fill="none" stroke="#49677f" stroke-width="1.25" stroke-linejoin="miter"/></marker>
+    <style>
+      .title{font:700 28px Arial,"Microsoft YaHei",sans-serif;fill:#17324d}.subtitle{font:14px Arial,"Microsoft YaHei",sans-serif;fill:#5b7489}.zone{stroke:#8fa8ba;stroke-width:1.5;rx:18}.zoneTitle{font:700 18px Arial,"Microsoft YaHei",sans-serif;fill:#17324d}.card{stroke:#6b879f;stroke-width:1.3;rx:10}.cardTitle{font:700 16px Arial,"Microsoft YaHei",sans-serif;fill:#17324d}.body{font:14px Arial,"Microsoft YaHei",sans-serif;fill:#29445d}.small{font:12px Arial,"Microsoft YaHei",sans-serif;fill:#5b7489}.flow{stroke:#49677f;stroke-width:2;fill:none;marker-end:url(#arrow)}.dashed{stroke:#7190a5;stroke-width:1.8;fill:none;stroke-dasharray:8 6;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1500" height="1080" fill="#f7fafc"/>
+  <text x="750" y="42" text-anchor="middle" class="title">模型无关的 AI 分析与 Agent 分层架构</text>
+  <text x="750" y="70" text-anchor="middle" class="subtitle">模型无关 · 协议可替换 · Agent 不直接执行生产操作</text>
+
+  <rect x="55" y="105" width="1390" height="145" class="zone" fill="#edf5fb"/>
+  <text x="85" y="138" class="zoneTitle">1 · 分析请求来源</text>
+  <rect x="90" y="160" width="240" height="62" class="card" fill="#fff"/><text x="210" y="197" text-anchor="middle" class="cardTitle">运维控制台</text>
+  <rect x="370" y="160" width="240" height="62" class="card" fill="#fff"/><text x="490" y="197" text-anchor="middle" class="cardTitle">Platform API</text>
+  <rect x="650" y="160" width="240" height="62" class="card" fill="#fff"/><text x="770" y="197" text-anchor="middle" class="cardTitle">告警与任务</text>
+  <rect x="930" y="160" width="240" height="62" class="card" fill="#fff"/><text x="1050" y="197" text-anchor="middle" class="cardTitle">历史故障</text>
+  <rect x="1210" y="160" width="180" height="62" class="card" fill="#fff"/><text x="1300" y="197" text-anchor="middle" class="cardTitle">定时任务</text>
+
+  <rect x="55" y="285" width="1390" height="180" class="zone" fill="#eaf7ef"/>
+  <text x="85" y="318" class="zoneTitle">2 · Platform 分析编排层</text>
+  <rect x="90" y="342" width="375" height="88" class="card" fill="#fff"/><text x="277" y="393" text-anchor="middle" class="cardTitle">上下文构建</text>
+  <rect x="515" y="342" width="430" height="88" class="card" fill="#fff"/><text x="730" y="393" text-anchor="middle" class="cardTitle">分析编排</text>
+  <rect x="995" y="342" width="395" height="88" class="card" fill="#fff"/><text x="1192" y="393" text-anchor="middle" class="cardTitle">Agent 注册 / 规则</text>
+
+  <path d="M750 250 V285" class="flow"/>
+
+  <rect x="55" y="500" width="1390" height="155" class="zone" fill="#fff8e9"/>
+  <text x="85" y="533" class="zoneTitle">3 · 协议与模型适配层</text>
+  <rect x="105" y="558" width="270" height="62" class="card" fill="#fff1d8"/><text x="240" y="595" text-anchor="middle" class="cardTitle">A2A</text>
+  <rect x="420" y="558" width="270" height="62" class="card" fill="#fff1d8"/><text x="555" y="595" text-anchor="middle" class="cardTitle">ACP</text>
+  <rect x="735" y="558" width="270" height="62" class="card" fill="#fff1d8"/><text x="870" y="595" text-anchor="middle" class="cardTitle">HTTP / JSON</text>
+  <rect x="1050" y="558" width="320" height="62" class="card" fill="#fff1d8"/><text x="1210" y="595" text-anchor="middle" class="cardTitle">Rule / Local</text>
+
+  <path d="M750 465 V500" class="flow"/>
+
+  <rect x="55" y="690" width="1390" height="145" class="zone" fill="#f1edfc"/>
+  <text x="85" y="723" class="zoneTitle">4 · 外部或独立 Agent 运行层</text>
+  <rect x="120" y="750" width="360" height="58" class="card" fill="#fff"/><text x="300" y="785" text-anchor="middle" class="cardTitle">故障分析 Agent</text>
+  <rect x="570" y="750" width="360" height="58" class="card" fill="#fff"/><text x="750" y="785" text-anchor="middle" class="cardTitle">同步 / 风险 Agent</text>
+  <rect x="1020" y="750" width="360" height="58" class="card" fill="#fff"/><text x="1200" y="785" text-anchor="middle" class="cardTitle">企业 Agent / 模型</text>
+
+  <path d="M750 655 V690" class="flow"/>
+
+  <rect x="55" y="870" width="670" height="125" class="zone" fill="#edf5fb"/>
+  <text x="85" y="903" class="zoneTitle">5 · 受控只读 Tool Gateway</text>
+  <rect x="95" y="925" width="270" height="45" class="card" fill="#fff"/><text x="230" y="952" text-anchor="middle" class="body">指标 / 告警 / 任务</text>
+  <rect x="395" y="925" width="270" height="45" class="card" fill="#fff"/><text x="530" y="952" text-anchor="middle" class="body">案例 / 风险 / 校验</text>
+
+  <rect x="755" y="870" width="690" height="125" class="zone" fill="#fff0ef"/>
+  <text x="785" y="903" class="zoneTitle">6 · 安全执行边界</text>
+  <rect x="795" y="925" width="600" height="45" class="card" fill="#fff"/><text x="1095" y="952" text-anchor="middle" class="body">建议 → 审批 → 执行 → 审计</text>
+
+  <path d="M450 835 V870" class="dashed"/>
+  <path d="M1050 835 V870" class="flow"/>
+  <text x="750" y="1032" text-anchor="middle" class="small">层内卡片表示能力组成；层间箭头仅表示主调用方向</text>
+</svg>

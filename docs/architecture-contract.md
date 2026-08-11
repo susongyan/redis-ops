@@ -16,7 +16,7 @@
 |---|---|
 | 平台定位 | 平台是 Redis 的旁路治理控制面，不承载业务 Redis 流量。 |
 | 已实现基线 | 资产/应用绑定、拓扑发现、跨 IDC 主备关系、原生同步 Worker、同步生命周期、fence/checkpoint、全量进度、数据校验、Collector 基础指标、只读大 Key 风险扫描与告警/Webhook 基础链路。 |
-| 后续领域 | TTL/清理治理、告警规则扩展、审批、AI 分析。它们只能按本文的安全和数据边界接入。 |
+| 后续领域 | 告警规则扩展和 AI 分析 Agent 接入。TTL/清理治理已形成执行闭环；AI 只能按本文的安全和数据边界接入。 |
 | 明确非目标 | Redis 部署、扩缩容、slot rebalance、配置下发、自动重启、业务代理、自动 DNS/流量切换、双向写入。 |
 
 ## 2. 逻辑所有权和依赖
@@ -103,6 +103,7 @@ migration 是不可变历史；任何 schema 演进均新增版本化 migration�
   数据一致性或切换依据；切换使用 checkpoint、RPO 和预检查规则。
 - Collector 和风险扫描为只读路径：不得调用 `KEYS` 或 Redis 写命令。Collector 抓取高频指标至
   Prometheus；风险扫描仅保存 key hash、类型、大小/元素数、TTL、节点和风险等级。
+- AI 分析只消费标准化分析上下文；A2A、ACP、HTTP/JSON 和规则引擎必须通过适配器接入，领域层不得依赖具体模型或 Agent SDK。Agent 不得直接访问 Redis、凭证表或生产写接口；输出仅为结论、证据、建议和审批要求。
 
 ## 8. 变更门槛
 

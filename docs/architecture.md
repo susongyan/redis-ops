@@ -117,9 +117,9 @@ Alert Service 接收 Collector、Sync、Validation 和 Worker 产生的标准事
 
 ### 4.8 AI Analysis Assistant
 
-AI 服务只读取平台授权的数据，通过标准化分析上下文访问告警、指标、日志、集群信息、同步状态、扫描报告和校验差异。
+AI 服务只读取平台授权的数据，通过标准化分析上下文访问告警、指标、日志、集群信息、同步状态、扫描报告、校验差异和历史故障案例。详细的模型无关抽象、A2A/ACP 适配和工具访问边界见 [AI 分析与 Agent 协作架构](ai-analysis-and-agent-architecture.md)。
 
-输出包含结论、证据、置信度、排查步骤和建议，不直接调用生产执行器。第一阶段覆盖告警分析、同步延迟分析、大 Key 风险说明和一致性差异解释。未来接入 Access Layer 后，可关联应用流量、命令、key pattern、热 Key、无 TTL 写入和大 Value 写入。
+业务层只依赖统一的 `AnalysisAgentClient`，底层可替换规则分析、HTTP/JSON、本地模型、A2A 或 ACP Agent。A2A/ACP 用于 Agent 间协作；指标、告警和报告通过受控只读 Tool Gateway 提供。输出包含结论、证据、置信度、排查步骤和建议，不直接调用生产执行器。历史故障以可检索、可审查的案例形式作为输入，事实证据与人工推断分开保存。
 
 ### 4.9 Approval、Audit 与 Rule Engine
 
@@ -159,6 +159,15 @@ API/调度器 → 创建发现或采集 Job → Worker 领取租约 → 连接 R
 指标/日志/任务事件 → 告警规则 → 去重收敛 → 通知
 → AI 汇总证据与建议 → 人工决策 → 平台动作与审计
 ```
+
+### 5.5 AI Agent 协作闭环
+
+```text
+告警/同步/校验/风险/历史案例 → AnalysisContextBuilder → Analysis Orchestrator
+→ A2A/ACP/HTTP/规则 Agent → 统一 AnalysisResult → 人工确认或审批 → 现有平台执行器
+```
+
+Agent 不得绕过平台 API 直接写 Redis 或修改任务状态；远程 Agent 超时或不可用时回退到规则分析。
 
 ## 6. Worker 与异步任务架构
 
@@ -251,7 +260,7 @@ API 可多实例无状态部署；Worker 水平扩展并依赖租约避免重复
 | [Phase 1](phase1-tasks.md) | 资产、同步与验收可控 | 工程基线、数据库、Cluster CRUD、Node Discovery、Application Binding、Sync Task、数据校验报告与状态机 |
 | [Phase 2](phase2-collector-risk-alert.md) | 风险可见、异常可感知 | Collector、指标采集、同步监控、告警、大 Key 检测 |
 | [Phase 3](phase3-quality-governance.md) | 数据质量治理闭环 | TTL 填充、数据清理、审批、审计和结果报告；数据校验扩展为修复前门禁 |
-| Phase 4 | 运维经验辅助决策 | 告警分析、同步分析、大 Key/校验分析、自动报告 |
+| Phase 4 | 运维经验辅助决策 | 模型无关 Agent 接入、告警分析、同步分析、大 Key/校验分析、历史故障案例与自动报告 |
 
 Phase 1 当前物理形态是 Platform（API、资产发现调度）+ 独立 Sync Worker + MySQL；两者可以同机
 或分机部署。Phase 2 引入 Prometheus/Grafana 与采集执行池；Collector、Scan、Alert 等仍先按
