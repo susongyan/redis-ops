@@ -1,9 +1,6 @@
 package io.github.redisops.sync.engine;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.redisops.domain.asset.ClusterMode;
-import io.github.redisops.domain.asset.RedisConnectionProfile;
-import io.github.redisops.domain.asset.RedisConnectionProfileProvider;
 import io.github.redisops.domain.sync.*;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
@@ -49,7 +46,7 @@ class ClusterSyncTaskRunnerIntegrationTest {
                 sourceCommands.set("cluster-full:" + i, "value-" + i);
 
             SyncTask task = task(193, 1, 2, "epoch-cluster-it");
-            RedisConnectionProfileProvider profiles = clusterProfiles();
+            WorkerRedisConnectionProfilePort profiles = clusterProfiles();
             String keyRing = keyRing();
             ClusterSyncTaskRunner runner = runner(task, false, profiles, keyRing);
             try {
@@ -110,11 +107,11 @@ class ClusterSyncTaskRunnerIntegrationTest {
             source.sync().mset(Map.of("{north}:one", "n1", "{south}:one", "s1"));
             source.sync().set("{west}:full", "w1");
             SyncTask task = task(194, 3, 2, "epoch-standalone-cluster");
-            RedisConnectionProfileProvider profiles = clusterId -> {
+            WorkerRedisConnectionProfilePort profiles = clusterId -> {
                 if (clusterId == 3)
-                    return new RedisConnectionProfile(clusterId, ClusterMode.STANDALONE,
+                    return new WorkerRedisConnectionProfile(clusterId, WorkerClusterMode.STANDALONE,
                             List.of("127.0.0.1:7301"), null, null, "NONE", null);
-                return new RedisConnectionProfile(clusterId, ClusterMode.CLUSTER, endpoints(TARGET_PORTS),
+                return new WorkerRedisConnectionProfile(clusterId, WorkerClusterMode.CLUSTER, endpoints(TARGET_PORTS),
                         null, null, "NONE", null);
             };
             ClusterSyncTaskRunner runner = runner(task, false, profiles, keyRing());
@@ -149,11 +146,12 @@ class ClusterSyncTaskRunnerIntegrationTest {
             source.sync().hset("{beta}:hash", "field", "b1");
             source.sync().rpush("{gamma}:list", "g1", "g2");
             SyncTask task = task(195, 1, 4, "epoch-cluster-standalone");
-            RedisConnectionProfileProvider profiles = clusterId -> {
+            WorkerRedisConnectionProfilePort profiles = clusterId -> {
                 if (clusterId == 1)
-                    return new RedisConnectionProfile(clusterId, ClusterMode.CLUSTER, endpoints(SOURCE_PORTS),
+                    return new WorkerRedisConnectionProfile(clusterId, WorkerClusterMode.CLUSTER,
+                            endpoints(SOURCE_PORTS),
                             null, null, "NONE", null);
-                return new RedisConnectionProfile(clusterId, ClusterMode.STANDALONE,
+                return new WorkerRedisConnectionProfile(clusterId, WorkerClusterMode.STANDALONE,
                         List.of("127.0.0.1:7302"), null, null, "NONE", null);
             };
             ClusterSyncTaskRunner runner = runner(task, false, profiles, keyRing());
@@ -179,7 +177,7 @@ class ClusterSyncTaskRunnerIntegrationTest {
     }
 
     private ClusterSyncTaskRunner runner(SyncTask task, boolean recovery,
-            RedisConnectionProfileProvider profiles, String keyRing) {
+            WorkerRedisConnectionProfilePort profiles, String keyRing) {
         return new ClusterSyncTaskRunner(task, recovery, profiles, mock(SyncRepository.class),
                 mock(SyncRunnerStateReporter.class), new SpoolKeyProvider(keyRing),
                 new RedisDataEndpointResolver(5000), new ObjectMapper(),
@@ -187,8 +185,8 @@ class ClusterSyncTaskRunnerIntegrationTest {
                 4 * 1024 * 1024L, Duration.ofSeconds(2), Duration.ofMillis(200));
     }
 
-    private static RedisConnectionProfileProvider clusterProfiles() {
-        return clusterId -> new RedisConnectionProfile(clusterId, ClusterMode.CLUSTER,
+    private static WorkerRedisConnectionProfilePort clusterProfiles() {
+        return clusterId -> new WorkerRedisConnectionProfile(clusterId, WorkerClusterMode.CLUSTER,
                 endpoints(clusterId == 1 ? SOURCE_PORTS : TARGET_PORTS), null, null, "NONE", null);
     }
 

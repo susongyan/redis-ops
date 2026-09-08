@@ -1,6 +1,5 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.asset.RedisConnectionProfile;
 import io.github.redisops.sync.protocol.*;
 
 import java.io.*;
@@ -16,11 +15,11 @@ public final class SourceReplicationSession implements AutoCloseable {
     private final ReplicationHandshake handshake;
     private ReplicationCommandReader commands;
 
-    public SourceReplicationSession(RedisConnectionProfile profile, Duration connectTimeout) throws IOException {
+    public SourceReplicationSession(WorkerRedisConnectionProfile profile, Duration connectTimeout) throws IOException {
         this(profile, RedisEndpoint.parse(profile.seedEndpoints().get(0)), connectTimeout);
     }
 
-    public SourceReplicationSession(RedisConnectionProfile profile, RedisEndpoint endpoint,
+    public SourceReplicationSession(WorkerRedisConnectionProfile profile, RedisEndpoint endpoint,
             Duration connectTimeout) throws IOException {
         socket = new Socket();
         socket.setKeepAlive(true);
@@ -32,7 +31,7 @@ public final class SourceReplicationSession implements AutoCloseable {
         handshake = new ReplicationHandshake(new RespCodec(input, output));
     }
 
-    public ReplicationReply start(RedisConnectionProfile profile, String replicationId, long offset)
+    public ReplicationReply start(WorkerRedisConnectionProfile profile, String replicationId, long offset)
             throws IOException {
         return handshake.start(profile.username(), profile.password(), replicationId, offset);
     }

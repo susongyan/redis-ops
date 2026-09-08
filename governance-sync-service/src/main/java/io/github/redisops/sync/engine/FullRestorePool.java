@@ -1,6 +1,5 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.asset.RedisConnectionProfile;
 import io.github.redisops.sync.protocol.RespProtocolException;
 
 import java.io.IOException;
@@ -14,7 +13,7 @@ import java.util.concurrent.atomic.AtomicReference;
 final class FullRestorePool implements AutoCloseable {
     private static final RestoreItem STOP = new RestoreItem(null);
 
-    private final RedisConnectionProfile profile;
+    private final WorkerRedisConnectionProfile profile;
     private final RedisDataEndpointResolver endpoints;
     private final int database;
     private final long taskId;
@@ -33,7 +32,7 @@ final class FullRestorePool implements AutoCloseable {
     private final AtomicReference<Throwable> failure = new AtomicReference<>();
     private final AtomicBoolean completed = new AtomicBoolean();
 
-    FullRestorePool(RedisConnectionProfile profile, RedisDataEndpointResolver endpoints, int database,
+    FullRestorePool(WorkerRedisConnectionProfile profile, RedisDataEndpointResolver endpoints, int database,
             long taskId, Duration connectTimeout,
             int concurrency, int queueCapacity, int pipelineSize, long transactionMaxBytes,
             TargetFence fence, LeaseGuard leaseGuard, Runnable beforeApply, Runnable afterApply,
@@ -42,7 +41,7 @@ final class FullRestorePool implements AutoCloseable {
                 pipelineSize, transactionMaxBytes, fence, leaseGuard, beforeApply, afterApply, progress);
     }
 
-    FullRestorePool(RedisConnectionProfile profile, RedisDataEndpointResolver endpoints, int database,
+    FullRestorePool(WorkerRedisConnectionProfile profile, RedisDataEndpointResolver endpoints, int database,
             long taskId, String channel, Duration connectTimeout,
             int concurrency, int queueCapacity, int pipelineSize, long transactionMaxBytes,
             TargetFence fence, LeaseGuard leaseGuard, Runnable beforeApply, Runnable afterApply,

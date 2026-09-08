@@ -14,7 +14,7 @@ import java.util.*;
 @Component
 public class SyncPrecheckExecutor {
     private final ClusterRepository clusters;
-    private final RedisConnectionProfileProvider profiles;
+    private final WorkerRedisConnectionProfilePort profiles;
     private final TopologyDiscoveryPort topology;
     private final SyncRepository sync;
     private final ObjectMapper json;
@@ -22,7 +22,7 @@ public class SyncPrecheckExecutor {
     private final Path dataDirectory;
     private final long segmentBytes;
 
-    public SyncPrecheckExecutor(ClusterRepository clusters, RedisConnectionProfileProvider profiles,
+    public SyncPrecheckExecutor(ClusterRepository clusters, WorkerRedisConnectionProfilePort profiles,
             TopologyDiscoveryPort topology, SyncRepository sync, ObjectMapper json,
             RedisDataEndpointResolver endpoints,
             @Value("${sync.engine.data-dir:./data/sync}") Path dataDirectory,
@@ -70,7 +70,7 @@ public class SyncPrecheckExecutor {
     }
     private String discover(long id) {
         RedisCluster cluster = clusters.findById(id).orElseThrow();
-        try (RedisConnectionProfile ignored = profiles.get(id)) {
+        try (WorkerRedisConnectionProfile ignored = profiles.get(id)) {
             return topology.discover(cluster).size() + " nodes";
         }
     }
@@ -110,14 +110,14 @@ public class SyncPrecheckExecutor {
     private int clusterMasters(long clusterId, ClusterMode mode) throws Exception {
         if (mode != ClusterMode.CLUSTER)
             return 1;
-        try (RedisConnectionProfile profile = profiles.get(clusterId)) {
+        try (WorkerRedisConnectionProfile profile = profiles.get(clusterId)) {
             return new HashSet<>(endpoints.resolveClusterMasters(profile).stream()
                     .map(RedisDataEndpointResolver.ClusterMaster::endpoint).toList()).size();
         }
     }
     private String reservedNamespace(SyncTask task) throws Exception {
-        try (RedisConnectionProfile profile = profiles.get(task.targetClusterId())) {
-            if (profile.mode() == ClusterMode.CLUSTER) {
+        try (WorkerRedisConnectionProfile profile = profiles.get(task.targetClusterId())) {
+            if (profile.mode() == WorkerClusterMode.CLUSTER) {
                 int inspected = 0;
                 Set<RedisEndpoint> masters = new LinkedHashSet<>();
                 for (RedisDataEndpointResolver.ClusterMaster master : endpoints.resolveClusterMasters(profile))
@@ -192,7 +192,7 @@ public class SyncPrecheckExecutor {
 
     private Map<String, Long> sourceCommandStats(SyncTask task, ClusterMode mode) throws Exception {
         Map<String, Long> aggregated = new LinkedHashMap<>();
-        try (RedisConnectionProfile profile = profiles.get(task.sourceClusterId())) {
+        try (WorkerRedisConnectionProfile profile = profiles.get(task.sourceClusterId())) {
             if (mode == ClusterMode.CLUSTER) {
                 Set<RedisEndpoint> masters = new LinkedHashSet<>();
                 for (RedisDataEndpointResolver.ClusterMaster master : endpoints.resolveClusterMasters(profile))

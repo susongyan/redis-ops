@@ -1,7 +1,5 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.asset.ClusterMode;
-import io.github.redisops.domain.asset.RedisConnectionProfile;
 import io.github.redisops.sync.protocol.RespProtocolException;
 import io.github.redisops.sync.protocol.RespValue;
 import org.junit.jupiter.api.Test;
@@ -17,7 +15,7 @@ class RedisDataEndpointResolverTest {
     @Test
     void usesFirstSeedForStandalone() throws Exception {
         RedisDataEndpointResolver resolver = new RedisDataEndpointResolver(1000);
-        try (RedisConnectionProfile profile = new RedisConnectionProfile(1, ClusterMode.STANDALONE,
+        try (WorkerRedisConnectionProfile profile = new WorkerRedisConnectionProfile(1, WorkerClusterMode.STANDALONE,
                 List.of("127.0.0.1:6380", "127.0.0.1:6381"), null, null, "NONE", null)) {
             assertEquals(new RedisEndpoint("127.0.0.1", 6380), resolver.resolvePrimary(profile));
         }

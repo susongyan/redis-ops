@@ -1,7 +1,6 @@
 package io.github.redisops.sync.engine;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.redisops.domain.asset.*;
 import io.github.redisops.domain.sync.*;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
@@ -47,8 +46,8 @@ class StandaloneSyncTaskRunnerIntegrationTest {
             source.sync().select(0);
 
             SyncTask task = task();
-            RedisConnectionProfileProvider profiles = clusterId -> new RedisConnectionProfile(clusterId,
-                    ClusterMode.STANDALONE, List.of("127.0.0.1:" + (clusterId == 1 ? 6390 : 6391)),
+            WorkerRedisConnectionProfilePort profiles = clusterId -> new WorkerRedisConnectionProfile(clusterId,
+                    WorkerClusterMode.STANDALONE, List.of("127.0.0.1:" + (clusterId == 1 ? 6390 : 6391)),
                     null, null, "NONE", null);
             byte[] masterKey = new byte[32];
             java.util.Arrays.fill(masterKey, (byte) 9);
@@ -105,7 +104,7 @@ class StandaloneSyncTaskRunnerIntegrationTest {
                 source.sync().incr("counter");
                 await(() -> "2".equals(target.sync().get("counter")), recovered);
 
-                try (RedisConnectionProfile targetProfile = profiles.get(2);
+                try (WorkerRedisConnectionProfile targetProfile = profiles.get(2);
                         TargetCommandSession targetSession = new TargetCommandSession(
                                 targetProfile, 0, task.id(), Duration.ofSeconds(5))) {
                     LeaseGuard validLease = new LeaseGuard(Duration.ZERO);
@@ -154,8 +153,8 @@ class StandaloneSyncTaskRunnerIntegrationTest {
             target.sync().flushall();
             source.sync().set("acl-key", "full");
             SyncTask task = task(92, "epoch-acl");
-            RedisConnectionProfileProvider profiles = clusterId -> new RedisConnectionProfile(clusterId,
-                    ClusterMode.STANDALONE, List.of("127.0.0.1:" + (clusterId == 1 ? 6392 : 6393)),
+            WorkerRedisConnectionProfilePort profiles = clusterId -> new WorkerRedisConnectionProfile(clusterId,
+                    WorkerClusterMode.STANDALONE, List.of("127.0.0.1:" + (clusterId == 1 ? 6392 : 6393)),
                     null, "sync", "ACL", "sync-secret".toCharArray());
             byte[] masterKey = new byte[32];
             String keyRing = "v1:" + Base64.getEncoder().encodeToString(masterKey);
@@ -201,7 +200,7 @@ class StandaloneSyncTaskRunnerIntegrationTest {
     }
 
     private StandaloneSyncTaskRunner runner(SyncTask task, boolean recovery,
-            RedisConnectionProfileProvider profiles, String keyRing) {
+            WorkerRedisConnectionProfilePort profiles, String keyRing) {
         return new StandaloneSyncTaskRunner(task, recovery, profiles, mock(SyncRepository.class),
                 mock(SyncRunnerStateReporter.class), new SpoolKeyProvider(keyRing),
                 new RedisDataEndpointResolver(5000), new ObjectMapper(),

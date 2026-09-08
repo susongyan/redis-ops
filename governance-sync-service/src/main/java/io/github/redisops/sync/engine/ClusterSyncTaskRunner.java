@@ -2,9 +2,6 @@ package io.github.redisops.sync.engine;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.redisops.domain.asset.ClusterMode;
-import io.github.redisops.domain.asset.RedisConnectionProfile;
-import io.github.redisops.domain.asset.RedisConnectionProfileProvider;
 import io.github.redisops.domain.sync.*;
 import io.github.redisops.sync.protocol.*;
 
@@ -31,7 +28,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     };
     private final SyncTask task;
     private final boolean recovery;
-    private final RedisConnectionProfileProvider profiles;
+    private final WorkerRedisConnectionProfilePort profiles;
     private final SyncRepository sync;
     private final SyncRunnerStateReporter reporter;
     private final SpoolKeyProvider spoolKeys;
@@ -60,10 +57,10 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     private volatile boolean finishing;
     private volatile String lastFailure;
     private long lastApplyNanos;
-    private RedisConnectionProfile sourceProfile;
-    private RedisConnectionProfile targetProfile;
+    private WorkerRedisConnectionProfile sourceProfile;
+    private WorkerRedisConnectionProfile targetProfile;
 
-    ClusterSyncTaskRunner(SyncTask task, boolean recovery, RedisConnectionProfileProvider profiles,
+    ClusterSyncTaskRunner(SyncTask task, boolean recovery, WorkerRedisConnectionProfilePort profiles,
             SyncRepository sync, SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys,
             RedisDataEndpointResolver endpoints, ObjectMapper json, Path dataDirectory, long segmentBytes,
             Duration connectTimeout, int fullConcurrency, int fullQueueCapacity, int fullPipelineSize,
@@ -98,10 +95,10 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         try {
             sourceProfile = profiles.get(task.sourceClusterId());
             targetProfile = profiles.get(task.targetClusterId());
-            if (sourceProfile.mode() != ClusterMode.CLUSTER && targetProfile.mode() != ClusterMode.CLUSTER)
+            if (sourceProfile.mode() != WorkerClusterMode.CLUSTER && targetProfile.mode() != WorkerClusterMode.CLUSTER)
                 throw new IllegalStateException("Cluster runner requires a Cluster source or target");
-            if (sourceProfile.mode() == ClusterMode.CLUSTER && task.sourceDb() != 0
-                    || targetProfile.mode() == ClusterMode.CLUSTER && task.targetDb() != 0)
+            if (sourceProfile.mode() == WorkerClusterMode.CLUSTER && task.sourceDb() != 0
+                    || targetProfile.mode() == WorkerClusterMode.CLUSTER && task.targetDb() != 0)
                 throw new SyncBlockedException("BLOCKED_INVALID_DATABASE", "Redis Cluster supports DB 0 only");
             KeyFilter filter = new KeyFilter(patterns(task.includePatternsJson()),
                     patterns(task.excludePatternsJson()));
@@ -237,7 +234,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     }
 
     private List<SourceSpec> sourceSpecs() throws IOException {
-        if (sourceProfile.mode() != ClusterMode.CLUSTER) {
+        if (sourceProfile.mode() != WorkerClusterMode.CLUSTER) {
             RedisEndpoint endpoint = endpoints.resolvePrimary(sourceProfile);
             return List.of(new SourceSpec("source", endpoint, ClusterTargetRouter.allSlots()));
         }
@@ -423,11 +420,11 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
             this.restoreQueueCapacity = restoreQueueCapacity;
             this.sourceEndpoint = spec.endpoint();
             int heartbeatSlot = spec.slots().nextSetBit(0);
-            this.heartbeatKey = sourceProfile.mode() == ClusterMode.CLUSTER
+            this.heartbeatKey = sourceProfile.mode() == WorkerClusterMode.CLUSTER
                     ? ClusterSlotKeyspace.heartbeat(task.id(), spec.channel(), heartbeatSlot)
                     : ("__redis_ops_sync_hb__:{" + task.id() + "}:" + spec.channel())
                             .getBytes(StandardCharsets.US_ASCII);
-            this.planner = new CommandPlanner(filter, targetProfile.mode() == ClusterMode.CLUSTER, heartbeatKey,
+            this.planner = new CommandPlanner(filter, targetProfile.mode() == WorkerClusterMode.CLUSTER, heartbeatKey,
                     commandPolicy());
             this.spool = new EncryptedSpool(dataDirectory, task.id(), spec.channel(),
                     spoolKeys.taskKey(task.id()), segmentBytes, spoolLimit);
@@ -442,7 +439,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
 
         private void initialize() throws IOException {
             spool.prepare();
-            if (targetProfile.mode() == ClusterMode.CLUSTER)
+            if (targetProfile.mode() == WorkerClusterMode.CLUSTER)
                 routedTarget = new ClusterTargetRouter(targetProfile, endpoints, task.id(), spec.channel(),
                         connectTimeout);
             else
@@ -603,7 +600,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         }
 
         private boolean sourceOwns(byte[] key) {
-            return sourceProfile.mode() != ClusterMode.CLUSTER || spec.slots().get(RedisSlot.of(key));
+            return sourceProfile.mode() != WorkerClusterMode.CLUSTER || spec.slots().get(RedisSlot.of(key));
         }
 
         private void readLoop() {
@@ -738,7 +735,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         }
 
         private void reconnectEndpoint() throws IOException {
-            if (sourceProfile.mode() != ClusterMode.CLUSTER) {
+            if (sourceProfile.mode() != WorkerClusterMode.CLUSTER) {
                 sourceEndpoint = endpoints.resolvePrimary(sourceProfile);
                 return;
             }
@@ -757,7 +754,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         }
 
         private TargetCommandSession heartbeatSession() throws IOException {
-            if (sourceProfile.mode() == ClusterMode.CLUSTER)
+            if (sourceProfile.mode() == WorkerClusterMode.CLUSTER)
                 return TargetCommandSession.clusterSlot(sourceProfile, sourceEndpoint, task.id(), connectTimeout,
                         spec.channel(), spec.slots().nextSetBit(0));
             return new TargetCommandSession(sourceProfile, sourceEndpoint, task.sourceDb(), task.id(),

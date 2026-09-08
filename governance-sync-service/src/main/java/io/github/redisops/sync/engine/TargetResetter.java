@@ -13,9 +13,9 @@ import java.util.List;
 @Component
 public class TargetResetter {
     private final ClusterRepository clusters;
-    private final RedisConnectionProfileProvider profiles;
+    private final WorkerRedisConnectionProfilePort profiles;
     private final TopologyDiscoveryPort topology;
-    public TargetResetter(ClusterRepository clusters, RedisConnectionProfileProvider profiles,
+    public TargetResetter(ClusterRepository clusters, WorkerRedisConnectionProfilePort profiles,
             TopologyDiscoveryPort topology) {
         this.clusters = clusters;
         this.profiles = profiles;
@@ -24,7 +24,7 @@ public class TargetResetter {
     public List<ResetResult> flush(long clusterId, int database) {
         RedisCluster cluster = clusters.findById(clusterId).orElseThrow();
         List<ResetResult> results = new ArrayList<>();
-        try (RedisConnectionProfile profile = profiles.get(clusterId)) {
+        try (WorkerRedisConnectionProfile profile = profiles.get(clusterId)) {
             if (cluster.mode() == ClusterMode.CLUSTER) {
                 for (RedisNode node : topology.discover(cluster))
                     if ("MASTER".equals(node.role()))
@@ -40,7 +40,7 @@ public class TargetResetter {
         }
         return results;
     }
-    private ResetResult flushEndpoint(RedisConnectionProfile profile, String host, int port, int database) {
+    private ResetResult flushEndpoint(WorkerRedisConnectionProfile profile, String host, int port, int database) {
         String endpoint = host + ":" + port;
         RedisURI.Builder builder = RedisURI.builder().withHost(host).withPort(port).withDatabase(database)
                 .withTimeout(Duration.ofSeconds(10));

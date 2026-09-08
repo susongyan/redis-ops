@@ -2,9 +2,6 @@ package io.github.redisops.sync.engine;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.redisops.domain.asset.ClusterMode;
-import io.github.redisops.domain.asset.RedisConnectionProfile;
-import io.github.redisops.domain.asset.RedisConnectionProfileProvider;
 import io.github.redisops.domain.sync.*;
 import io.github.redisops.sync.protocol.*;
 
@@ -28,7 +25,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
 
     private final SyncTask originalTask;
     private final boolean recovery;
-    private final RedisConnectionProfileProvider profiles;
+    private final WorkerRedisConnectionProfilePort profiles;
     private final SyncRepository sync;
     private final SyncRunnerStateReporter reporter;
     private final SpoolKeyProvider spoolKeys;
@@ -69,8 +66,8 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private volatile SourceReplicationSession source;
     private volatile RedisEndpoint sourceEndpoint;
     private volatile RedisEndpoint targetEndpoint;
-    private RedisConnectionProfile sourceProfile;
-    private RedisConnectionProfile targetProfile;
+    private WorkerRedisConnectionProfile sourceProfile;
+    private WorkerRedisConnectionProfile targetProfile;
     private TargetCommandSession target;
     private TargetCommandSession heartbeatSource;
     private EncryptedSpool spool;
@@ -90,7 +87,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private volatile FullSyncProgressTracker fullProgress;
     private final byte[] heartbeatKey;
 
-    StandaloneSyncTaskRunner(SyncTask task, boolean recovery, RedisConnectionProfileProvider profiles,
+    StandaloneSyncTaskRunner(SyncTask task, boolean recovery, WorkerRedisConnectionProfilePort profiles,
             SyncRepository sync, SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys,
             RedisDataEndpointResolver endpoints, ObjectMapper json,
             Path dataDirectory, long segmentBytes, Duration connectTimeout, int fullApplyConcurrency,
@@ -134,7 +131,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         try {
             sourceProfile = profiles.get(originalTask.sourceClusterId());
             targetProfile = profiles.get(originalTask.targetClusterId());
-            if (sourceProfile.mode() == ClusterMode.CLUSTER || targetProfile.mode() == ClusterMode.CLUSTER)
+            if (sourceProfile.mode() == WorkerClusterMode.CLUSTER || targetProfile.mode() == WorkerClusterMode.CLUSTER)
                 throw new SyncBlockedException("BLOCKED_UNSUPPORTED_TOPOLOGY",
                         "this runner currently supports Standalone and Sentinel data nodes");
             sourceEndpoint = endpoints.resolvePrimary(sourceProfile);
@@ -777,7 +774,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     }
 
     private void refreshSourceMasterIfNeeded() throws IOException {
-        if (sourceProfile.mode() != ClusterMode.SENTINEL)
+        if (sourceProfile.mode() != WorkerClusterMode.SENTINEL)
             return;
         long now = System.nanoTime();
         if (now - lastSourceMasterCheckNanos < TimeUnit.SECONDS.toNanos(1))

@@ -27,7 +27,8 @@ public final class PlatformSyncEngineStateAdapter implements SyncEngineStatePort
     }
 
     @Override
-    public void engineTransition(long taskId, long version, SyncTaskStatus status, Long rpoSeconds, String blockedReason,
+    public void engineTransition(long taskId, long version, SyncTaskStatus status, Long rpoSeconds,
+            String blockedReason,
             String error, String message, String operator) {
         delegate.engineTransition(taskId, version, status, rpoSeconds, blockedReason, error, message, operator);
     }

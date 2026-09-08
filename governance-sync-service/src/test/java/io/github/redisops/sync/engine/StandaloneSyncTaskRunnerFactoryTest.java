@@ -1,8 +1,5 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.asset.ClusterMode;
-import io.github.redisops.domain.asset.RedisConnectionProfile;
-import io.github.redisops.domain.asset.RedisConnectionProfileProvider;
 import io.github.redisops.domain.sync.*;
 import org.junit.jupiter.api.Test;
 
@@ -35,13 +32,13 @@ class StandaloneSyncTaskRunnerFactoryTest {
     @Test
     void selectsClusterRunnerWhenEitherSideUsesClusterMode() {
         assertInstanceOf(ClusterSyncTaskRunner.class,
-                factory(profiles(ClusterMode.CLUSTER, ClusterMode.STANDALONE), 4, 10, 1)
+                factory(profiles(WorkerClusterMode.CLUSTER, WorkerClusterMode.STANDALONE), 4, 10, 1)
                         .create(task(), false));
         assertInstanceOf(ClusterSyncTaskRunner.class,
-                factory(profiles(ClusterMode.STANDALONE, ClusterMode.CLUSTER), 4, 10, 1)
+                factory(profiles(WorkerClusterMode.STANDALONE, WorkerClusterMode.CLUSTER), 4, 10, 1)
                         .create(task(), false));
         assertInstanceOf(StandaloneSyncTaskRunner.class,
-                factory(profiles(ClusterMode.STANDALONE, ClusterMode.STANDALONE), 4, 10, 1)
+                factory(profiles(WorkerClusterMode.STANDALONE, WorkerClusterMode.STANDALONE), 4, 10, 1)
                         .create(task(), false));
     }
 
@@ -50,7 +47,7 @@ class StandaloneSyncTaskRunnerFactoryTest {
         return factory(null, concurrency, queueCapacity, pipelineSize);
     }
 
-    private static StandaloneSyncTaskRunnerFactory factory(RedisConnectionProfileProvider profiles,
+    private static StandaloneSyncTaskRunnerFactory factory(WorkerRedisConnectionProfilePort profiles,
             int concurrency, int queueCapacity, int pipelineSize) {
         return new StandaloneSyncTaskRunnerFactory(profiles, null, null, null,
                 new RedisDataEndpointResolver(1000), null,
@@ -58,8 +55,8 @@ class StandaloneSyncTaskRunnerFactoryTest {
                 4 * 1024 * 1024L, 2000, 1000);
     }
 
-    private static RedisConnectionProfileProvider profiles(ClusterMode source, ClusterMode target) {
-        return clusterId -> new RedisConnectionProfile(clusterId, clusterId == 1 ? source : target,
+    private static WorkerRedisConnectionProfilePort profiles(WorkerClusterMode source, WorkerClusterMode target) {
+        return clusterId -> new WorkerRedisConnectionProfile(clusterId, clusterId == 1 ? source : target,
                 List.of("127.0.0.1:6379"), null, null, "NONE", null);
     }
 

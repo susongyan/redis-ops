@@ -1,7 +1,5 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.asset.ClusterMode;
-import io.github.redisops.domain.asset.RedisConnectionProfile;
 import io.github.redisops.sync.protocol.RespCodec;
 import io.github.redisops.sync.protocol.RespProtocolException;
 import io.github.redisops.sync.protocol.RespValue;
@@ -30,8 +28,8 @@ public class RedisDataEndpointResolver {
         this.connectTimeout = Duration.ofMillis(connectTimeoutMillis);
     }
 
-    public RedisEndpoint resolvePrimary(RedisConnectionProfile profile) throws IOException {
-        if (profile.mode() != ClusterMode.SENTINEL)
+    public RedisEndpoint resolvePrimary(WorkerRedisConnectionProfile profile) throws IOException {
+        if (profile.mode() != WorkerClusterMode.SENTINEL)
             return RedisEndpoint.parse(profile.seedEndpoints().get(0));
         IOException last = null;
         for (String seed : profile.seedEndpoints()) {
@@ -45,8 +43,8 @@ public class RedisDataEndpointResolver {
                 + profile.sentinelMasterName(), last);
     }
 
-    public List<ClusterMaster> resolveClusterMasters(RedisConnectionProfile profile) throws IOException {
-        if (profile.mode() != ClusterMode.CLUSTER)
+    public List<ClusterMaster> resolveClusterMasters(WorkerRedisConnectionProfile profile) throws IOException {
+        if (profile.mode() != WorkerClusterMode.CLUSTER)
             return List.of(new ClusterMaster(resolvePrimary(profile), null, 0, 16383));
         IOException last = null;
         for (String seed : profile.seedEndpoints()) {
@@ -60,7 +58,7 @@ public class RedisDataEndpointResolver {
         throw new IOException("all Redis Cluster seed endpoints failed", last);
     }
 
-    private RedisEndpoint querySentinel(RedisConnectionProfile profile, RedisEndpoint sentinel)
+    private RedisEndpoint querySentinel(WorkerRedisConnectionProfile profile, RedisEndpoint sentinel)
             throws IOException {
         try (Socket socket = new Socket()) {
             socket.setKeepAlive(true);
@@ -82,7 +80,7 @@ public class RedisDataEndpointResolver {
         }
     }
 
-    private List<ClusterMaster> queryClusterSlots(RedisConnectionProfile profile, RedisEndpoint seed)
+    private List<ClusterMaster> queryClusterSlots(WorkerRedisConnectionProfile profile, RedisEndpoint seed)
             throws IOException {
         try (Socket socket = new Socket()) {
             socket.setKeepAlive(true);
@@ -160,7 +158,7 @@ public class RedisDataEndpointResolver {
         return codec.read();
     }
 
-    private static void authenticate(RespCodec codec, RedisConnectionProfile profile) throws IOException {
+    private static void authenticate(RespCodec codec, WorkerRedisConnectionProfile profile) throws IOException {
         if (profile.password() == null)
             throw new RespProtocolException("Sentinel requires authentication but no password is configured");
         byte[] password = encode(profile.password());

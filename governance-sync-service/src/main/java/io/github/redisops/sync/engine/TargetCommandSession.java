@@ -1,6 +1,5 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.asset.RedisConnectionProfile;
 import io.github.redisops.sync.protocol.CommandPlan;
 import io.github.redisops.sync.protocol.RespCodec;
 import io.github.redisops.sync.protocol.RespProtocolException;
@@ -28,22 +27,23 @@ public final class TargetCommandSession implements AutoCloseable {
     private final byte[] fenceKey;
     private final byte[] fullProgressPrefix;
 
-    public TargetCommandSession(RedisConnectionProfile profile, int database, long taskId, Duration connectTimeout)
+    public TargetCommandSession(WorkerRedisConnectionProfile profile, int database, long taskId,
+            Duration connectTimeout)
             throws IOException {
         this(profile, RedisEndpoint.parse(profile.seedEndpoints().get(0)), database, taskId, connectTimeout);
     }
 
-    public TargetCommandSession(RedisConnectionProfile profile, RedisEndpoint endpoint, int database,
+    public TargetCommandSession(WorkerRedisConnectionProfile profile, RedisEndpoint endpoint, int database,
             long taskId, Duration connectTimeout) throws IOException {
         this(profile, endpoint, database, connectTimeout, standaloneKeyspace(taskId, "standalone"), true);
     }
 
-    TargetCommandSession(RedisConnectionProfile profile, RedisEndpoint endpoint, int database,
+    TargetCommandSession(WorkerRedisConnectionProfile profile, RedisEndpoint endpoint, int database,
             long taskId, Duration connectTimeout, String channel) throws IOException {
         this(profile, endpoint, database, connectTimeout, standaloneKeyspace(taskId, channel), true);
     }
 
-    static TargetCommandSession clusterSlot(RedisConnectionProfile profile, RedisEndpoint endpoint,
+    static TargetCommandSession clusterSlot(WorkerRedisConnectionProfile profile, RedisEndpoint endpoint,
             long taskId, Duration connectTimeout, String channel, int slot) throws IOException {
         byte[] progress = ClusterSlotKeyspace.fullProgress(taskId, channel, slot, 0);
         int separator = lastIndexOf(progress, (byte) ':');
@@ -53,7 +53,7 @@ public final class TargetCommandSession implements AutoCloseable {
         return new TargetCommandSession(profile, endpoint, 0, connectTimeout, keyspace, false);
     }
 
-    private TargetCommandSession(RedisConnectionProfile profile, RedisEndpoint endpoint, int database,
+    private TargetCommandSession(WorkerRedisConnectionProfile profile, RedisEndpoint endpoint, int database,
             Duration connectTimeout, Keyspace keyspace, boolean selectDatabase) throws IOException {
         socket = new Socket();
         socket.setKeepAlive(true);
@@ -353,7 +353,7 @@ public final class TargetCommandSession implements AutoCloseable {
         }
     }
 
-    private void authenticate(RedisConnectionProfile profile) throws IOException {
+    private void authenticate(WorkerRedisConnectionProfile profile) throws IOException {
         if (profile.password() == null)
             return;
         byte[] password = encode(profile.password());

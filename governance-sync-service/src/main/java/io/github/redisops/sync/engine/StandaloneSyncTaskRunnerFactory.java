@@ -1,9 +1,6 @@
 package io.github.redisops.sync.engine;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.redisops.domain.asset.ClusterMode;
-import io.github.redisops.domain.asset.RedisConnectionProfile;
-import io.github.redisops.domain.asset.RedisConnectionProfileProvider;
 import io.github.redisops.domain.sync.SyncRepository;
 import io.github.redisops.domain.sync.SyncTask;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,7 +11,7 @@ import java.time.Duration;
 
 @Component
 public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
-    private final RedisConnectionProfileProvider profiles;
+    private final WorkerRedisConnectionProfilePort profiles;
     private final SyncRepository sync;
     private final SyncRunnerStateReporter reporter;
     private final SpoolKeyProvider spoolKeys;
@@ -30,7 +27,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
     private final Duration leaseSafetyMargin;
     private final Duration metricInterval;
 
-    public StandaloneSyncTaskRunnerFactory(RedisConnectionProfileProvider profiles, SyncRepository sync,
+    public StandaloneSyncTaskRunnerFactory(WorkerRedisConnectionProfilePort profiles, SyncRepository sync,
             SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys, RedisDataEndpointResolver endpoints,
             ObjectMapper json,
             @Value("${sync.engine.data-dir:./data/sync}") Path dataDirectory,
@@ -73,9 +70,9 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
 
     @Override
     public SyncTaskRunner create(SyncTask task, boolean recovery) {
-        try (RedisConnectionProfile source = profiles.get(task.sourceClusterId());
-                RedisConnectionProfile target = profiles.get(task.targetClusterId())) {
-            if (source.mode() == ClusterMode.CLUSTER || target.mode() == ClusterMode.CLUSTER)
+        try (WorkerRedisConnectionProfile source = profiles.get(task.sourceClusterId());
+                WorkerRedisConnectionProfile target = profiles.get(task.targetClusterId())) {
+            if (source.mode() == WorkerClusterMode.CLUSTER || target.mode() == WorkerClusterMode.CLUSTER)
                 return new ClusterSyncTaskRunner(task, recovery, profiles, sync, reporter, spoolKeys, endpoints, json,
                         dataDirectory, segmentBytes, connectTimeout, fullApplyConcurrency, fullApplyQueueCapacity,
                         fullApplyPipelineSize, fullApplyTransactionMaxBytes, leaseSafetyMargin, metricInterval);

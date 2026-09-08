@@ -1,6 +1,5 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.asset.RedisConnectionProfile;
 import io.github.redisops.sync.protocol.CommandPlan;
 import io.github.redisops.sync.protocol.RedisSlot;
 import io.github.redisops.sync.protocol.RespProtocolException;
@@ -10,7 +9,7 @@ import java.time.Duration;
 import java.util.*;
 
 final class ClusterTargetRouter implements AutoCloseable {
-    private final RedisConnectionProfile profile;
+    private final WorkerRedisConnectionProfile profile;
     private final RedisDataEndpointResolver endpoints;
     private final long taskId;
     private final String channel;
@@ -20,7 +19,7 @@ final class ClusterTargetRouter implements AutoCloseable {
     private final BitSet publishedFences = new BitSet(16384);
     private int anchorSlot = -1;
 
-    ClusterTargetRouter(RedisConnectionProfile profile, RedisDataEndpointResolver endpoints, long taskId,
+    ClusterTargetRouter(WorkerRedisConnectionProfile profile, RedisDataEndpointResolver endpoints, long taskId,
             String channel, Duration connectTimeout) throws IOException {
         this.profile = profile;
         this.endpoints = endpoints;
