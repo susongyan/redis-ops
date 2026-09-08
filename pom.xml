@@ -15,6 +15,7 @@
     <name>Redis Governance Platform</name>
 
     <modules>
+        <module>redis-ops-sync-contract</module>
         <module>governance-common</module>
         <module>governance-domain</module>
         <module>governance-application</module>

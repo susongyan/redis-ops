@@ -1,7 +1,7 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.application.sync.SyncService;
 import io.github.redisops.domain.sync.*;
+import io.github.redisops.application.sync.SyncService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -10,13 +10,13 @@ import java.util.List;
 
 @Component
 public class NativeSyncCoordinator {
-    private final SyncService service;
+    private final SyncEngineStatePort service;
     private final SyncPrecheckExecutor prechecks;
     private final TargetResetter resetter;
     private final NativeSyncRunnerManager runners;
     private final String instanceId;
     private final long leaseSeconds;
-    public NativeSyncCoordinator(SyncService service, SyncPrecheckExecutor prechecks, TargetResetter resetter,
+    public NativeSyncCoordinator(SyncEngineStatePort service, SyncPrecheckExecutor prechecks, TargetResetter resetter,
             NativeSyncRunnerManager runners,
             @Value("${sync.engine.instance-id:local-sync}") String instanceId,
             @Value("${sync.engine.lease-seconds:30}") long leaseSeconds) {
@@ -26,6 +26,12 @@ public class NativeSyncCoordinator {
         this.runners = runners;
         this.instanceId = instanceId + "-" + UUID.randomUUID();
         this.leaseSeconds = leaseSeconds;
+    }
+
+    /** Compatibility constructor while the persistence adapter is extracted. */
+    public NativeSyncCoordinator(SyncService service, SyncPrecheckExecutor prechecks, TargetResetter resetter,
+            NativeSyncRunnerManager runners, String instanceId, long leaseSeconds) {
+        this(new PlatformSyncEngineStateAdapter(service), prechecks, resetter, runners, instanceId, leaseSeconds);
     }
     public void precheck(long taskId) {
         SyncTask task = service.get(taskId);

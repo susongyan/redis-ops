@@ -1,15 +1,14 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.application.sync.SyncService;
 import io.github.redisops.domain.sync.SyncTask;
 import io.github.redisops.domain.sync.SyncTaskStatus;
 import org.springframework.stereotype.Component;
 
 @Component
 public class SyncRunnerStateReporter {
-    private final SyncService service;
+    private final SyncEngineStatePort service;
 
-    public SyncRunnerStateReporter(SyncService service) {
+    public SyncRunnerStateReporter(SyncEngineStatePort service) {
         this.service = service;
     }
 
