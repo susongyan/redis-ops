@@ -2,6 +2,9 @@ package io.github.redisops.sync.engine;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.redisops.domain.sync.*;
+import io.github.redisops.sync.contract.SyncContractStatus;
+import io.github.redisops.sync.worker.domain.WorkerSyncRuntime;
+import io.github.redisops.sync.worker.domain.WorkerSyncTask;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.cluster.RedisClusterClient;
@@ -45,7 +48,7 @@ class ClusterSyncTaskRunnerIntegrationTest {
             for (int i = 0; i < 300; i++)
                 sourceCommands.set("cluster-full:" + i, "value-" + i);
 
-            SyncTask task = task(193, 1, 2, "epoch-cluster-it");
+            WorkerSyncTask task = task(193, 1, 2, "epoch-cluster-it");
             WorkerRedisConnectionProfilePort profiles = clusterProfiles();
             String keyRing = keyRing();
             ClusterSyncTaskRunner runner = runner(task, false, profiles, keyRing);
@@ -106,7 +109,7 @@ class ClusterSyncTaskRunnerIntegrationTest {
         try (var source = sourceClient.connect(); var target = targetClient.connect()) {
             source.sync().mset(Map.of("{north}:one", "n1", "{south}:one", "s1"));
             source.sync().set("{west}:full", "w1");
-            SyncTask task = task(194, 3, 2, "epoch-standalone-cluster");
+            WorkerSyncTask task = task(194, 3, 2, "epoch-standalone-cluster");
             WorkerRedisConnectionProfilePort profiles = clusterId -> {
                 if (clusterId == 3)
                     return new WorkerRedisConnectionProfile(clusterId, WorkerClusterMode.STANDALONE,
@@ -145,7 +148,7 @@ class ClusterSyncTaskRunnerIntegrationTest {
             source.sync().set("{alpha}:full", "a1");
             source.sync().hset("{beta}:hash", "field", "b1");
             source.sync().rpush("{gamma}:list", "g1", "g2");
-            SyncTask task = task(195, 1, 4, "epoch-cluster-standalone");
+            WorkerSyncTask task = task(195, 1, 4, "epoch-cluster-standalone");
             WorkerRedisConnectionProfilePort profiles = clusterId -> {
                 if (clusterId == 1)
                     return new WorkerRedisConnectionProfile(clusterId, WorkerClusterMode.CLUSTER,
@@ -176,7 +179,7 @@ class ClusterSyncTaskRunnerIntegrationTest {
         }
     }
 
-    private ClusterSyncTaskRunner runner(SyncTask task, boolean recovery,
+    private ClusterSyncTaskRunner runner(WorkerSyncTask task, boolean recovery,
             WorkerRedisConnectionProfilePort profiles, String keyRing) {
         return new ClusterSyncTaskRunner(task, recovery, profiles, mock(SyncRepository.class),
                 mock(SyncRunnerStateReporter.class), new SpoolKeyProvider(keyRing),
@@ -190,17 +193,16 @@ class ClusterSyncTaskRunnerIntegrationTest {
                 endpoints(clusterId == 1 ? SOURCE_PORTS : TARGET_PORTS), null, null, "NONE", null);
     }
 
-    private static SyncTask task(long id, long sourceClusterId, long targetClusterId, String epoch) {
+    private static WorkerSyncTask task(long id, long sourceClusterId, long targetClusterId, String epoch) {
         Instant now = Instant.now();
-        return new SyncTask(id, "SYNC-CLUSTER-IT-" + id, null, sourceClusterId, targetClusterId,
-                SyncPurpose.MIGRATION,
-                SyncMode.FULL_AND_INCREMENTAL, SyncTaskStatus.STARTING, "NATIVE_JAVA", 0, 0,
-                "[\"*\"]", "[]", 50_000, 100_000_000, 64 * 1024 * 1024, 4, 8, "START", true,
+        return new WorkerSyncTask(id, "SYNC-CLUSTER-IT-" + id, null, sourceClusterId, targetClusterId,
+                "MIGRATION", "FULL_AND_INCREMENTAL", SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0,
+                "[\"*\"]", "[]", "{}", 50_000, 100_000_000, 64 * 1024 * 1024, 4, 8, "START", true,
                 "cluster integration", null, epoch, null, null, 0, now, now, null);
     }
 
-    private static SyncRuntime runtime(long taskId, long generation) {
-        return new SyncRuntime(taskId, "runtime-" + generation, "worker", Instant.now().plusSeconds(30),
+    private static WorkerSyncRuntime runtime(long taskId, long generation) {
+        return new WorkerSyncRuntime(taskId, "runtime-" + generation, "worker", Instant.now().plusSeconds(30),
                 generation, "CLAIMED", Instant.now(), 0, null, null, 0,
                 null, null, Instant.now(), Instant.now());
     }

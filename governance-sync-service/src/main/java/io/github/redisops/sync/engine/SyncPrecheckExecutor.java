@@ -3,6 +3,7 @@ package io.github.redisops.sync.engine;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.redisops.domain.asset.*;
 import io.github.redisops.domain.sync.*;
+import io.github.redisops.sync.worker.domain.WorkerSyncTask;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -37,7 +38,7 @@ public class SyncPrecheckExecutor {
         this.segmentBytes = segmentBytes;
     }
 
-    public SyncPrecheckReport execute(SyncTask task) {
+    public SyncPrecheckReport execute(WorkerSyncTask task) {
         List<Map<String, Object>> checks = new ArrayList<>();
         boolean passed = true;
         passed &= check(checks, "DISTINCT_CLUSTERS", () -> distinct(task));
@@ -74,12 +75,12 @@ public class SyncPrecheckExecutor {
             return topology.discover(cluster).size() + " nodes";
         }
     }
-    private String distinct(SyncTask task) {
+    private String distinct(WorkerSyncTask task) {
         if (task.sourceClusterId() == task.targetClusterId())
             throw new IllegalStateException("source and target clusters must differ");
         return task.sourceClusterId() + " -> " + task.targetClusterId();
     }
-    private String compatibleVersions(SyncTask task) {
+    private String compatibleVersions(WorkerSyncTask task) {
         RedisCluster source = clusters.findById(task.sourceClusterId()).orElseThrow();
         RedisCluster target = clusters.findById(task.targetClusterId()).orElseThrow();
         int[] sourceVersion = version(source.redisVersion());
@@ -92,14 +93,14 @@ public class SyncPrecheckExecutor {
             throw new IllegalStateException("migration from newer Redis to older Redis is not certified");
         return source.redisVersion() + " -> " + target.redisVersion();
     }
-    private String validDatabases(SyncTask task) {
+    private String validDatabases(WorkerSyncTask task) {
         RedisCluster source = clusters.findById(task.sourceClusterId()).orElseThrow();
         RedisCluster target = clusters.findById(task.targetClusterId()).orElseThrow();
         validateDatabase(source.mode(), task.sourceDb(), "sourceDb");
         validateDatabase(target.mode(), task.targetDb(), "targetDb");
         return task.sourceDb() + " -> " + task.targetDb();
     }
-    private String supportedTopology(SyncTask task) throws Exception {
+    private String supportedTopology(WorkerSyncTask task) throws Exception {
         RedisCluster source = clusters.findById(task.sourceClusterId()).orElseThrow();
         RedisCluster target = clusters.findById(task.targetClusterId()).orElseThrow();
         int sourceMasters = clusterMasters(task.sourceClusterId(), source.mode());
@@ -115,7 +116,7 @@ public class SyncPrecheckExecutor {
                     .map(RedisDataEndpointResolver.ClusterMaster::endpoint).toList()).size();
         }
     }
-    private String reservedNamespace(SyncTask task) throws Exception {
+    private String reservedNamespace(WorkerSyncTask task) throws Exception {
         try (WorkerRedisConnectionProfile profile = profiles.get(task.targetClusterId())) {
             if (profile.mode() == WorkerClusterMode.CLUSTER) {
                 int inspected = 0;
@@ -146,7 +147,7 @@ public class SyncPrecheckExecutor {
         return "usableBytes=" + usable + ", segmentBytes=" + segmentBytes;
     }
 
-    private String commandPolicySummary(SyncTask task) throws Exception {
+    private String commandPolicySummary(WorkerSyncTask task) throws Exception {
         SyncCommandPolicy policy = commandPolicy(task);
         RedisCluster target = clusters.findById(task.targetClusterId()).orElseThrow();
         long blocked = SyncCommandCapabilities.all(target.mode() == ClusterMode.CLUSTER, policy).stream()
@@ -156,7 +157,7 @@ public class SyncPrecheckExecutor {
                 + ", unknownCommands=BLOCK";
     }
 
-    private void commandHistoryRisk(List<Map<String, Object>> checks, SyncTask task) {
+    private void commandHistoryRisk(List<Map<String, Object>> checks, WorkerSyncTask task) {
         try {
             RedisCluster sourceCluster = clusters.findById(task.sourceClusterId()).orElseThrow();
             RedisCluster targetCluster = clusters.findById(task.targetClusterId()).orElseThrow();
@@ -190,7 +191,7 @@ public class SyncPrecheckExecutor {
         }
     }
 
-    private Map<String, Long> sourceCommandStats(SyncTask task, ClusterMode mode) throws Exception {
+    private Map<String, Long> sourceCommandStats(WorkerSyncTask task, ClusterMode mode) throws Exception {
         Map<String, Long> aggregated = new LinkedHashMap<>();
         try (WorkerRedisConnectionProfile profile = profiles.get(task.sourceClusterId())) {
             if (mode == ClusterMode.CLUSTER) {
@@ -214,7 +215,7 @@ public class SyncPrecheckExecutor {
         return aggregated;
     }
 
-    private SyncCommandPolicy commandPolicy(SyncTask task) throws Exception {
+    private SyncCommandPolicy commandPolicy(WorkerSyncTask task) throws Exception {
         return json.readValue(task.commandPolicyJson(), SyncCommandPolicy.class);
     }
     private static int[] version(String value) {

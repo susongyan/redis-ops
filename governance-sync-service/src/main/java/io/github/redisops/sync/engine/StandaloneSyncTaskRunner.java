@@ -3,6 +3,9 @@ package io.github.redisops.sync.engine;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.redisops.domain.sync.*;
+import io.github.redisops.sync.contract.SyncContractStatus;
+import io.github.redisops.sync.worker.domain.WorkerSyncRuntime;
+import io.github.redisops.sync.worker.domain.WorkerSyncTask;
 import io.github.redisops.sync.protocol.*;
 
 import java.io.IOException;
@@ -23,7 +26,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {
     };
 
-    private final SyncTask originalTask;
+    private final WorkerSyncTask originalTask;
     private final boolean recovery;
     private final WorkerRedisConnectionProfilePort profiles;
     private final SyncRepository sync;
@@ -50,7 +53,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private final AtomicLong appliedOffset = new AtomicLong(-1);
     private final Object applyGate = new Object();
 
-    private volatile SyncTask limits;
+    private volatile WorkerSyncTask limits;
     private volatile String phase = "CREATED";
     private volatile boolean finishing;
     private volatile long generation;
@@ -87,7 +90,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private volatile FullSyncProgressTracker fullProgress;
     private final byte[] heartbeatKey;
 
-    StandaloneSyncTaskRunner(SyncTask task, boolean recovery, WorkerRedisConnectionProfilePort profiles,
+    StandaloneSyncTaskRunner(WorkerSyncTask task, boolean recovery, WorkerRedisConnectionProfilePort profiles,
             SyncRepository sync, SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys,
             RedisDataEndpointResolver endpoints, ObjectMapper json,
             Path dataDirectory, long segmentBytes, Duration connectTimeout, int fullApplyConcurrency,
@@ -166,7 +169,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     }
 
     @Override
-    public void leaseAcquired(SyncRuntime runtime) {
+    public void leaseAcquired(WorkerSyncRuntime runtime) {
         generation = runtime.fencingGeneration();
         Duration remaining = Duration.between(Instant.now(), runtime.leaseUntil());
         leaseGuard.grant(remaining.isNegative() || remaining.isZero() ? Duration.ofMillis(1) : remaining);
@@ -261,7 +264,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     }
 
     @Override
-    public void updateLimits(SyncTask task) {
+    public void updateLimits(WorkerSyncTask task) {
         limits = task;
     }
 
@@ -388,7 +391,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         spool.discardFullRdb();
         updateChannel("INCR_SYNCING");
         phase = "INCR_SYNCING";
-        reporter.transition(originalTask.id(), SyncTaskStatus.INCR_SYNCING, null, null, null,
+        reporter.transition(originalTask.id(), SyncContractStatus.INCR_SYNCING, null, null, null,
                 "full RDB applied; incremental replication started");
     }
 
@@ -537,7 +540,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         if (shouldLeaveCaughtUp(caughtUp, appliedOffset.get(), receivedOffset.get(), applyQueue.isEmpty())) {
             caughtUp = false;
             phase = "INCR_SYNCING";
-            reporter.transition(originalTask.id(), SyncTaskStatus.INCR_SYNCING, null, null, null,
+            reporter.transition(originalTask.id(), SyncContractStatus.INCR_SYNCING, null, null, null,
                     "incremental backlog detected");
         }
         updateChannelThrottled("RUNNING");
@@ -581,7 +584,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                 && applyQueue.isEmpty()) {
             caughtUp = true;
             phase = "CAUGHT_UP";
-            reporter.transition(originalTask.id(), SyncTaskStatus.CAUGHT_UP, 0L, null, null,
+            reporter.transition(originalTask.id(), SyncContractStatus.CAUGHT_UP, 0L, null, null,
                     "target checkpoint caught up with received offset");
             saveMetric(true);
         }
@@ -896,11 +899,11 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             sync.appendTaskEvent(originalTask.id(), "sync:" + targetFence.workerId(),
                     ("BLOCKED_REQUIRES_FULL_RESYNC".equals(blocked.reason()) ? "FULL_RESYNC_REQUIRED" : "BLOCKED")
                             + " generation=" + generation + " reason=" + blocked.reason());
-            reporter.transition(originalTask.id(), SyncTaskStatus.BLOCKED, null, blocked.reason(),
+            reporter.transition(originalTask.id(), SyncContractStatus.BLOCKED, null, blocked.reason(),
                     safe(error), "sync runner blocked");
         } else {
             phase = "FAILED";
-            reporter.transition(originalTask.id(), SyncTaskStatus.FAILED, null, null, safe(error),
+            reporter.transition(originalTask.id(), SyncContractStatus.FAILED, null, null, safe(error),
                     "sync runner failed");
         }
         closeSource();

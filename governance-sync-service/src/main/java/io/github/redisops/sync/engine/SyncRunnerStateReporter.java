@@ -1,21 +1,22 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.sync.SyncTask;
-import io.github.redisops.domain.sync.SyncTaskStatus;
+import io.github.redisops.sync.contract.SyncContractStatus;
+import io.github.redisops.sync.worker.domain.WorkerSyncTask;
+import io.github.redisops.sync.worker.persistence.WorkerSyncStatePort;
 import org.springframework.stereotype.Component;
 
 @Component
 public class SyncRunnerStateReporter {
-    private final SyncEngineStatePort service;
+    private final WorkerSyncStatePort service;
 
-    public SyncRunnerStateReporter(SyncEngineStatePort service) {
+    public SyncRunnerStateReporter(WorkerSyncStatePort service) {
         this.service = service;
     }
 
-    public void transition(long taskId, SyncTaskStatus target, Long rpo, String blockedReason, String error,
+    public void transition(long taskId, SyncContractStatus target, Long rpo, String blockedReason, String error,
             String message) {
-        SyncTask task = service.get(taskId);
-        if (task.status() == target || !task.status().canTransitionTo(target))
+        WorkerSyncTask task = service.get(taskId);
+        if (task.status() == target || !service.canTransitionTo(taskId, target))
             return;
         service.engineTransition(taskId, task.version(), target, rpo, blockedReason, safe(error), message,
                 "sync:runner");

@@ -1,6 +1,6 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.sync.SyncRepository;
+import io.github.redisops.sync.worker.persistence.WorkerSyncStatePort;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -8,10 +8,10 @@ import org.springframework.stereotype.Component;
 @Component
 @ConditionalOnProperty(name = "sync.engine.enabled", havingValue = "true", matchIfMissing = true)
 public class NativeSyncRecoveryWorker {
-    private final SyncRepository sync;
+    private final WorkerSyncStatePort sync;
     private final NativeSyncCoordinator coordinator;
 
-    public NativeSyncRecoveryWorker(SyncRepository sync, NativeSyncCoordinator coordinator) {
+    public NativeSyncRecoveryWorker(WorkerSyncStatePort sync, NativeSyncCoordinator coordinator) {
         this.sync = sync;
         this.coordinator = coordinator;
     }

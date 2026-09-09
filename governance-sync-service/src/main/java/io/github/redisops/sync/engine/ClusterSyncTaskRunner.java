@@ -3,6 +3,9 @@ package io.github.redisops.sync.engine;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.redisops.domain.sync.*;
+import io.github.redisops.sync.contract.SyncContractStatus;
+import io.github.redisops.sync.worker.domain.WorkerSyncRuntime;
+import io.github.redisops.sync.worker.domain.WorkerSyncTask;
 import io.github.redisops.sync.protocol.*;
 
 import java.io.IOException;
@@ -26,7 +29,7 @@ import java.util.concurrent.locks.LockSupport;
 final class ClusterSyncTaskRunner implements SyncTaskRunner {
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {
     };
-    private final SyncTask task;
+    private final WorkerSyncTask task;
     private final boolean recovery;
     private final WorkerRedisConnectionProfilePort profiles;
     private final SyncRepository sync;
@@ -50,7 +53,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     private final Object throttleGate = new Object();
     private final Semaphore targetApplyPermits;
     private final List<Channel> channels = new CopyOnWriteArrayList<>();
-    private volatile SyncTask limits;
+    private volatile WorkerSyncTask limits;
     private volatile String phase = "CREATED";
     private volatile TargetFence fence;
     private volatile long generation;
@@ -60,7 +63,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     private WorkerRedisConnectionProfile sourceProfile;
     private WorkerRedisConnectionProfile targetProfile;
 
-    ClusterSyncTaskRunner(SyncTask task, boolean recovery, WorkerRedisConnectionProfilePort profiles,
+    ClusterSyncTaskRunner(WorkerSyncTask task, boolean recovery, WorkerRedisConnectionProfilePort profiles,
             SyncRepository sync, SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys,
             RedisDataEndpointResolver endpoints, ObjectMapper json, Path dataDirectory, long segmentBytes,
             Duration connectTimeout, int fullConcurrency, int fullQueueCapacity, int fullPipelineSize,
@@ -127,7 +130,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     }
 
     @Override
-    public void leaseAcquired(SyncRuntime runtime) {
+    public void leaseAcquired(WorkerSyncRuntime runtime) {
         generation = runtime.fencingGeneration();
         Duration remaining = Duration.between(Instant.now(), runtime.leaseUntil());
         leaseGuard.grant(remaining.isNegative() || remaining.isZero() ? Duration.ofMillis(1) : remaining);
@@ -159,7 +162,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         for (Channel channel : channels)
             channel.start(false);
         phase = "FULL_SYNCING";
-        reporter.transition(task.id(), SyncTaskStatus.FULL_SYNCING, null, null, null,
+        reporter.transition(task.id(), SyncContractStatus.FULL_SYNCING, null, null, null,
                 "Cluster source channels started");
     }
 
@@ -205,7 +208,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     }
 
     @Override
-    public void updateLimits(SyncTask task) {
+    public void updateLimits(WorkerSyncTask task) {
         limits = task;
     }
 
@@ -325,7 +328,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     private synchronized void channelIncremental() {
         if (channels.stream().allMatch(Channel::incremental)) {
             phase = "INCR_SYNCING";
-            reporter.transition(task.id(), SyncTaskStatus.INCR_SYNCING, null, null, null,
+            reporter.transition(task.id(), SyncContractStatus.INCR_SYNCING, null, null, null,
                     "all Cluster source channels entered incremental replication");
         }
     }
@@ -333,7 +336,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     private synchronized void channelCaughtUp() {
         if (channels.stream().allMatch(Channel::caughtUp)) {
             phase = "CAUGHT_UP";
-            reporter.transition(task.id(), SyncTaskStatus.CAUGHT_UP, 0L, null, null,
+            reporter.transition(task.id(), SyncContractStatus.CAUGHT_UP, 0L, null, null,
                     "all Cluster source channels caught up");
         }
     }
@@ -347,11 +350,11 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                 + channel.fullRdbBytes + " bytes): " + safe;
         if (error instanceof SyncBlockedException blocked) {
             phase = "BLOCKED";
-            reporter.transition(task.id(), SyncTaskStatus.BLOCKED, null, blocked.reason(), safe,
+            reporter.transition(task.id(), SyncContractStatus.BLOCKED, null, blocked.reason(), safe,
                     "Cluster channel blocked: " + channel.spec.channel());
         } else {
             phase = "FAILED";
-            reporter.transition(task.id(), SyncTaskStatus.FAILED, null, null, safe,
+            reporter.transition(task.id(), SyncContractStatus.FAILED, null, null, safe,
                     "Cluster channel failed: " + channel.spec.channel());
         }
         cancelled.set(true);

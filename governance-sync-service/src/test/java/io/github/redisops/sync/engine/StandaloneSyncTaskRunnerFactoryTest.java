@@ -1,6 +1,8 @@
 package io.github.redisops.sync.engine;
 
 import io.github.redisops.domain.sync.*;
+import io.github.redisops.sync.contract.SyncContractStatus;
+import io.github.redisops.sync.worker.domain.WorkerSyncTask;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -60,11 +62,11 @@ class StandaloneSyncTaskRunnerFactoryTest {
                 List.of("127.0.0.1:6379"), null, null, "NONE", null);
     }
 
-    private static SyncTask task() {
+    private static WorkerSyncTask task() {
         Instant now = Instant.now();
-        return new SyncTask(1L, "SYNC-1", null, 1, 2, SyncPurpose.MIGRATION,
-                SyncMode.FULL_AND_INCREMENTAL, SyncTaskStatus.STARTING, "NATIVE_JAVA", 0, 0,
-                "[\"*\"]", "[]", 50_000, 100_000_000, 1024 * 1024, 4, 8, "START", true, "test",
+        return new WorkerSyncTask(1L, "SYNC-1", null, 1, 2, "MIGRATION", "FULL_AND_INCREMENTAL",
+                SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0,
+                "[\"*\"]", "[]", "{}", 50_000, 100_000_000, 1024 * 1024, 4, 8, "START", true, "test",
                 null, "epoch", null, null, 0, now, now, null);
     }
 }

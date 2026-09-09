@@ -1,7 +1,7 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.sync.SyncRepository;
-import io.github.redisops.domain.sync.SyncTask;
+import io.github.redisops.sync.worker.domain.WorkerSyncTask;
+import io.github.redisops.sync.worker.persistence.WorkerSyncStatePort;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,7 +19,7 @@ import java.time.Duration;
 
 @Component
 public class NativeSyncRunnerManager {
-    private final SyncRepository sync;
+    private final WorkerSyncStatePort sync;
     private final SyncTaskRunnerFactory runners;
     private final Map<Long, ManagedRunner> active = new ConcurrentHashMap<>();
     private final Semaphore capacity;
@@ -27,7 +27,7 @@ public class NativeSyncRunnerManager {
     private ScheduledExecutorService renewScheduler;
 
     @Autowired
-    public NativeSyncRunnerManager(SyncRepository sync, SyncTaskRunnerFactory runners,
+    public NativeSyncRunnerManager(WorkerSyncStatePort sync, SyncTaskRunnerFactory runners,
             @Value("${sync.engine.max-concurrent-tasks:2}") int maxConcurrentTasks,
             @Value("${sync.engine.lease-renew-interval-ms:5000}") long renewIntervalMillis) {
         if (maxConcurrentTasks < 1)
@@ -40,7 +40,7 @@ public class NativeSyncRunnerManager {
         this.renewIntervalMillis = renewIntervalMillis;
     }
 
-    NativeSyncRunnerManager(SyncRepository sync, SyncTaskRunnerFactory runners, int maxConcurrentTasks) {
+    NativeSyncRunnerManager(WorkerSyncStatePort sync, SyncTaskRunnerFactory runners, int maxConcurrentTasks) {
         if (maxConcurrentTasks < 1)
             throw new IllegalArgumentException("maxConcurrentTasks must be positive");
         this.sync = sync;
@@ -63,7 +63,7 @@ public class NativeSyncRunnerManager {
                 renewIntervalMillis, TimeUnit.MILLISECONDS);
     }
 
-    public synchronized void prepare(SyncTask task, String owner, long leaseSeconds, boolean recovery) {
+    public synchronized void prepare(WorkerSyncTask task, String owner, long leaseSeconds, boolean recovery) {
         if (leaseSeconds < 1)
             throw new IllegalArgumentException("leaseSeconds must be positive");
         ManagedRunner existing = active.get(task.id());
@@ -85,7 +85,7 @@ public class NativeSyncRunnerManager {
             if (!sync.claimRuntime(task.id(), runtimeId, owner, leaseSeconds))
                 throw new IllegalStateException("sync runtime is already leased");
             claimed = true;
-            var runtime = sync.findRuntime(task.id())
+            var runtime = sync.runtime(task.id())
                     .orElseThrow(() -> new IllegalStateException("claimed sync runtime is missing"));
             if (!owner.equals(runtime.leaseOwner()))
                 throw new IllegalStateException("claimed sync runtime owner changed");
@@ -121,7 +121,7 @@ public class NativeSyncRunnerManager {
         renewOrLose(managed);
     }
 
-    public void resume(SyncTask task, String owner, long leaseSeconds) {
+    public void resume(WorkerSyncTask task, String owner, long leaseSeconds) {
         ManagedRunner managed = active.get(task.id());
         if (managed == null) {
             prepare(task, owner, leaseSeconds, true);
@@ -130,7 +130,7 @@ public class NativeSyncRunnerManager {
         resumePrepared(managed);
     }
 
-    public void prepareRecovery(SyncTask task, String owner, long leaseSeconds) {
+    public void prepareRecovery(WorkerSyncTask task, String owner, long leaseSeconds) {
         prepare(task, owner, leaseSeconds, true);
     }
 
@@ -176,7 +176,7 @@ public class NativeSyncRunnerManager {
             remove(managed, "FAILED", safe(error), false);
     }
 
-    public void updateLimits(SyncTask task) {
+    public void updateLimits(WorkerSyncTask task) {
         ManagedRunner managed = required(task.id());
         managed.runner().updateLimits(task);
         renewOrLose(managed);

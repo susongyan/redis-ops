@@ -1,7 +1,7 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.sync.SyncTask;
-import io.github.redisops.domain.sync.SyncRuntime;
+import io.github.redisops.sync.worker.domain.WorkerSyncRuntime;
+import io.github.redisops.sync.worker.domain.WorkerSyncTask;
 
 import java.time.Duration;
 
@@ -19,7 +19,7 @@ public interface SyncTaskRunner extends AutoCloseable {
     /**
      * Supplies the fencing generation after the MySQL runtime lease has been claimed.
      */
-    default void leaseAcquired(SyncRuntime runtime) {
+    default void leaseAcquired(WorkerSyncRuntime runtime) {
         // Optional for runners that do not write target data.
     }
 
@@ -69,7 +69,7 @@ public interface SyncTaskRunner extends AutoCloseable {
      */
     void cancel();
 
-    void updateLimits(SyncTask task);
+    void updateLimits(WorkerSyncTask task);
 
     String phase();
 

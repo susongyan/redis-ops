@@ -1,6 +1,6 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.sync.SyncTask;
+import io.github.redisops.sync.worker.domain.WorkerSyncTask;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -15,9 +15,9 @@ public class SyncEngineConfiguration {
     }
 
     private static final class PendingSyncTaskRunner implements SyncTaskRunner {
-        private final SyncTask task;
+        private final WorkerSyncTask task;
 
-        private PendingSyncTaskRunner(SyncTask task) {
+        private PendingSyncTaskRunner(WorkerSyncTask task) {
             this.task = task;
         }
 
@@ -53,7 +53,7 @@ public class SyncEngineConfiguration {
         }
 
         @Override
-        public void updateLimits(SyncTask task) {
+        public void updateLimits(WorkerSyncTask task) {
             throw unsupported();
         }
 

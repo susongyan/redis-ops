@@ -2,7 +2,7 @@ package io.github.redisops.sync.engine;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.redisops.domain.sync.SyncRepository;
-import io.github.redisops.domain.sync.SyncTask;
+import io.github.redisops.sync.worker.domain.WorkerSyncTask;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -69,7 +69,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
     }
 
     @Override
-    public SyncTaskRunner create(SyncTask task, boolean recovery) {
+    public SyncTaskRunner create(WorkerSyncTask task, boolean recovery) {
         try (WorkerRedisConnectionProfile source = profiles.get(task.sourceClusterId());
                 WorkerRedisConnectionProfile target = profiles.get(task.targetClusterId())) {
             if (source.mode() == WorkerClusterMode.CLUSTER || target.mode() == WorkerClusterMode.CLUSTER)

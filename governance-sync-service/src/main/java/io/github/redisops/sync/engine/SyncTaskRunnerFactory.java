@@ -1,8 +1,8 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.sync.SyncTask;
+import io.github.redisops.sync.worker.domain.WorkerSyncTask;
 
 public interface SyncTaskRunnerFactory {
 
-    SyncTaskRunner create(SyncTask task, boolean recovery);
+    SyncTaskRunner create(WorkerSyncTask task, boolean recovery);
 }

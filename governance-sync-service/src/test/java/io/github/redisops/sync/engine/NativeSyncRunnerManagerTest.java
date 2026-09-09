@@ -1,6 +1,10 @@
 package io.github.redisops.sync.engine;
 
 import io.github.redisops.domain.sync.*;
+import io.github.redisops.sync.contract.SyncContractStatus;
+import io.github.redisops.sync.worker.domain.WorkerSyncRuntime;
+import io.github.redisops.sync.worker.domain.WorkerSyncTask;
+import io.github.redisops.sync.worker.persistence.WorkerSyncStatePort;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -17,12 +21,12 @@ class NativeSyncRunnerManagerTest {
 
     @Test
     void managesRunnerLifecycleAndRuntimeLease() {
-        SyncRepository sync = mock(SyncRepository.class);
+        WorkerSyncStatePort sync = mock(WorkerSyncStatePort.class);
         stubRuntimeClaim(sync);
         when(sync.renewRuntime(anyLong(), anyString(), anyLong(), anyString(), anyLong())).thenReturn(true);
         FakeRunner runner = new FakeRunner();
         NativeSyncRunnerManager manager = new NativeSyncRunnerManager(sync, (task, recovery) -> runner, 1);
-        SyncTask task = task(1);
+        WorkerSyncTask task = task(1);
 
         manager.prepare(task, "worker-1", 30, false);
         manager.start(task.id());
@@ -47,7 +51,7 @@ class NativeSyncRunnerManagerTest {
 
     @Test
     void enforcesWorkerConcurrencyLimit() {
-        SyncRepository sync = mock(SyncRepository.class);
+        WorkerSyncStatePort sync = mock(WorkerSyncStatePort.class);
         stubRuntimeClaim(sync);
         FakeRunner first = new FakeRunner();
         FakeRunner second = new FakeRunner();
@@ -69,7 +73,7 @@ class NativeSyncRunnerManagerTest {
 
     @Test
     void stopsRunnerImmediatelyWhenLeaseRenewalFails() {
-        SyncRepository sync = mock(SyncRepository.class);
+        WorkerSyncStatePort sync = mock(WorkerSyncStatePort.class);
         stubRuntimeClaim(sync);
         when(sync.renewRuntime(anyLong(), anyString(), anyLong(), anyString(), anyLong())).thenReturn(false);
         FakeRunner runner = new FakeRunner();
@@ -86,7 +90,7 @@ class NativeSyncRunnerManagerTest {
 
     @Test
     void startFailsClosedWhenImmediateLeaseRenewalFails() {
-        SyncRepository sync = mock(SyncRepository.class);
+        WorkerSyncStatePort sync = mock(WorkerSyncStatePort.class);
         stubRuntimeClaim(sync);
         when(sync.renewRuntime(anyLong(), anyString(), anyLong(), anyString(), anyLong())).thenReturn(false);
         FakeRunner runner = new FakeRunner();
@@ -103,7 +107,7 @@ class NativeSyncRunnerManagerTest {
 
     @Test
     void releasesCapacityWhenRunnerPreparationFails() {
-        SyncRepository sync = mock(SyncRepository.class);
+        WorkerSyncStatePort sync = mock(WorkerSyncStatePort.class);
         stubRuntimeClaim(sync);
         FakeRunner broken = new FakeRunner();
         broken.prepareError = new IllegalStateException("cannot connect source");
@@ -123,7 +127,7 @@ class NativeSyncRunnerManagerTest {
 
     @Test
     void recreatesRunnerInRecoveryModeAfterProcessRestart() {
-        SyncRepository sync = mock(SyncRepository.class);
+        WorkerSyncStatePort sync = mock(WorkerSyncStatePort.class);
         stubRuntimeClaim(sync);
         when(sync.renewRuntime(anyLong(), anyString(), anyLong(), anyString(), anyLong())).thenReturn(true);
         AtomicBoolean recovery = new AtomicBoolean();
@@ -141,16 +145,16 @@ class NativeSyncRunnerManagerTest {
         manager.cancel(1);
     }
 
-    private static SyncTask task(long id) {
+    private static WorkerSyncTask task(long id) {
         Instant now = Instant.now();
-        return new SyncTask(id, "SYNC-" + id, null, 11, 22, SyncPurpose.ADHOC,
-                SyncMode.FULL_AND_INCREMENTAL, SyncTaskStatus.STARTING, "NATIVE_JAVA", 0, 0, "[\"*\"]", "[]",
+        return new WorkerSyncTask(id, "SYNC-" + id, null, 11, 22, "ADHOC", "FULL_AND_INCREMENTAL",
+                SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0, "[\"*\"]", "[]", "{}",
                 50_000, 100 * 1024 * 1024L, 50L * 1024 * 1024 * 1024, 4, 100,
                 SyncAction.START.name(), true,
                 "test fence", null, "epoch-1", null, null, 0, now, now, null);
     }
 
-    private static void stubRuntimeClaim(SyncRepository sync) {
+    private static void stubRuntimeClaim(WorkerSyncStatePort sync) {
         AtomicReference<String> runtimeId = new AtomicReference<>();
         AtomicReference<String> owner = new AtomicReference<>();
         when(sync.claimRuntime(anyLong(), anyString(), anyString(), anyLong())).thenAnswer(invocation -> {
@@ -158,10 +162,10 @@ class NativeSyncRunnerManagerTest {
             owner.set(invocation.getArgument(2));
             return true;
         });
-        when(sync.findRuntime(anyLong())).thenAnswer(invocation -> {
+        when(sync.runtime(anyLong())).thenAnswer(invocation -> {
             long taskId = invocation.getArgument(0);
             Instant now = Instant.now();
-            return Optional.of(new SyncRuntime(
+            return Optional.of(new WorkerSyncRuntime(
                     taskId,
                     runtimeId.get(),
                     owner.get(),
@@ -230,7 +234,7 @@ class NativeSyncRunnerManagerTest {
         }
 
         @Override
-        public void updateLimits(SyncTask task) {
+        public void updateLimits(WorkerSyncTask task) {
             limitUpdates.incrementAndGet();
         }
 

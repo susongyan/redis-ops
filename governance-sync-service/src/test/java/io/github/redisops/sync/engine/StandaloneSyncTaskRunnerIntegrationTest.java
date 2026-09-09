@@ -2,6 +2,9 @@ package io.github.redisops.sync.engine;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.redisops.domain.sync.*;
+import io.github.redisops.sync.contract.SyncContractStatus;
+import io.github.redisops.sync.worker.domain.WorkerSyncRuntime;
+import io.github.redisops.sync.worker.domain.WorkerSyncTask;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.XReadArgs;
@@ -45,7 +48,7 @@ class StandaloneSyncTaskRunnerIntegrationTest {
             source.sync().set("other-db-full", "must-not-copy");
             source.sync().select(0);
 
-            SyncTask task = task();
+            WorkerSyncTask task = task();
             WorkerRedisConnectionProfilePort profiles = clusterId -> new WorkerRedisConnectionProfile(clusterId,
                     WorkerClusterMode.STANDALONE, List.of("127.0.0.1:" + (clusterId == 1 ? 6390 : 6391)),
                     null, null, "NONE", null);
@@ -152,7 +155,7 @@ class StandaloneSyncTaskRunnerIntegrationTest {
             source.sync().flushall();
             target.sync().flushall();
             source.sync().set("acl-key", "full");
-            SyncTask task = task(92, "epoch-acl");
+            WorkerSyncTask task = task(92, "epoch-acl");
             WorkerRedisConnectionProfilePort profiles = clusterId -> new WorkerRedisConnectionProfile(clusterId,
                     WorkerClusterMode.STANDALONE, List.of("127.0.0.1:" + (clusterId == 1 ? 6392 : 6393)),
                     null, "sync", "ACL", "sync-secret".toCharArray());
@@ -187,19 +190,19 @@ class StandaloneSyncTaskRunnerIntegrationTest {
         }
     }
 
-    private static SyncTask task() {
+    private static WorkerSyncTask task() {
         return task(91, "epoch-it");
     }
 
-    private static SyncTask task(long id, String epoch) {
+    private static WorkerSyncTask task(long id, String epoch) {
         Instant now = Instant.now();
-        return new SyncTask(id, "SYNC-IT-" + id, null, 1, 2, SyncPurpose.MIGRATION,
-                SyncMode.FULL_AND_INCREMENTAL, SyncTaskStatus.STARTING, "NATIVE_JAVA", 0, 0,
-                "[\"*\"]", "[]", 50_000, 100_000_000, 50 * 1024 * 1024, 4, 8, "START", true, "integration",
+        return new WorkerSyncTask(id, "SYNC-IT-" + id, null, 1, 2, "MIGRATION", "FULL_AND_INCREMENTAL",
+                SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0,
+                "[\"*\"]", "[]", "{}", 50_000, 100_000_000, 50 * 1024 * 1024, 4, 8, "START", true, "integration",
                 null, epoch, null, null, 0, now, now, null);
     }
 
-    private StandaloneSyncTaskRunner runner(SyncTask task, boolean recovery,
+    private StandaloneSyncTaskRunner runner(WorkerSyncTask task, boolean recovery,
             WorkerRedisConnectionProfilePort profiles, String keyRing) {
         return new StandaloneSyncTaskRunner(task, recovery, profiles, mock(SyncRepository.class),
                 mock(SyncRunnerStateReporter.class), new SpoolKeyProvider(keyRing),
@@ -208,8 +211,8 @@ class StandaloneSyncTaskRunnerIntegrationTest {
                 4 * 1024 * 1024L, Duration.ofSeconds(2), Duration.ofSeconds(1));
     }
 
-    private static SyncRuntime runtime(long taskId, long generation) {
-        return new SyncRuntime(taskId, "runtime-" + generation, "worker", Instant.now().plusSeconds(30),
+    private static WorkerSyncRuntime runtime(long taskId, long generation) {
+        return new WorkerSyncRuntime(taskId, "runtime-" + generation, "worker", Instant.now().plusSeconds(30),
                 generation, "CLAIMED", Instant.now(), 0, null, null, 0,
                 null, null, Instant.now(), Instant.now());
     }
