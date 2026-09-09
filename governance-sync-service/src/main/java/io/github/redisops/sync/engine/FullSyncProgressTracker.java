@@ -1,7 +1,7 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.sync.SyncFullProgress;
-import io.github.redisops.domain.sync.SyncRepository;
+import io.github.redisops.sync.worker.domain.WorkerSyncFullProgress;
+import io.github.redisops.sync.worker.persistence.WorkerSyncExecutionPort;
 
 import java.time.Instant;
 import java.util.concurrent.TimeUnit;
@@ -15,7 +15,7 @@ final class FullSyncProgressTracker {
     private final long taskId;
     private final String epoch;
     private final String channel;
-    private final SyncRepository repository;
+    private final WorkerSyncExecutionPort repository;
     private final Instant startedAt = Instant.now();
     private final AtomicLong receivedBytes = new AtomicLong();
     private final AtomicLong parsedBytes = new AtomicLong();
@@ -30,7 +30,7 @@ final class FullSyncProgressTracker {
     private volatile String stage = "RECEIVING_RDB";
     private volatile String status = "RUNNING";
 
-    FullSyncProgressTracker(long taskId, String epoch, String channel, int lanes, SyncRepository repository) {
+    FullSyncProgressTracker(long taskId, String epoch, String channel, int lanes, WorkerSyncExecutionPort repository) {
         this.taskId = taskId;
         this.epoch = epoch;
         this.channel = channel;
@@ -122,13 +122,13 @@ final class FullSyncProgressTracker {
         persist(row(lane, laneKeys.get(lane), laneBytes.get(lane)));
     }
 
-    private SyncFullProgress row(int lane, long appliedKeys, long appliedBytes) {
-        return new SyncFullProgress(null, taskId, epoch, channel, lane, stage, totalBytes,
+    private WorkerSyncFullProgress row(int lane, long appliedKeys, long appliedBytes) {
+        return new WorkerSyncFullProgress(taskId, epoch, channel, lane, stage, totalBytes,
                 receivedBytes.get(), parsedBytes.get(), totalKeys, parsedKeys.get(), appliedKeys,
                 appliedBytes, status, startedAt, Instant.now());
     }
 
-    private void persist(SyncFullProgress progress) {
+    private void persist(WorkerSyncFullProgress progress) {
         try {
             repository.upsertFullProgress(progress);
         } catch (RuntimeException ignored) {

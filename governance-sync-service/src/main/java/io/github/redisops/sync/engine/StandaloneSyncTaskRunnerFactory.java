@@ -1,8 +1,8 @@
 package io.github.redisops.sync.engine;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.redisops.domain.sync.SyncRepository;
 import io.github.redisops.sync.worker.domain.WorkerSyncTask;
+import io.github.redisops.sync.worker.persistence.WorkerSyncExecutionPort;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -12,7 +12,7 @@ import java.time.Duration;
 @Component
 public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
     private final WorkerRedisConnectionProfilePort profiles;
-    private final SyncRepository sync;
+    private final WorkerSyncExecutionPort sync;
     private final SyncRunnerStateReporter reporter;
     private final SpoolKeyProvider spoolKeys;
     private final RedisDataEndpointResolver endpoints;
@@ -27,7 +27,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
     private final Duration leaseSafetyMargin;
     private final Duration metricInterval;
 
-    public StandaloneSyncTaskRunnerFactory(WorkerRedisConnectionProfilePort profiles, SyncRepository sync,
+    public StandaloneSyncTaskRunnerFactory(WorkerRedisConnectionProfilePort profiles, WorkerSyncExecutionPort sync,
             SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys, RedisDataEndpointResolver endpoints,
             ObjectMapper json,
             @Value("${sync.engine.data-dir:./data/sync}") Path dataDirectory,

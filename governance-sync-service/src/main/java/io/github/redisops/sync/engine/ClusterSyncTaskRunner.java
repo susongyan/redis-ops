@@ -6,6 +6,9 @@ import io.github.redisops.domain.sync.*;
 import io.github.redisops.sync.contract.SyncContractStatus;
 import io.github.redisops.sync.worker.domain.WorkerSyncRuntime;
 import io.github.redisops.sync.worker.domain.WorkerSyncTask;
+import io.github.redisops.sync.worker.domain.WorkerSyncChannelCheckpoint;
+import io.github.redisops.sync.worker.domain.WorkerSyncMetricSnapshot;
+import io.github.redisops.sync.worker.persistence.WorkerSyncExecutionPort;
 import io.github.redisops.sync.protocol.*;
 
 import java.io.IOException;
@@ -32,7 +35,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     private final WorkerSyncTask task;
     private final boolean recovery;
     private final WorkerRedisConnectionProfilePort profiles;
-    private final SyncRepository sync;
+    private final WorkerSyncExecutionPort sync;
     private final SyncRunnerStateReporter reporter;
     private final SpoolKeyProvider spoolKeys;
     private final RedisDataEndpointResolver endpoints;
@@ -64,7 +67,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     private WorkerRedisConnectionProfile targetProfile;
 
     ClusterSyncTaskRunner(WorkerSyncTask task, boolean recovery, WorkerRedisConnectionProfilePort profiles,
-            SyncRepository sync, SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys,
+            WorkerSyncExecutionPort sync, SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys,
             RedisDataEndpointResolver endpoints, ObjectMapper json, Path dataDirectory, long segmentBytes,
             Duration connectTimeout, int fullConcurrency, int fullQueueCapacity, int fullPipelineSize,
             long fullTransactionBytes, Duration leaseSafetyMargin, Duration metricInterval) {
@@ -812,7 +815,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         }
 
         private void updateChannel(String status) {
-            sync.upsertChannel(new SyncChannelCheckpoint(null, task.id(), spec.channel(),
+            sync.upsertChannel(new WorkerSyncChannelCheckpoint(task.id(), spec.channel(),
                     sourceEndpoint.host() + ":" + sourceEndpoint.port(), slotRangesJson(spec.slots()),
                     replicationId, received.get(), applied.get(), status, Instant.now(), Instant.now()));
         }
@@ -829,7 +832,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
             long gap = Math.max(0, received.get() - applied.get());
             Long lag = lastHeartbeatMillis == 0 ? null : (now.toEpochMilli() - lastHeartbeatMillis) / 1000;
             Long eta = targetRate > sourceRate ? gap / Math.max(1, targetRate - sourceRate) : null;
-            sync.saveMetric(new SyncMetricSnapshot(null, task.id(), spec.channel(), lag,
+            sync.saveMetric(new WorkerSyncMetricSnapshot(task.id(), spec.channel(), lag,
                     targetRate == 0 ? null : gap / targetRate, gap, 0, sourceRate, targetRate, eta,
                     lag == null ? "OFFSET_THROUGHPUT" : "TIMESTAMP_WATERMARK",
                     lag == null ? "MEDIUM" : "HIGH", now));

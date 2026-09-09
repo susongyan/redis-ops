@@ -1,8 +1,8 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.sync.SyncPrecheckReport;
 import io.github.redisops.sync.contract.SyncContractStatus;
 import io.github.redisops.sync.worker.domain.WorkerSyncTask;
+import io.github.redisops.sync.worker.domain.WorkerSyncPrecheckReport;
 import io.github.redisops.sync.worker.persistence.WorkerSyncStatePort;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -32,7 +32,7 @@ public class NativeSyncCoordinator {
 
     public void precheck(long taskId) {
         WorkerSyncTask task = service.get(taskId);
-        SyncPrecheckReport report = prechecks.execute(task);
+        WorkerSyncPrecheckReport report = prechecks.execute(task);
         service.engineTransition(taskId, task.version(),
                 report.validAt(java.time.Instant.now()) ? SyncContractStatus.READY : SyncContractStatus.FAILED, null,
                 null,

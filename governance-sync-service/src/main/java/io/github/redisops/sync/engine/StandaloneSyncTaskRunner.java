@@ -6,6 +6,10 @@ import io.github.redisops.domain.sync.*;
 import io.github.redisops.sync.contract.SyncContractStatus;
 import io.github.redisops.sync.worker.domain.WorkerSyncRuntime;
 import io.github.redisops.sync.worker.domain.WorkerSyncTask;
+import io.github.redisops.sync.worker.domain.WorkerRuntimeObservation;
+import io.github.redisops.sync.worker.domain.WorkerSyncChannelCheckpoint;
+import io.github.redisops.sync.worker.domain.WorkerSyncMetricSnapshot;
+import io.github.redisops.sync.worker.persistence.WorkerSyncExecutionPort;
 import io.github.redisops.sync.protocol.*;
 
 import java.io.IOException;
@@ -29,7 +33,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private final WorkerSyncTask originalTask;
     private final boolean recovery;
     private final WorkerRedisConnectionProfilePort profiles;
-    private final SyncRepository sync;
+    private final WorkerSyncExecutionPort sync;
     private final SyncRunnerStateReporter reporter;
     private final SpoolKeyProvider spoolKeys;
     private final RedisDataEndpointResolver endpoints;
@@ -91,7 +95,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private final byte[] heartbeatKey;
 
     StandaloneSyncTaskRunner(WorkerSyncTask task, boolean recovery, WorkerRedisConnectionProfilePort profiles,
-            SyncRepository sync, SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys,
+            WorkerSyncExecutionPort sync, SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys,
             RedisDataEndpointResolver endpoints, ObjectMapper json,
             Path dataDirectory, long segmentBytes, Duration connectTimeout, int fullApplyConcurrency,
             int fullApplyQueueCapacity, int fullApplyPipelineSize, long fullApplyTransactionMaxBytes,
@@ -613,7 +617,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     }
 
     private void updateChannel(String status) {
-        sync.upsertChannel(new SyncChannelCheckpoint(null, originalTask.id(), CHANNEL,
+        sync.upsertChannel(new WorkerSyncChannelCheckpoint(originalTask.id(), CHANNEL,
                 sourceEndpoint.host() + ":" + sourceEndpoint.port(), null, replicationId, receivedOffset.get(),
                 appliedOffset.get(), status, Instant.now(), Instant.now()));
     }
@@ -650,7 +654,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             reportedTimestampLag = 0L;
         Long estimatedLag = targetBytesPerSecond > 0 ? gap / targetBytesPerSecond : null;
         Long eta = calculateCatchUpEta(gap, sourceBytesPerSecond, targetBytesPerSecond);
-        sync.saveMetric(new SyncMetricSnapshot(null, originalTask.id(), CHANNEL,
+        sync.saveMetric(new WorkerSyncMetricSnapshot(originalTask.id(), CHANNEL,
                 reportedTimestampLag, estimatedLag, gap, 0,
                 sourceBytesPerSecond, targetBytesPerSecond, eta,
                 "OFFSET_THROUGHPUT", gap == 0 ? "HIGH" : "MEDIUM", now));
@@ -883,10 +887,10 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                 || error instanceof LeaseGuard.LeaseLostException) {
             phase = "LEASE_LOST";
             leaseGuard.revoke();
-            sync.updateRuntimeObservation(originalTask.id(),
+            sync.updateRuntimeObservation(new WorkerRuntimeObservation(originalTask.id(),
                     targetFence == null ? "" : targetFence.workerId(), "LEASE_LOST",
                     targetFence == null ? null : targetFence.generation(),
-                    targetFence == null ? null : targetFence.publishedAt(), null, safe(error));
+                    targetFence == null ? null : targetFence.publishedAt(), null, safe(error)));
             sync.appendTaskEvent(originalTask.id(), "sync:runner",
                     "OLD_WORKER_REJECTED generation=" + generation + " reason=" + safe(error));
             closeSource();
@@ -894,8 +898,8 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         }
         if (error instanceof SyncBlockedException blocked) {
             phase = "BLOCKED";
-            sync.updateRuntimeObservation(originalTask.id(), targetFence.workerId(), "BLOCKED",
-                    targetFence.generation(), targetFence.publishedAt(), blocked.reason(), safe(error));
+            sync.updateRuntimeObservation(new WorkerRuntimeObservation(originalTask.id(), targetFence.workerId(),
+                    "BLOCKED", targetFence.generation(), targetFence.publishedAt(), blocked.reason(), safe(error)));
             sync.appendTaskEvent(originalTask.id(), "sync:" + targetFence.workerId(),
                     ("BLOCKED_REQUIRES_FULL_RESYNC".equals(blocked.reason()) ? "FULL_RESYNC_REQUIRED" : "BLOCKED")
                             + " generation=" + generation + " reason=" + blocked.reason());
@@ -937,8 +941,8 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             }
             checkpointAtFence = publication.checkpoint();
             String action = spoolFallback ? "RECOVERING_PSYNC" : recoveryAction;
-            sync.updateRuntimeObservation(originalTask.id(), targetFence.workerId(), "FENCE_PUBLISHED",
-                    targetFence.generation(), targetFence.publishedAt(), action, null);
+            sync.updateRuntimeObservation(new WorkerRuntimeObservation(originalTask.id(), targetFence.workerId(),
+                    "FENCE_PUBLISHED", targetFence.generation(), targetFence.publishedAt(), action, null));
             sync.appendTaskEvent(originalTask.id(), "sync:" + targetFence.workerId(),
                     "FENCE_PUBLISHED generation=" + targetFence.generation()
                             + " runtime=" + targetFence.runtimeId() + " recovery=" + action);
@@ -968,8 +972,8 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
 
     private void reportRecovery(String runtimePhase, String event) {
         phase = runtimePhase;
-        sync.updateRuntimeObservation(originalTask.id(), targetFence.workerId(), runtimePhase,
-                targetFence.generation(), targetFence.publishedAt(), runtimePhase, null);
+        sync.updateRuntimeObservation(new WorkerRuntimeObservation(originalTask.id(), targetFence.workerId(),
+                runtimePhase, targetFence.generation(), targetFence.publishedAt(), runtimePhase, null));
         sync.appendTaskEvent(originalTask.id(), "sync:" + targetFence.workerId(),
                 event + " generation=" + targetFence.generation() + " runtime=" + targetFence.runtimeId());
     }

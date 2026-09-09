@@ -3,7 +3,9 @@ package io.github.redisops.sync.engine;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.redisops.domain.asset.*;
 import io.github.redisops.domain.sync.*;
+import io.github.redisops.sync.worker.domain.WorkerSyncPrecheckReport;
 import io.github.redisops.sync.worker.domain.WorkerSyncTask;
+import io.github.redisops.sync.worker.persistence.WorkerSyncExecutionPort;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -17,28 +19,28 @@ public class SyncPrecheckExecutor {
     private final ClusterRepository clusters;
     private final WorkerRedisConnectionProfilePort profiles;
     private final TopologyDiscoveryPort topology;
-    private final SyncRepository sync;
+    private final WorkerSyncExecutionPort execution;
     private final ObjectMapper json;
     private final RedisDataEndpointResolver endpoints;
     private final Path dataDirectory;
     private final long segmentBytes;
 
     public SyncPrecheckExecutor(ClusterRepository clusters, WorkerRedisConnectionProfilePort profiles,
-            TopologyDiscoveryPort topology, SyncRepository sync, ObjectMapper json,
+            TopologyDiscoveryPort topology, WorkerSyncExecutionPort execution, ObjectMapper json,
             RedisDataEndpointResolver endpoints,
             @Value("${sync.engine.data-dir:./data/sync}") Path dataDirectory,
             @Value("${sync.engine.segment-bytes:268435456}") long segmentBytes) {
         this.clusters = clusters;
         this.profiles = profiles;
         this.topology = topology;
-        this.sync = sync;
+        this.execution = execution;
         this.json = json;
         this.endpoints = endpoints;
         this.dataDirectory = dataDirectory;
         this.segmentBytes = segmentBytes;
     }
 
-    public SyncPrecheckReport execute(WorkerSyncTask task) {
+    public WorkerSyncPrecheckReport execute(WorkerSyncTask task) {
         List<Map<String, Object>> checks = new ArrayList<>();
         boolean passed = true;
         passed &= check(checks, "DISTINCT_CLUSTERS", () -> distinct(task));
@@ -60,7 +62,7 @@ public class SyncPrecheckExecutor {
         } catch (Exception e) {
             throw new IllegalStateException("cannot serialize precheck report", e);
         }
-        return sync.savePrecheck(new SyncPrecheckReport(null, task.id(), passed ? "PASSED" : "FAILED", report,
+        return execution.savePrecheck(new WorkerSyncPrecheckReport(task.id(), passed ? "PASSED" : "FAILED", report,
                 checked, checked.plusSeconds(600)));
     }
     private String active(long id) {

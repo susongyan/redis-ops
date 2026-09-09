@@ -5,6 +5,7 @@ import io.github.redisops.domain.sync.*;
 import io.github.redisops.sync.contract.SyncContractStatus;
 import io.github.redisops.sync.worker.domain.WorkerSyncRuntime;
 import io.github.redisops.sync.worker.domain.WorkerSyncTask;
+import io.github.redisops.sync.worker.persistence.WorkerSyncExecutionPort;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.XReadArgs;
@@ -204,7 +205,7 @@ class StandaloneSyncTaskRunnerIntegrationTest {
 
     private StandaloneSyncTaskRunner runner(WorkerSyncTask task, boolean recovery,
             WorkerRedisConnectionProfilePort profiles, String keyRing) {
-        return new StandaloneSyncTaskRunner(task, recovery, profiles, mock(SyncRepository.class),
+        return new StandaloneSyncTaskRunner(task, recovery, profiles, mock(WorkerSyncExecutionPort.class),
                 mock(SyncRunnerStateReporter.class), new SpoolKeyProvider(keyRing),
                 new RedisDataEndpointResolver(5000), new ObjectMapper(),
                 dataDirectory, 1024 * 1024, Duration.ofSeconds(5), 4, 32, 8,
