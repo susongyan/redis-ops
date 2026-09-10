@@ -4,6 +4,7 @@ import io.github.redisops.sync.contract.SyncContractStatus;
 import io.github.redisops.sync.worker.domain.WorkerRuntimeObservation;
 import io.github.redisops.sync.worker.domain.WorkerSyncTask;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;

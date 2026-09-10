@@ -3,7 +3,6 @@ package io.github.redisops.sync.engine;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import io.github.redisops.domain.job.JobRepository;
 
 import java.time.Duration;
 import java.util.List;
@@ -21,10 +20,6 @@ public class SyncControlWorker {
         this.jobs = jobs;
         this.coordinator = coordinator;
         this.owner = coordinator.instanceId() + ":control:" + UUID.randomUUID();
-    }
-    /** Compatibility constructor while Worker persistence is extracted. */
-    public SyncControlWorker(JobRepository jobs, NativeSyncCoordinator coordinator) {
-        this(new PlatformWorkerControlJobAdapter(jobs), coordinator);
     }
     @Scheduled(fixedDelayString = "${sync.engine.poll-interval-ms:500}")
     public void poll() {
