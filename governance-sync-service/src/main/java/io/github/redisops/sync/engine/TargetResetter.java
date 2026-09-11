@@ -1,6 +1,9 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.asset.*;
+import io.github.redisops.sync.worker.domain.WorkerClusterView;
+import io.github.redisops.sync.worker.domain.WorkerRedisNode;
+import io.github.redisops.sync.worker.persistence.WorkerAssetReadPort;
+import io.github.redisops.sync.worker.persistence.WorkerTopologyPort;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import org.springframework.stereotype.Component;
@@ -12,25 +15,25 @@ import java.util.List;
 
 @Component
 public class TargetResetter {
-    private final ClusterRepository clusters;
+    private final WorkerAssetReadPort clusters;
     private final WorkerRedisConnectionProfilePort profiles;
-    private final TopologyDiscoveryPort topology;
-    public TargetResetter(ClusterRepository clusters, WorkerRedisConnectionProfilePort profiles,
-            TopologyDiscoveryPort topology) {
+    private final WorkerTopologyPort topology;
+    public TargetResetter(WorkerAssetReadPort clusters, WorkerRedisConnectionProfilePort profiles,
+            WorkerTopologyPort topology) {
         this.clusters = clusters;
         this.profiles = profiles;
         this.topology = topology;
     }
     public List<ResetResult> flush(long clusterId, int database) {
-        RedisCluster cluster = clusters.findById(clusterId).orElseThrow();
+        WorkerClusterView cluster = clusters.get(clusterId);
         List<ResetResult> results = new ArrayList<>();
         try (WorkerRedisConnectionProfile profile = profiles.get(clusterId)) {
-            if (cluster.mode() == ClusterMode.CLUSTER) {
-                for (RedisNode node : topology.discover(cluster))
+            if (cluster.mode() == WorkerClusterMode.CLUSTER) {
+                for (WorkerRedisNode node : topology.discover(cluster))
                     if ("MASTER".equals(node.role()))
                         results.add(flushEndpoint(profile, node.host(), node.port(), 0));
-            } else if (cluster.mode() == ClusterMode.SENTINEL) {
-                RedisNode master = topology.discover(cluster).stream().filter(x -> "MASTER".equals(x.role()))
+            } else if (cluster.mode() == WorkerClusterMode.SENTINEL) {
+                WorkerRedisNode master = topology.discover(cluster).stream().filter(x -> "MASTER".equals(x.role()))
                         .findFirst().orElseThrow();
                 results.add(flushEndpoint(profile, master.host(), master.port(), database));
             } else {

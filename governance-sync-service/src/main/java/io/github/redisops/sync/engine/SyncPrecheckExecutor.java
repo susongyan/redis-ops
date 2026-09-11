@@ -1,11 +1,13 @@
 package io.github.redisops.sync.engine;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.redisops.domain.asset.*;
 import io.github.redisops.domain.sync.*;
 import io.github.redisops.sync.worker.domain.WorkerSyncPrecheckReport;
 import io.github.redisops.sync.worker.domain.WorkerSyncTask;
+import io.github.redisops.sync.worker.domain.WorkerClusterView;
+import io.github.redisops.sync.worker.persistence.WorkerAssetReadPort;
 import io.github.redisops.sync.worker.persistence.WorkerSyncExecutionPort;
+import io.github.redisops.sync.worker.persistence.WorkerTopologyPort;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -16,17 +18,17 @@ import java.util.*;
 
 @Component
 public class SyncPrecheckExecutor {
-    private final ClusterRepository clusters;
+    private final WorkerAssetReadPort clusters;
     private final WorkerRedisConnectionProfilePort profiles;
-    private final TopologyDiscoveryPort topology;
+    private final WorkerTopologyPort topology;
     private final WorkerSyncExecutionPort execution;
     private final ObjectMapper json;
     private final RedisDataEndpointResolver endpoints;
     private final Path dataDirectory;
     private final long segmentBytes;
 
-    public SyncPrecheckExecutor(ClusterRepository clusters, WorkerRedisConnectionProfilePort profiles,
-            TopologyDiscoveryPort topology, WorkerSyncExecutionPort execution, ObjectMapper json,
+    public SyncPrecheckExecutor(WorkerAssetReadPort clusters, WorkerRedisConnectionProfilePort profiles,
+            WorkerTopologyPort topology, WorkerSyncExecutionPort execution, ObjectMapper json,
             RedisDataEndpointResolver endpoints,
             @Value("${sync.engine.data-dir:./data/sync}") Path dataDirectory,
             @Value("${sync.engine.segment-bytes:268435456}") long segmentBytes) {
@@ -66,13 +68,13 @@ public class SyncPrecheckExecutor {
                 checked, checked.plusSeconds(600)));
     }
     private String active(long id) {
-        RedisCluster cluster = clusters.findById(id).orElseThrow();
-        if (cluster.status() != ClusterStatus.ACTIVE)
+        WorkerClusterView cluster = clusters.get(id);
+        if (!cluster.active())
             throw new IllegalStateException("cluster is not ACTIVE");
         return cluster.mode() + " " + cluster.redisVersion();
     }
     private String discover(long id) {
-        RedisCluster cluster = clusters.findById(id).orElseThrow();
+        WorkerClusterView cluster = clusters.get(id);
         try (WorkerRedisConnectionProfile ignored = profiles.get(id)) {
             return topology.discover(cluster).size() + " nodes";
         }
@@ -83,8 +85,8 @@ public class SyncPrecheckExecutor {
         return task.sourceClusterId() + " -> " + task.targetClusterId();
     }
     private String compatibleVersions(WorkerSyncTask task) {
-        RedisCluster source = clusters.findById(task.sourceClusterId()).orElseThrow();
-        RedisCluster target = clusters.findById(task.targetClusterId()).orElseThrow();
+        WorkerClusterView source = clusters.get(task.sourceClusterId());
+        WorkerClusterView target = clusters.get(task.targetClusterId());
         int[] sourceVersion = version(source.redisVersion());
         int[] targetVersion = version(target.redisVersion());
         supportedVersion(sourceVersion, "source");
@@ -96,22 +98,22 @@ public class SyncPrecheckExecutor {
         return source.redisVersion() + " -> " + target.redisVersion();
     }
     private String validDatabases(WorkerSyncTask task) {
-        RedisCluster source = clusters.findById(task.sourceClusterId()).orElseThrow();
-        RedisCluster target = clusters.findById(task.targetClusterId()).orElseThrow();
+        WorkerClusterView source = clusters.get(task.sourceClusterId());
+        WorkerClusterView target = clusters.get(task.targetClusterId());
         validateDatabase(source.mode(), task.sourceDb(), "sourceDb");
         validateDatabase(target.mode(), task.targetDb(), "targetDb");
         return task.sourceDb() + " -> " + task.targetDb();
     }
     private String supportedTopology(WorkerSyncTask task) throws Exception {
-        RedisCluster source = clusters.findById(task.sourceClusterId()).orElseThrow();
-        RedisCluster target = clusters.findById(task.targetClusterId()).orElseThrow();
+        WorkerClusterView source = clusters.get(task.sourceClusterId());
+        WorkerClusterView target = clusters.get(task.targetClusterId());
         int sourceMasters = clusterMasters(task.sourceClusterId(), source.mode());
         int targetMasters = clusterMasters(task.targetClusterId(), target.mode());
         return source.mode() + " (" + sourceMasters + " channels) -> " + target.mode()
                 + " (" + targetMasters + " targets)";
     }
-    private int clusterMasters(long clusterId, ClusterMode mode) throws Exception {
-        if (mode != ClusterMode.CLUSTER)
+    private int clusterMasters(long clusterId, WorkerClusterMode mode) throws Exception {
+        if (mode != WorkerClusterMode.CLUSTER)
             return 1;
         try (WorkerRedisConnectionProfile profile = profiles.get(clusterId)) {
             return new HashSet<>(endpoints.resolveClusterMasters(profile).stream()
@@ -151,8 +153,8 @@ public class SyncPrecheckExecutor {
 
     private String commandPolicySummary(WorkerSyncTask task) throws Exception {
         SyncCommandPolicy policy = commandPolicy(task);
-        RedisCluster target = clusters.findById(task.targetClusterId()).orElseThrow();
-        long blocked = SyncCommandCapabilities.all(target.mode() == ClusterMode.CLUSTER, policy).stream()
+        WorkerClusterView target = clusters.get(task.targetClusterId());
+        long blocked = SyncCommandCapabilities.all(target.mode() == WorkerClusterMode.CLUSTER, policy).stream()
                 .filter(SyncCommandCapability::currentlyBlocked)
                 .count();
         return "policy=" + policy.policyVersion() + ", blockedKnownCommands=" + blocked
@@ -161,14 +163,14 @@ public class SyncPrecheckExecutor {
 
     private void commandHistoryRisk(List<Map<String, Object>> checks, WorkerSyncTask task) {
         try {
-            RedisCluster sourceCluster = clusters.findById(task.sourceClusterId()).orElseThrow();
-            RedisCluster targetCluster = clusters.findById(task.targetClusterId()).orElseThrow();
+            WorkerClusterView sourceCluster = clusters.get(task.sourceClusterId());
+            WorkerClusterView targetCluster = clusters.get(task.targetClusterId());
             SyncCommandPolicy policy = commandPolicy(task);
             Map<String, Long> stats = sourceCommandStats(task, sourceCluster.mode());
             List<Map<String, Object>> risks = stats.entrySet().stream()
                     .map(entry -> Map.entry(entry,
                             SyncCommandCapabilities.classify(entry.getKey().split(" ", 2)[0],
-                                    targetCluster.mode() == ClusterMode.CLUSTER, policy)))
+                                    targetCluster.mode() == WorkerClusterMode.CLUSTER, policy)))
                     .filter(entry -> entry.getValue().currentlyBlocked())
                     .sorted(Comparator.<Map.Entry<Map.Entry<String, Long>, SyncCommandCapability>>comparingLong(
                             entry -> entry.getKey().getValue()).reversed())
@@ -193,10 +195,10 @@ public class SyncPrecheckExecutor {
         }
     }
 
-    private Map<String, Long> sourceCommandStats(WorkerSyncTask task, ClusterMode mode) throws Exception {
+    private Map<String, Long> sourceCommandStats(WorkerSyncTask task, WorkerClusterMode mode) throws Exception {
         Map<String, Long> aggregated = new LinkedHashMap<>();
         try (WorkerRedisConnectionProfile profile = profiles.get(task.sourceClusterId())) {
-            if (mode == ClusterMode.CLUSTER) {
+            if (mode == WorkerClusterMode.CLUSTER) {
                 Set<RedisEndpoint> masters = new LinkedHashSet<>();
                 for (RedisDataEndpointResolver.ClusterMaster master : endpoints.resolveClusterMasters(profile))
                     masters.add(master.endpoint());
@@ -236,8 +238,8 @@ public class SyncPrecheckExecutor {
         int major = Integer.compare(left[0], right[0]);
         return major == 0 ? Integer.compare(left[1], right[1]) : major;
     }
-    private static void validateDatabase(ClusterMode mode, int database, String field) {
-        if (database < 0 || mode == ClusterMode.CLUSTER && database != 0)
+    private static void validateDatabase(WorkerClusterMode mode, int database, String field) {
+        if (database < 0 || mode == WorkerClusterMode.CLUSTER && database != 0)
             throw new IllegalStateException(field + " is invalid for " + mode);
     }
     private boolean check(List<Map<String, Object>> checks, String name, Checked action) {
