@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  backend:
+  platform:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,8 +18,20 @@ jobs:
           distribution: temurin
           java-version: "17"
           cache: maven
-      - name: Verify Java modules, tests and Spotless
-        run: mvn --batch-mode --no-transfer-progress clean verify
+      - name: Verify Platform modules
+        run: ./scripts/build-platform.sh
+
+  sync-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - name: Verify Sync Worker modules
+        run: ./scripts/build-sync-worker.sh
 
   frontend:
     runs-on: ubuntu-latest

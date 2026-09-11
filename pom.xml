@@ -31,6 +31,7 @@
         <mybatis-spring-boot.version>3.0.4</mybatis-spring-boot.version>
         <flyway.version>10.20.1</flyway.version>
         <spotless-maven-plugin.version>2.46.1</spotless-maven-plugin.version>
+        <redis-ops.formatter.file>${maven.multiModuleProjectDirectory}/config/formatter/eclipse-java-redis-ops.xml</redis-ops.formatter.file>
     </properties>
 
     <dependencyManagement>
@@ -58,7 +59,7 @@
                     <java>
                         <eclipse>
                             <version>4.33</version>
-                            <file>${maven.multiModuleProjectDirectory}/config/formatter/eclipse-java-redis-ops.xml</file>
+                            <file>${redis-ops.formatter.file}</file>
                         </eclipse>
                         <removeUnusedImports/>
                         <trimTrailingWhitespace/>
