@@ -10,6 +10,7 @@ import io.github.redisops.domain.audit.AuditRepository;
 import io.github.redisops.domain.job.JobRepository;
 import io.github.redisops.domain.relation.*;
 import io.github.redisops.domain.sync.*;
+import io.github.redisops.sync.contract.SyncCommandPolicy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

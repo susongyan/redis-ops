@@ -2,7 +2,7 @@ package io.github.redisops.sync.engine;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.redisops.domain.sync.*;
+import io.github.redisops.sync.contract.SyncCommandPolicy;
 import io.github.redisops.sync.contract.SyncContractStatus;
 import io.github.redisops.sync.worker.domain.WorkerSyncRuntime;
 import io.github.redisops.sync.worker.domain.WorkerSyncTask;

@@ -1,7 +1,8 @@
 package io.github.redisops.sync.protocol;
 
-import io.github.redisops.domain.sync.SyncCommandCapabilities;
-import io.github.redisops.domain.sync.SyncCommandPolicy;
+import io.github.redisops.sync.contract.SyncCommandCapabilities;
+import io.github.redisops.sync.contract.SyncCommandPolicy;
+
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 

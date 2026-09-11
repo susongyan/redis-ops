@@ -1,7 +1,9 @@
 package io.github.redisops.sync.engine;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.redisops.domain.sync.*;
+import io.github.redisops.sync.contract.SyncCommandCapabilities;
+import io.github.redisops.sync.contract.SyncCommandCapability;
+import io.github.redisops.sync.contract.SyncCommandPolicy;
 import io.github.redisops.sync.worker.domain.WorkerSyncPrecheckReport;
 import io.github.redisops.sync.worker.domain.WorkerSyncTask;
 import io.github.redisops.sync.worker.domain.WorkerClusterView;

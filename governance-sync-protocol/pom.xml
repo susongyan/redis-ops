@@ -14,16 +14,6 @@
             <version>${project.version}</version>
         </dependency>
         <dependency>
-            <groupId>io.github.redisops</groupId>
-            <artifactId>governance-domain</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>io.github.redisops</groupId>
-            <artifactId>governance-common</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>

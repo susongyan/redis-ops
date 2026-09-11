@@ -1,4 +1,4 @@
-package io.github.redisops.domain.sync;
+package io.github.redisops.sync.contract;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -31,5 +31,12 @@ class SyncCommandPolicyTest {
                 () -> new SyncCommandPolicy(false, true, Set.of("DEL *"), "v1"));
         assertThrows(IllegalArgumentException.class,
                 () -> new SyncCommandPolicy(false, true, Set.of(), "v2"));
+    }
+
+    @Test
+    void unknownCommandsFailClosed() {
+        var capability = SyncCommandCapabilities.classify("FUTURECMD", false, SyncCommandPolicy.strict());
+        assertTrue(capability.currentlyBlocked());
+        assertEquals("UNKNOWN_BLOCKED", capability.category());
     }
 }

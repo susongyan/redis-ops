@@ -1,6 +1,6 @@
 package io.github.redisops.sync.protocol;
 
-import io.github.redisops.domain.sync.SyncCommandPolicy;
+import io.github.redisops.sync.contract.SyncCommandPolicy;
 import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -8,6 +8,12 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CommandPlannerTest {
+    @Test
+    void blocksUnknownCommands() {
+        CommandPlanner planner = new CommandPlanner(new KeyFilter(List.of("*"), List.of()), false);
+        assertEquals(CommandPlan.Disposition.BLOCK, planner.plan(command("FUTURECMD", "key")).disposition());
+    }
+
     @Test
     void excludesEveryRedisOpsInternalNamespaceKey() {
         CommandPlanner planner = new CommandPlanner(new KeyFilter(List.of("*"), List.of()), false);
