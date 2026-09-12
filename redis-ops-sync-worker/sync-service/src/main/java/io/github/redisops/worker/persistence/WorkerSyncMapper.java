@@ -25,13 +25,10 @@ public interface WorkerSyncMapper {
     @Select("SELECT " + TASK_COLUMNS + " FROM sync_task WHERE id=#{taskId}")
     WorkerSyncTask findTask(@Param("taskId") long taskId);
 
-    @Select("""
-            SELECT """ + TASK_COLUMNS + """
-            FROM sync_task t JOIN sync_runtime r ON r.task_id=t.id
-            WHERE r.lease_owner IS NOT NULL AND r.lease_until<CURRENT_TIMESTAMP(3)
-              AND t.status IN ('STARTING','FULL_SYNCING','INCR_SYNCING','CAUGHT_UP','RESUMING')
-            ORDER BY r.lease_until,t.id LIMIT #{limit}
-            """)
+    @Select("SELECT " + TASK_COLUMNS + " FROM sync_task WHERE id IN (SELECT task_id FROM sync_runtime "
+            + "WHERE lease_owner IS NOT NULL AND lease_until<CURRENT_TIMESTAMP(3)) "
+            + "AND status IN ('STARTING','FULL_SYNCING','INCR_SYNCING','CAUGHT_UP','RESUMING') "
+            + "ORDER BY (SELECT lease_until FROM sync_runtime WHERE task_id=sync_task.id),id LIMIT #{limit}")
     List<WorkerSyncTask> findExpiredRecoverableTasks(@Param("limit") int limit);
 
     @Select("""

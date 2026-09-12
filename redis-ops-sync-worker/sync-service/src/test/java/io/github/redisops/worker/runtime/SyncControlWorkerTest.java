@@ -10,6 +10,20 @@ import static org.mockito.Mockito.*;
 
 class SyncControlWorkerTest {
     @Test
+    void failedResumeIsRetriedInsteadOfCompletingControlJob() {
+        WorkerControlJobPort jobs = mock(WorkerControlJobPort.class);
+        NativeSyncCoordinator coordinator = mock(NativeSyncCoordinator.class);
+        when(coordinator.instanceId()).thenReturn("worker-1");
+        WorkerControlJob job = new WorkerControlJob(7L, "SYNC_RESUME", 1L, "lease");
+        when(jobs.claimForRuntime(eq("SYNC_RESUME"), anyString(), anyString(), any(), eq(true)))
+                .thenReturn(Optional.of(job));
+        doThrow(new IllegalStateException("resume failed")).when(coordinator).resume(1L);
+        new SyncControlWorker(jobs, coordinator).poll();
+        verify(jobs).retryOrFail(7L, "lease", "resume failed");
+        verify(jobs, never()).complete(anyLong(), anyString());
+    }
+
+    @Test
     void routesRunningControlsToRuntimeOwnerAndAllowsOnlyRecoveryActionsToTakeOver() {
         WorkerControlJobPort jobs = mock(WorkerControlJobPort.class);
         NativeSyncCoordinator coordinator = mock(NativeSyncCoordinator.class);

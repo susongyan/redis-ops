@@ -11,7 +11,7 @@ import java.util.Arrays;
 
 /** Worker-owned connection profile provider; credential material never leaves the returned closeable profile. */
 @Repository
-public final class WorkerRedisConnectionProfileProvider implements WorkerRedisConnectionProfilePort {
+public class WorkerRedisConnectionProfileProvider implements WorkerRedisConnectionProfilePort {
     private final WorkerAssetMapper mapper;
     private final WorkerAssetReadPort assets;
     private final WorkerCredentialDecryptor decryptor;

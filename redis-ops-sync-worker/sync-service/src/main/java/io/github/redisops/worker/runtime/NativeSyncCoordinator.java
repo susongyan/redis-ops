@@ -61,9 +61,10 @@ public class NativeSyncCoordinator {
                         "sync:" + instanceId);
             if (resetResults.stream().anyMatch(result -> !result.success()))
                 throw new IllegalStateException("one or more target Redis nodes failed to flush");
-            runners.start(taskId);
+            // Publish before starting channels: a runner may report its phase synchronously.
             service.engineTransition(taskId, task.version(), SyncContractStatus.FULL_SYNCING, null, null, null,
-                    "target reset completed; replication runner started", "sync:" + instanceId);
+                    "target reset completed; starting replication runner", "sync:" + instanceId);
+            runners.start(taskId);
         } catch (RuntimeException error) {
             runners.abort(taskId, error);
             failIfPossible(taskId, error);
@@ -76,10 +77,16 @@ public class NativeSyncCoordinator {
     }
     public void resume(long taskId) {
         WorkerSyncTask task = service.get(taskId);
-        runners.resume(task, instanceId, leaseSeconds);
-        transition(taskId,
-                task.fullSyncEpoch() == null ? SyncContractStatus.FULL_SYNCING : SyncContractStatus.INCR_SYNCING,
-                "sync resumed");
+        try {
+            transition(taskId,
+                    task.fullSyncEpoch() == null ? SyncContractStatus.FULL_SYNCING : SyncContractStatus.INCR_SYNCING,
+                    "resuming sync runner");
+            runners.resume(task, instanceId, leaseSeconds);
+        } catch (RuntimeException error) {
+            runners.abort(taskId, error);
+            failIfPossible(taskId, error);
+            throw error;
+        }
     }
     public void recover(WorkerSyncTask task) {
         if (runners.isManaged(task.id()))

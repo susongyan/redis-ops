@@ -20,6 +20,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 class WorkerRedisConnectionProfileProviderTest {
+    @Test
+    void supportsSpringClassBasedRepositoryProxy() {
+        org.springframework.aop.framework.ProxyFactory factory = new org.springframework.aop.framework.ProxyFactory(
+                provider);
+        factory.setProxyTargetClass(true);
+        assertThat(factory.getProxy()).isInstanceOf(WorkerRedisConnectionProfileProvider.class);
+    }
+
     private static final byte[] KEY = new byte[32];
     private final WorkerAssetMapper mapper = mock(WorkerAssetMapper.class);
     private final WorkerAssetReadPort assets = mock(WorkerAssetReadPort.class);

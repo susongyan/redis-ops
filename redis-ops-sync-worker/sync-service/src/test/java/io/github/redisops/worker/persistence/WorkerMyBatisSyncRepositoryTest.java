@@ -14,6 +14,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 class WorkerMyBatisSyncRepositoryTest {
+    @Test
+    void recoveryQueryKeepsSqlTokenBoundariesAndUnambiguousTaskColumns() {
+        org.apache.ibatis.session.Configuration configuration = new org.apache.ibatis.session.Configuration();
+        configuration.addMapper(WorkerSyncMapper.class);
+        String sql = configuration.getMappedStatement(WorkerSyncMapper.class.getName() + ".findExpiredRecoverableTasks")
+                .getBoundSql(java.util.Map.of("limit", 10)).getSql();
+        assertThat(sql).startsWith("SELECT id,").contains("finished_at FROM sync_task WHERE id IN (")
+                .contains("lease_until<CURRENT_TIMESTAMP(3)").contains("LIMIT ?");
+    }
+
     private final WorkerSyncMapper mapper = mock(WorkerSyncMapper.class);
     private final WorkerMyBatisSyncRepository repository = new WorkerMyBatisSyncRepository(mapper);
 
