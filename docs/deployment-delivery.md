@@ -7,7 +7,7 @@
 ## 1. 发布边界与文件清单
 
 以审核过的 commit/tag 为发布输入，不直接打包有未提交文件的工作区。
-本文编写时，已提交 migration 为 V1–V26；本地 V27/V28 是未提交分析功能，不属于这个发布基线。
+本次发布包含 V1–V28；完整初始化 SQL 快照仍为 V26，Platform 首次启动会继续执行 V27/V28 分析表迁移。
 将来以所选发布 JAR 内实际包含的 migration 为准，不在运维脚本中写死最高版本。
 
 | 交付件 | 源码位置 | 安装位置示例 |
@@ -92,6 +92,8 @@ systemd 可直接使用上述命令作为 ExecStart，设置 User/Group、Workin
 脚本会通过命令行传入 profile、Platform 端口；只使用外部 YAML 时优先采用本节直接启动方式。
 
 ## 5. 配置原则与安全边界
+
+分析 Agent 按请求调用，无启用开关；外部地址配置、监控采集开关与间隔见 [配置说明](runtime-switches.md)。
 
 - Spring 属性是统一入口：数据库密码直接写 `spring.datasource.password`，密钥环写 `redis-ops.credential.keys`。
   可以放外部配置或由配置中心注入，不要求必须使用环境变量。

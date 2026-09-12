@@ -20,7 +20,7 @@ public class AesGcmNotificationSecretProtector implements NotificationSecretProt
     private final SecureRandom random = new SecureRandom();
 
     public AesGcmNotificationSecretProtector(
-            @Value("${redis-ops.credential.keys:${REDIS_OPS_CREDENTIAL_KEYS:}}") String configured) {
+            @Value("${redis-ops.credential.keys:}") String configured) {
         if (configured == null || configured.isBlank())
             throw new IllegalStateException("REDIS_OPS_CREDENTIAL_KEYS is required");
         for (String item : configured.split(",")) {

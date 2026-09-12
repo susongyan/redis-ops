@@ -1,0 +1,14 @@
+CREATE TABLE IF NOT EXISTS analysis_agent_profile (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(128) NOT NULL,
+    protocol VARCHAR(32) NOT NULL,
+    endpoint VARCHAR(512) NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    supported_types_json JSON NOT NULL,
+    timeout_ms INT NOT NULL DEFAULT 5000,
+    priority INT NOT NULL DEFAULT 100,
+    version BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    UNIQUE KEY uk_analysis_agent_name (name)
+);

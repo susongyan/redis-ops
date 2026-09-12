@@ -1,6 +1,9 @@
 spring:
   profiles:
     default: dev
+  # Keep Worker configuration in Spring Config Data for future Apollo use.
+  config:
+    import: optional:file:./config/
   application:
     name: redis-sync-service
   datasource:
@@ -19,7 +22,8 @@ worker:
   enabled: false
 redis-ops:
   credential:
-    keys: ${REDIS_OPS_CREDENTIAL_KEYS:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+    # Supplied by external Spring configuration; no default key is permitted.
+    keys: ${REDIS_OPS_CREDENTIAL_KEYS:}
 sync:
   engine:
     enabled: ${SYNC_ENGINE_ENABLED:true}

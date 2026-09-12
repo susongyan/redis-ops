@@ -65,4 +65,4 @@ Platform JAR 作为 Flyway/MySQL 客户端依赖来源）。脚本只取 HEAD �
 验证覆盖：完整迁移链、完整 SQL 在另一空库初始化、全部业务表结构与数据对比、Flyway validate、
 baseline 后 migrate 不重复执行 V1–V26。实际结果与文件校验和见 manifest；生产仍应先做 UAT 初始化验收。
 
-当前包不包含未提交的 V27/V28。若发布版本包含新 migration，必须重新审核发布范围，不能把当前快照描述为更高版本。
+当前快照只覆盖 V26，不包含 V27/V28 分析表；本次 Platform 发布启动时继续执行这两项迁移。不能把当前快照描述为 V28 完整 SQL。

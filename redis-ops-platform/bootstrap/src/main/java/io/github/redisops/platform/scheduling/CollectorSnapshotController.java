@@ -10,15 +10,17 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 public class CollectorSnapshotController {
-    private final RedisCollectorWorker collector;
+    private final org.springframework.beans.factory.ObjectProvider<RedisCollectorWorker> collector;
 
-    public CollectorSnapshotController(RedisCollectorWorker collector) {
+    public CollectorSnapshotController(
+            org.springframework.beans.factory.ObjectProvider<RedisCollectorWorker> collector) {
         this.collector = collector;
     }
 
     @GetMapping("/api/v1/collector/clusters/{clusterId}/nodes")
     ApiResponse<List<RedisCollectorWorker.NodeView>> nodes(@PathVariable long clusterId, HttpServletRequest request) {
-        return ApiResponse.of(collector.nodes(clusterId),
+        RedisCollectorWorker activeCollector = collector.getIfAvailable();
+        return ApiResponse.of(activeCollector == null ? List.of() : activeCollector.nodes(clusterId),
                 String.valueOf(request.getAttribute(RequestIdFilter.ATTRIBUTE)));
     }
 }

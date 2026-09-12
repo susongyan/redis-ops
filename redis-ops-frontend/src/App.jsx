@@ -1,5 +1,5 @@
 import { Component,lazy,Suspense,useEffect,useState } from 'react'
-import { AppstoreOutlined,AuditOutlined,ClusterOutlined } from '@ant-design/icons'
+import { AlertOutlined, AppstoreOutlined, AuditOutlined, ClockCircleOutlined, ClusterOutlined, CodeOutlined, DatabaseOutlined, DeleteOutlined, EnvironmentOutlined, FileSearchOutlined, FileTextOutlined, FundProjectionScreenOutlined, LineChartOutlined, RobotOutlined, SafetyCertificateOutlined, SearchOutlined, SettingOutlined, SwapOutlined, SyncOutlined, TeamOutlined } from '@ant-design/icons'
 import { Layout, Menu, Typography, Input, Select, Space } from 'antd'
 const ClustersPage=lazy(()=>import('./pages/ClustersPage.jsx'))
 const ApplicationsPage=lazy(()=>import('./pages/ApplicationsPage.jsx'))
@@ -15,11 +15,13 @@ const CleanupGovernancePage=lazy(()=>import('./pages/CleanupGovernancePage.jsx')
 const AuditsPage=lazy(()=>import('./pages/AuditsPage.jsx'))
 const RedisOperationsPage=lazy(()=>import('./pages/RedisOperationsPage.jsx'))
 const CommandCatalogPage=lazy(()=>import('./pages/CommandCatalogPage.jsx'))
+const AnalysisAgentsPage=lazy(()=>import('./pages/AnalysisAgentsPage.jsx'))
+const AnalysisRunsPage=lazy(()=>import('./pages/AnalysisRunsPage.jsx'))
 
 const {Sider,Header,Content}=Layout
 const pageFromHash=()=>{
   const page=window.location.hash.replace(/^#\/?/,'').split('?')[0]
-  return ['clusters','locations','relations','syncTasks','validations','riskScans','metrics','alerts','ttlGovernance','cleanupGovernance','redisOperations','commandCatalog','applications','audits'].includes(page)?page:'clusters'
+  return ['clusters','locations','relations','syncTasks','validations','riskScans','metrics','alerts','ttlGovernance','cleanupGovernance','redisOperations','commandCatalog','applications','audits','analysisAgents','analysisRuns'].includes(page)?page:'clusters'
 }
 class PageErrorBoundary extends Component{
   state={error:null}
@@ -28,8 +30,9 @@ class PageErrorBoundary extends Component{
 }
 export default function App(){
   const [page,setPage]=useState(pageFromHash)
+  const [openMenuKeys,setOpenMenuKeys]=useState(['assets','observability','governance','platform'])
   const [operator,setOperator]=useState(localStorage.getItem('redis-ops-operator')||'local-admin')
-  const pages={clusters:<ClustersPage/>,applications:<ApplicationsPage/>,locations:<LocationsPage/>,relations:<RelationsPage/>,syncTasks:<SyncTasksPage/>,validations:<ValidationTasksPage/>,riskScans:<RiskScansPage/>,metrics:<MetricsPage/>,alerts:<AlertsPage/>,ttlGovernance:<TtlGovernancePage/>,cleanupGovernance:<CleanupGovernancePage/>,redisOperations:<RedisOperationsPage/>,commandCatalog:<CommandCatalogPage/>,audits:<AuditsPage/>}
+  const pages={clusters:<ClustersPage/>,applications:<ApplicationsPage/>,locations:<LocationsPage/>,relations:<RelationsPage/>,syncTasks:<SyncTasksPage/>,validations:<ValidationTasksPage/>,riskScans:<RiskScansPage/>,metrics:<MetricsPage/>,alerts:<AlertsPage/>,ttlGovernance:<TtlGovernancePage/>,cleanupGovernance:<CleanupGovernancePage/>,redisOperations:<RedisOperationsPage/>,commandCatalog:<CommandCatalogPage/>,audits:<AuditsPage/>,analysisAgents:<AnalysisAgentsPage/>,analysisRuns:<AnalysisRunsPage/>}
   const pageOptions=[
     {value:'clusters',label:'Redis 集群'},
     {value:'locations',label:'Region / IDC'},
@@ -45,6 +48,8 @@ export default function App(){
     {value:'commandCatalog',label:'命令配置'},
     {value:'applications',label:'业务应用'},
     {value:'audits',label:'审计日志'},
+    {value:'analysisAgents',label:'AI Agent'},
+    {value:'analysisRuns',label:'分析结果'},
   ]
   const pageTitle=page==='redisOperations'?'Redis Console':'Redis 资源管理'
   const updateOperator=value=>{setOperator(value);localStorage.setItem('redis-ops-operator',value)}
@@ -61,21 +66,27 @@ export default function App(){
   return <Layout className="app-shell">
     <Sider width={230} theme="light" className="sidebar">
       <div className="brand"><ClusterOutlined/><span>Redis Governance</span></div>
-      <Menu mode="inline" selectedKeys={[page]} onClick={({key})=>navigate(key)} items={[
-        {key:'clusters',icon:<ClusterOutlined/>,label:'Redis 集群'},
-        {key:'locations',label:'Region / IDC'},
-        {key:'relations',label:'主备关系'},
-        {key:'syncTasks',label:'同步任务'},
-        {key:'validations',label:'数据校验'},
-        {key:'riskScans',label:'风险扫描'},
-        {key:'metrics',label:'监控指标'},
-        {key:'alerts',label:'告警中心'},
-        {key:'ttlGovernance',label:'TTL 治理'},
-        {key:'cleanupGovernance',label:'数据清理'},
-        {key:'redisOperations',label:'redis console'},
-        {key:'commandCatalog',label:'命令配置'},
-        {key:'applications',icon:<AppstoreOutlined/>,label:'业务应用'},
-        {key:'audits',icon:<AuditOutlined/>,label:'审计日志'}]}/>
+      <Menu mode="inline" selectedKeys={[page]} openKeys={openMenuKeys} onOpenChange={setOpenMenuKeys} onClick={({key})=>navigate(key)} items={[
+        {key:'assets',icon:<DatabaseOutlined/>,label:'资产与同步',children:[
+          {key:'clusters',icon:<ClusterOutlined/>,label:'Redis 集群'},
+          {key:'locations',icon:<EnvironmentOutlined/>,label:'Region / IDC'},
+          {key:'relations',icon:<SwapOutlined/>,label:'主备关系'},
+          {key:'syncTasks',icon:<SyncOutlined/>,label:'同步任务'},
+          {key:'validations',icon:<SafetyCertificateOutlined/>,label:'数据校验'}]},
+        {key:'observability',icon:<LineChartOutlined/>,label:'采集与风险',children:[
+          {key:'metrics',icon:<FundProjectionScreenOutlined/>,label:'监控指标'},
+          {key:'riskScans',icon:<SearchOutlined/>,label:'风险扫描'},
+          {key:'alerts',icon:<AlertOutlined/>,label:'告警中心'}]},
+        {key:'governance',icon:<SafetyCertificateOutlined/>,label:'质量治理',children:[
+          {key:'ttlGovernance',icon:<ClockCircleOutlined/>,label:'TTL 治理'},
+          {key:'cleanupGovernance',icon:<DeleteOutlined/>,label:'数据清理'},
+          {key:'redisOperations',icon:<CodeOutlined/>,label:'redis console'},
+          {key:'commandCatalog',icon:<SettingOutlined/>,label:'命令配置'}]},
+        {key:'platform',icon:<TeamOutlined/>,label:'平台支撑',children:[
+          {key:'applications',icon:<AppstoreOutlined/>,label:'业务应用'},
+          {key:'audits',icon:<AuditOutlined/>,label:'审计日志'},
+          {key:'analysisAgents',icon:<RobotOutlined/>,label:'AI Agent'},
+          {key:'analysisRuns',icon:<FileTextOutlined/>,label:'分析结果'}]}]}/>
     </Sider>
     <Layout><Header className="topbar"><Typography.Title level={4} className="page-title">{pageTitle}</Typography.Title>
       <Select className="mobile-page-select" value={page} onChange={navigate} options={pageOptions}/>

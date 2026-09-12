@@ -457,9 +457,20 @@ export default function SyncTasksPage() {
     }
   }
 
+  const analyzeTask = async task => {
+    try {
+      const snapshot = detail?.task?.id === task.id ? detail : await api.syncTask(task.id)
+      const metrics = snapshot.metrics?.[0] || {}
+      await api.analyze({ type: 'SYNC', resourceType: 'SYNC_TASK', resourceId: String(task.id), facts: { status: task.status, sourceDb: String(task.sourceDb ?? ''), targetDb: String(task.targetDb ?? ''), rpoSeconds: String(metrics.timestampLagSeconds ?? ''), offsetGapBytes: String(metrics.offsetGapBytes ?? ''), catchUpEtaSeconds: String(metrics.catchUpEtaSeconds ?? '') }, evidence: [{ reference: `sync-task:${task.id}`, kind: 'SYNC_TASK', summary: `同步状态 ${task.status}` }, { reference: `sync-metric:${task.id}`, kind: 'SYNC_METRIC', summary: `RPO ${metrics.timestampLagSeconds ?? '-'} 秒` }] })
+      message.success('分析已完成')
+      window.location.hash = '/analysisRuns'
+    } catch (error) { message.error(error.message) }
+  }
+
   const lifecycleActions = (task) => (
     <Space wrap>
       <Button onClick={() => { window.location.hash = `/validations?syncTaskId=${task.id}` }}>数据校验</Button>
+      <Button onClick={() => analyzeTask(task)}>辅助分析</Button>
       {['CREATED', 'READY', 'FAILED', 'BLOCKED'].includes(task.status) && (
         <Button onClick={() => runAction(task, api.precheckSyncTask, '预检查命令已提交')}>
           {task.status === 'READY' ? '重新预检' : '预检查'}

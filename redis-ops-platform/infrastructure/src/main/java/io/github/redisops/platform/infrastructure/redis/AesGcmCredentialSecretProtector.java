@@ -31,7 +31,7 @@ public class AesGcmCredentialSecretProtector implements CredentialSecretProtecto
     private final SecureRandom random = new SecureRandom();
 
     public AesGcmCredentialSecretProtector(
-            @Value("${redis-ops.credential.keys:${REDIS_OPS_CREDENTIAL_KEYS:}}") String configuredKeys) {
+            @Value("${redis-ops.credential.keys:}") String configuredKeys) {
         this.keys = parseKeys(configuredKeys);
         this.activeKeyId = keys.keySet().iterator().next();
     }

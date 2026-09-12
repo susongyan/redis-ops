@@ -1,6 +1,11 @@
 spring:
   profiles:
     default: dev
+  # Spring Config Data is the single configuration entry point. External
+  # Apollo additionally requires its Config Data adapter; see docs/apollo-integration.md.
+  config:
+    import: optional:file:./config/
+
   application:
     name: redis-api
   datasource:
@@ -19,11 +24,26 @@ management:
 collector:
   enabled: ${COLLECTOR_ENABLED:true}
   fast-interval-ms: ${COLLECTOR_FAST_INTERVAL_MS:15000}
+  page-size: ${COLLECTOR_PAGE_SIZE:200}
 worker:
   enabled: ${WORKER_ENABLED:true}
   discovery:
     poll-interval-ms: ${DISCOVERY_POLL_INTERVAL_MS:1000}
 redis-ops:
+  analysis:
+    http:
+      # Optional. Empty means the deterministic rule provider is used.
+      endpoint: ${REDIS_OPS_ANALYSIS_HTTP_ENDPOINT:}
+      timeout-ms: ${REDIS_OPS_ANALYSIS_HTTP_TIMEOUT_MS:5000}
+      types: ${REDIS_OPS_ANALYSIS_HTTP_TYPES:ALERT,SYNC,VALIDATION,RISK_SCAN,INCIDENT}
+    acp:
+      # Optional ACP REST base. The adapter probes manifest-path before submitting run-path.
+      endpoint: ${REDIS_OPS_ANALYSIS_ACP_ENDPOINT:}
+      manifest-path: ${REDIS_OPS_ANALYSIS_ACP_MANIFEST_PATH:/manifest}
+      run-path: ${REDIS_OPS_ANALYSIS_ACP_RUN_PATH:/runs}
+      timeout-ms: ${REDIS_OPS_ANALYSIS_ACP_TIMEOUT_MS:10000}
+      types: ${REDIS_OPS_ANALYSIS_ACP_TYPES:ALERT,SYNC,VALIDATION,RISK_SCAN,INCIDENT}
   credential:
-    keys: ${REDIS_OPS_CREDENTIAL_KEYS:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+    # Supplied by external Spring configuration; no default key is permitted.
+    keys: ${REDIS_OPS_CREDENTIAL_KEYS:}
     rotation-batch-size: ${CREDENTIAL_ROTATION_BATCH_SIZE:50}

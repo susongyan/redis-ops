@@ -8,4 +8,4 @@ spring:
     password: redis_governance
 redis-ops:
   credential:
-    keys: v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    keys: ${REDIS_OPS_CREDENTIAL_KEYS:}

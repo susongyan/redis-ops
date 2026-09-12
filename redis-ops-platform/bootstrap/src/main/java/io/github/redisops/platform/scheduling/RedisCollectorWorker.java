@@ -35,7 +35,10 @@ public class RedisCollectorWorker {
 
     public RedisCollectorWorker(ClusterRepository clusters, RedisConnectionProfileProvider profiles,
             MeterRegistry meters, AlertService alerts, CollectorRunRepository runs,
-            @Value("${collector.page-size:200}") int pageSize) {
+            @Value("${collector.page-size:200}") int pageSize,
+            @Value("${collector.fast-interval-ms:15000}") long intervalMs) {
+        if (pageSize <= 0 || intervalMs <= 0)
+            throw new IllegalArgumentException("collector.page-size and collector.fast-interval-ms must be positive");
         this.clusters = clusters;
         this.profiles = profiles;
         this.meters = meters;

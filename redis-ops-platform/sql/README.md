@@ -11,8 +11,8 @@
 
 业务 DDL/DML 在 `../bootstrap/src/main/resources/db/migration/`，随 Platform JAR 发布。
 本目录 `.sql.template` 仅用于 DBA 建库/授权，不会自动执行；完整快照由隔离迁移生成，不手工维护第二套 schema。
-已发布 migration 禁止修改/重编号。本次已提交基线 V1–V26；本地 V27/V28 是未提交分析功能，
-不能混入该发布。以后以所选 commit/tag 的 JAR 为准：
+已发布 migration 禁止修改/重编号。本次发布包含 V1–V28；完整 SQL 快照仍为 V26，
+Platform 启动后继续执行 V27/V28 分析表迁移。以所选 commit/tag 的 JAR 为准：
 
 ```bash
 jar tf /opt/redis-ops-platform/app/platform.jar | sort | sed -n '/BOOT-INF\/classes\/db\/migration\//p'

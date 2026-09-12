@@ -27,6 +27,7 @@ ADR 记录会长期影响代码结构、运行方式、安全边界或迁移成�
 | [ADR-009](ADR-009-internal-key-retention-for-risk-and-slowlog.md) | Accepted | 企业内部风险扫描与慢日志保留原始 Key |
 | [ADR-010](ADR-010-phase3-quality-governance.md) | Accepted | Phase 3 质量治理采用 Dry Run 与审批门禁 |
 | [ADR-012](ADR-012-model-agnostic-ai-agent-integration.md) | Accepted | AI 分析采用模型无关抽象，A2A/ACP 通过适配器接入 |
+| [ADR-015](ADR-015-analysis-advisory-delivery.md) | Accepted | 按请求触发辅助分析，外部失败直报，结果仅供人工参考 |
 
 ## 新建模板
 

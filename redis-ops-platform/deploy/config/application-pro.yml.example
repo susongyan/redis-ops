@@ -30,7 +30,15 @@ worker:
 collector:
   enabled: true
   fast-interval-ms: 15000
+  page-size: 200
 redis-ops:
+  analysis:
+    http:
+      endpoint: ""
+      timeout-ms: 5000
+    acp:
+      endpoint: ""
+      timeout-ms: 10000
   credential:
     keys: "v1:REPLACE_BASE64_32_BYTE_KEY"
     rotation-batch-size: 50

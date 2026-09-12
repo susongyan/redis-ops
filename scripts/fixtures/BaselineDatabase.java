@@ -9,6 +9,14 @@ public class BaselineDatabase {
                 .baselineVersion("26")
                 .load();
         switch (args[0]) {
+            case "upgrade-analysis" -> {
+                if (flyway.migrate().migrationsExecuted != 2)
+                    throw new IllegalStateException("Expected only V27 and V28 migrations");
+                flyway.validate();
+                if (!"28".equals(flyway.info().current().getVersion().getVersion())
+                        || flyway.migrate().migrationsExecuted != 0)
+                    throw new IllegalStateException("Analysis migration upgrade is not repeat-safe");
+            }
             case "migrate" -> {
                 var result = flyway.migrate();
                 if (result.migrationsExecuted != 26) throw new IllegalStateException("Expected 26 migrations");
