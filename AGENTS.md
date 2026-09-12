@@ -18,11 +18,14 @@
 
 ## 2. 模块依赖与代码位置
 
+代码分别位于 `redis-ops-platform/`、`redis-ops-sync-worker/`、`redis-ops-frontend/` 和
+`redis-ops-sync-contract/`。Java 命令在各 Maven 根执行，根目录无生产构建 Parent。
+
 依赖方向只能从外向内：
 
 ```text
 bootstrap / api / infrastructure → application → domain → common
-sync-service → sync-protocol、application/domain/infrastructure 的公开端口
+sync-service → sync-protocol、sync-contract（禁止 Platform 实现依赖）
 frontend → REST API
 ```
 
@@ -53,7 +56,7 @@ frontend → REST API
 ## 4. 实现与验证
 
 - Java 使用 Spotless：`mvn spotless:apply`，提交前至少运行 `mvn verify`（或说明受限模块）。
-- 前端至少运行：`cd frontend && npm run build`。
+- 前端至少运行：`cd redis-ops-frontend && npm ci && npm run build`。
 - 修改 Flyway、Mapper、状态机、租约、fence、密码处理或命令策略时，必须增加/更新相应测试。
 - 修改页面时至少检查窄屏（小于 800px）与桌面布局；页面不得只依赖隐藏侧栏导航。
 - 对真实 Redis 同步、清空目标 DB、数据填充等演示性动作，先说明目标和影响范围，再执行。

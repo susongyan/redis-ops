@@ -10,7 +10,7 @@ export DB_URL="${DB_URL:-jdbc:mysql://localhost:3306/redis_governance?useUnicode
 export DB_USERNAME="${DB_USERNAME:-redis_governance}"
 export DB_PASSWORD="${DB_PASSWORD:-redis_governance}"
 export WORKER_ENABLED=true
-java -jar governance-bootstrap/target/governance-bootstrap-0.1.0-SNAPSHOT.jar --server.port="$port" >"$log" 2>&1 & pid=$!
+java -jar redis-ops-platform/governance-bootstrap/target/governance-bootstrap-0.1.0-SNAPSHOT.jar --server.port="$port" >"$log" 2>&1 & pid=$!
 for _ in {1..60}; do curl -fsS "http://127.0.0.1:$port/actuator/health" >/dev/null 2>&1 && break; sleep .5; done
 curl -fsS "http://127.0.0.1:$port/actuator/health" >/dev/null || { tail -100 "$log"; exit 1; }
 docker compose exec -T redis redis-cli SET phase2:ttl-demo value EX 3600 >/dev/null

@@ -76,5 +76,5 @@ docker exec "${target_container}" redis-cli --cluster create \
   127.0.0.1:7201 127.0.0.1:7202 127.0.0.1:7203 \
   --cluster-replicas 0 --cluster-yes >/dev/null
 
-REDIS_SYNC_CLUSTER_IT=true mvn -pl governance-sync-service -am \
+REDIS_SYNC_CLUSTER_IT=true mvn -f redis-ops-sync-worker/pom.xml -pl governance-sync-service -am \
   -Dtest=ClusterSyncTaskRunnerIntegrationTest -Dsurefire.failIfNoSpecifiedTests=false test

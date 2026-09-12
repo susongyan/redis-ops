@@ -30,6 +30,8 @@ ADR 记录会长期影响代码结构、运行方式、安全边界或迁移成�
 
 ## 新建模板
 
+- [ADR-013：最小同步契约与独立仓库构建](ADR-013-minimal-sync-contract-repositories.md)（Accepted）
+
 ```markdown
 # ADR-NNN：决策标题
 

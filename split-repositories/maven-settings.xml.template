@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+    <mirrors>
+        <mirror>
+            <id>redis-ops-contract</id>
+            <mirrorOf>redis-ops-contract</mirrorOf>
+            <url>@CONTRACT_REPOSITORY_URL@</url>
+        </mirror>
+    </mirrors>
+    <profiles>
+        <profile>
+            <id>redis-ops-contract</id>
+            <repositories>
+                <repository>
+                    <id>redis-ops-contract</id>
+                    <url>@CONTRACT_REPOSITORY_URL@</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                </repository>
+            </repositories>
+        </profile>
+    </profiles>
+    <activeProfiles>
+        <activeProfile>redis-ops-contract</activeProfile>
+    </activeProfiles>
+</settings>

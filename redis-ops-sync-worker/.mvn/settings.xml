@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+    <mirrors>
+        <mirror>
+            <id>redis-ops-contract</id>
+            <mirrorOf>redis-ops-contract</mirrorOf>
+            <url>${env.MAVEN_REGISTRY_URL}</url>
+        </mirror>
+    </mirrors>
+    <servers>
+        <server>
+            <id>redis-ops-contract</id>
+            <username>${env.MAVEN_REGISTRY_USERNAME}</username>
+            <password>${env.MAVEN_REGISTRY_PASSWORD}</password>
+        </server>
+    </servers>
+    <profiles>
+        <profile>
+            <id>redis-ops-contract</id>
+            <repositories>
+                <repository>
+                    <id>redis-ops-contract</id>
+                    <url>${env.MAVEN_REGISTRY_URL}</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                </repository>
+            </repositories>
+        </profile>
+    </profiles>
+    <activeProfiles>
+        <activeProfile>redis-ops-contract</activeProfile>
+    </activeProfiles>
+</settings>

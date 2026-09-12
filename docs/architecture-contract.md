@@ -36,8 +36,9 @@ Sync Worker ── PSYNC / RDB / RESP ──► Source Redis / Target Redis
    协议、spool、目标写入、运行指标与 checkpoint 摘要。
 3. **数据面不改变业务拓扑。** Sync Worker 不交换主备角色、不调用 DNS/代理、不修改应用配置，
    也不得绕过 Platform 对目标清空和写隔离的确认。
-4. **模块可拆分但不预拆分。** 当前是模块化单体 + 独立 Sync Worker。新的网络服务只有在独立
-   扩缩容、故障隔离、独立团队或网络域边界成立时才允许引入，并需要 ADR。
+4. **独立源码与构建。** 按 ADR-013，Platform、Sync Worker、Frontend 拥有各自仓库根，
+   Platform 与 Worker 只共享纯 Java sync-contract artifact；不共享业务 Service 或数据库 adapter。
+   新网络服务仍需独立团队、故障或网络边界依据与 ADR。
 
 ## 3. 数据事实与一致性契约
 

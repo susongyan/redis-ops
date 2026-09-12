@@ -9,17 +9,13 @@ Cluster 多 master 通道、目标 Slot 路由和安全接管已经形成闭环�
 ## 工程结构
 
 ```text
-redis-governance-platform
-├── governance-common          # 通用类型、错误码和基础工具
-├── governance-domain          # 领域模型、状态机和仓储接口
-├── governance-application     # 用例编排、命令/查询服务
-├── governance-infrastructure  # MyBatis、Redis/同步工具适配器
-├── governance-api             # REST API、DTO、统一异常处理
-├── governance-bootstrap       # API 与异步任务单进程启动入口
-├── governance-sync-protocol   # 自研 RESP、PSYNC、RDB 和命令规划
-├── governance-sync-service    # 独立同步 Worker、租约、spool、checkpoint 和指标
-├── docs                       # 架构、ER 与任务拆分
-└── sql                        # 数据库 migration
+redis-ops
+├── redis-ops-platform         # Platform 独立 Maven 根（含 sql/Flyway）
+├── redis-ops-sync-worker      # Worker 独立 Maven 根
+├── redis-ops-frontend         # 前端独立 npm 根
+├── redis-ops-sync-contract    # 纯 Java 17 发布 artifact
+├── docs                       # 架构与跨仓联调说明
+└── compose.yaml               # 本地联调基础设施
 ```
 
 ## 本地构建
@@ -27,9 +23,15 @@ redis-governance-platform
 要求 JDK 17、Maven 3.9+、Node.js 20+ 和 Docker。
 
 ```bash
-mvn verify
-cd frontend && npm install && npm run build
+mvn -f redis-ops-sync-contract/pom.xml clean install
+./scripts/build-platform.sh
+./scripts/build-sync-worker.sh
+cd redis-ops-frontend && npm ci && npm run build
 ```
+
+各 Maven 根可以单独复制建仓。Platform/Worker 仅依赖已发布的 contract artifact；本地联调先执行上述 contract install。企业 CI 使用各目录自身的 `.github/workflows/ci.yml` 和 Maven Registry 配置。根目录不再提供 Maven Parent。
+
+详见 [拆仓迁移说明](docs/split-repository-migration.md)。旧部署文档中的顶层 `governance-*` 与 `frontend` 路径应按上述目录映射使用。
 
 ## Linux 快速部署
 
@@ -58,8 +60,9 @@ bin/redis-opsctl start all
 ```bash
 docker compose up -d mysql redis
 export REDIS_OPS_CREDENTIAL_KEYS="v1:$(openssl rand -base64 32)"
-mvn -pl governance-bootstrap -am spring-boot:run
-cd frontend && npm run dev
+./scripts/build-platform.sh
+java -jar redis-ops-platform/governance-bootstrap/target/governance-bootstrap-0.1.0-SNAPSHOT.jar
+cd redis-ops-frontend && npm run dev
 ```
 
 默认同一进程同时提供 API 并领取异步任务；设置 `WORKER_ENABLED=false` 可启动纯 API 实例。`REDIS_OPS_CREDENTIAL_KEYS` 的第一个 Key 用于新写入，后续 Key 仅用于读取和在线轮换旧密文。密钥只在首次部署时生成，后续重启必须复用同一密钥；生产环境应由部署系统安全注入，不能每次启动重新生成。
@@ -67,7 +70,7 @@ cd frontend && npm run dev
 API、内置 Worker 和 Redis 的端到端资产验收：
 
 ```bash
-mvn package
+./scripts/build-platform.sh
 ./scripts/asset-smoke.sh
 ```
 

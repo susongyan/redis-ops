@@ -53,20 +53,24 @@ node_major="$(node --version | sed 's/^v//' | cut -d. -f1)"
   || { printf 'Node.js 20+ is required\n' >&2; exit 1; }
 
 cd "${PROJECT_DIR}"
+# Local multi-repository bundle; production repositories publish independently.
+mvn --batch-mode --no-transfer-progress -f redis-ops-sync-contract/pom.xml clean install
 if [[ "${SKIP_TESTS}" == true ]]; then
-  mvn clean package -DskipTests
+  "${SCRIPT_DIR}/build-platform.sh" -DskipTests
+  "${SCRIPT_DIR}/build-sync-worker.sh" -DskipTests
 else
-  mvn clean verify
+  "${SCRIPT_DIR}/build-platform.sh"
+  "${SCRIPT_DIR}/build-sync-worker.sh"
 fi
 
 (
-  cd frontend
+  cd redis-ops-frontend
   npm ci --prefer-offline
   npm run build
 )
 
-platform_jars=(governance-bootstrap/target/governance-bootstrap-*.jar)
-worker_jars=(governance-sync-service/target/governance-sync-service-*.jar)
+platform_jars=(redis-ops-platform/governance-bootstrap/target/governance-bootstrap-*.jar)
+worker_jars=(redis-ops-sync-worker/governance-sync-service/target/governance-sync-service-*.jar)
 (( ${#platform_jars[@]} == 1 )) || { printf 'Expected exactly one Platform JAR\n' >&2; exit 1; }
 (( ${#worker_jars[@]} == 1 )) || { printf 'Expected exactly one Sync Worker JAR\n' >&2; exit 1; }
 platform_jar="${platform_jars[0]}"
@@ -89,7 +93,7 @@ mkdir -p "${stage}/app" "${stage}/bin" "${stage}/conf" "${stage}/systemd" \
 
 cp "${platform_jar}" "${stage}/app/platform.jar"
 cp "${worker_jar}" "${stage}/app/sync-worker.jar"
-cp -R frontend/dist/. "${stage}/frontend/"
+cp -R redis-ops-frontend/dist/. "${stage}/frontend/"
 cp deploy/bin/redis-opsctl "${stage}/bin/"
 cp deploy/conf/redis-ops.env.example deploy/conf/nginx.conf.template "${stage}/conf/"
 cp deploy/systemd/*.template "${stage}/systemd/"
