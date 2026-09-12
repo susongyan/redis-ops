@@ -28,18 +28,18 @@ done
 test -f "${FRONTEND_DIR}/deploy/conf/nginx.conf.template"
 
 if [[ -d "${PLATFORM_DIR}/redis-ops-sync-contract" \
-   || -d "${PLATFORM_DIR}/governance-sync-protocol" \
-   || -d "${PLATFORM_DIR}/governance-sync-service" ]]; then
+   || -d "${PLATFORM_DIR}/sync-protocol" \
+   || -d "${PLATFORM_DIR}/sync-service" ]]; then
   echo "Platform export contains contract or Worker source" >&2
   exit 1
 fi
 if [[ -d "${WORKER_DIR}/redis-ops-sync-contract" \
-   || -d "${WORKER_DIR}/governance-common" \
-   || -d "${WORKER_DIR}/governance-domain" \
-   || -d "${WORKER_DIR}/governance-application" \
-   || -d "${WORKER_DIR}/governance-infrastructure" \
-   || -d "${WORKER_DIR}/governance-api" \
-   || -d "${WORKER_DIR}/governance-bootstrap" ]]; then
+   || -d "${WORKER_DIR}/common" \
+   || -d "${WORKER_DIR}/domain" \
+   || -d "${WORKER_DIR}/application" \
+   || -d "${WORKER_DIR}/infrastructure" \
+   || -d "${WORKER_DIR}/api" \
+   || -d "${WORKER_DIR}/bootstrap" ]]; then
   echo "Worker export contains contract or Platform source" >&2
   exit 1
 fi
@@ -76,11 +76,11 @@ mvn --settings "${SETTINGS_FILE}" --batch-mode --no-transfer-progress \
   -f "${WORKER_DIR}/pom.xml" dependency:tree \
   -Dincludes=io.github.redisops > "${VALIDATION_DIR}/worker-dependencies.txt"
 
-if rg -q 'governance-sync-(protocol|service)' "${VALIDATION_DIR}/platform-dependencies.txt"; then
+if rg -q 'redis-ops-worker-(protocol|service)' "${VALIDATION_DIR}/platform-dependencies.txt"; then
   echo "Platform dependency tree contains Worker artifacts" >&2
   exit 1
 fi
-if rg -q 'governance-(common|domain|application|infrastructure|api|bootstrap)' \
+if rg -q 'redis-ops-platform-(common|domain|application|infrastructure|api|bootstrap)' \
   "${VALIDATION_DIR}/worker-dependencies.txt"; then
   echo "Worker dependency tree contains Platform artifacts" >&2
   exit 1

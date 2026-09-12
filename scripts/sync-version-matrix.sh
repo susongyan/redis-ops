@@ -43,7 +43,7 @@ for version in "${versions[@]}"; do
   done
 
   REDIS_SYNC_IT=true mvn --batch-mode --no-transfer-progress \
-    -f redis-ops-sync-worker/pom.xml -pl governance-sync-service -am \
+    -f redis-ops-sync-worker/pom.xml -pl sync-service -am \
     -Dtest=StandaloneSyncTaskRunnerIntegrationTest \
     -Dsurefire.failIfNoSpecifiedTests=false test
 done

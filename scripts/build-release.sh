@@ -69,18 +69,18 @@ fi
   npm run build
 )
 
-platform_jars=(redis-ops-platform/governance-bootstrap/target/governance-bootstrap-*.jar)
-worker_jars=(redis-ops-sync-worker/governance-sync-service/target/governance-sync-service-*.jar)
+platform_jars=(redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-*.jar)
+worker_jars=(redis-ops-sync-worker/sync-service/target/redis-ops-worker-service-*.jar)
 (( ${#platform_jars[@]} == 1 )) || { printf 'Expected exactly one Platform JAR\n' >&2; exit 1; }
 (( ${#worker_jars[@]} == 1 )) || { printf 'Expected exactly one Sync Worker JAR\n' >&2; exit 1; }
 platform_jar="${platform_jars[0]}"
 worker_jar="${worker_jars[0]}"
 [[ -f "${platform_jar}" ]] || { printf 'Platform JAR was not produced\n' >&2; exit 1; }
 [[ -f "${worker_jar}" ]] || { printf 'Sync Worker JAR was not produced\n' >&2; exit 1; }
-version="${platform_jar##*/governance-bootstrap-}"
+version="${platform_jar##*/redis-ops-platform-bootstrap-}"
 version="${version%.jar}"
 [[ -n "${version}" ]] || { printf 'Could not determine project version from Platform JAR\n' >&2; exit 1; }
-[[ "${worker_jar}" == *"governance-sync-service-${version}.jar" ]] \
+[[ "${worker_jar}" == *"redis-ops-worker-service-${version}.jar" ]] \
   || { printf 'Platform and Sync Worker versions do not match\n' >&2; exit 1; }
 archive_version="${version%-SNAPSHOT}"
 stage_root="$(mktemp -d)"

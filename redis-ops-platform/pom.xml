@@ -16,12 +16,12 @@
     <name>Redis Ops Platform</name>
 
     <modules>
-        <module>governance-common</module>
-        <module>governance-domain</module>
-        <module>governance-application</module>
-        <module>governance-infrastructure</module>
-        <module>governance-api</module>
-        <module>governance-bootstrap</module>
+        <module>common</module>
+        <module>domain</module>
+        <module>application</module>
+        <module>infrastructure</module>
+        <module>api</module>
+        <module>bootstrap</module>
     </modules>
 
     <properties>

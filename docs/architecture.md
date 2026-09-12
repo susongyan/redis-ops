@@ -173,7 +173,7 @@ Agent 不得绕过平台 API 直接写 Redis 或修改任务状态；远程 Agen
 
 所有耗时动作统一建模为 Job，业务任务与执行任务分离：SyncTask、ScanTask、ValidationTask、GovernanceTask 表示业务；AsyncJob 表示一次可调度执行。
 
-当前物理形态已将真实同步数据面拆为独立 `governance-sync-service`：Platform 持有控制命令、
+当前物理形态已将真实同步数据面拆为独立 `sync-service`：Platform 持有控制命令、
 任务期望状态与审计，Sync Worker 以共享 MySQL 租约领取命令并执行 PSYNC、spool、目标写入。
 目标 Redis checkpoint/fence 是同步写入的最终事实；详情见[同步管理面与 Worker 分离](sync-control-worker-separation.md)。
 
@@ -242,14 +242,14 @@ API 可多实例无状态部署；Worker 水平扩展并依赖租约避免重复
 
 | 当前 Maven 模块 | 作用 | 未来逻辑模块映射 |
 |---|---|---|
-| governance-common | 基础类型和错误规范 | 所有模块共享的最小内核 |
-| governance-domain | 领域模型和端口 | asset/sync/scan/alert 等领域包 |
-| governance-application | 用例编排 | 各领域 Application Service |
-| governance-infrastructure | MySQL、Redis、工具适配 | Collector、Sync Tool、存储适配器 |
-| governance-api | REST 契约 | 各领域 Controller |
-| governance-bootstrap | Platform API、Flyway、资产发现调度 | Backend API、Collector/Scan/Validation/Governance Worker |
-| governance-sync-protocol | RESP、PSYNC、RDB、命令规划 | 独立同步协议内核 |
-| governance-sync-service | 独立 Sync Worker、lease/fence/spool | Sync 数据面 Worker |
+| common | 基础类型和错误规范 | 所有模块共享的最小内核 |
+| domain | 领域模型和端口 | asset/sync/scan/alert 等领域包 |
+| application | 用例编排 | 各领域 Application Service |
+| infrastructure | MySQL、Redis、工具适配 | Collector、Sync Tool、存储适配器 |
+| api | REST 契约 | 各领域 Controller |
+| bootstrap | Platform API、Flyway、资产发现调度 | Backend API、Collector/Scan/Validation/Governance Worker |
+| sync-protocol | RESP、PSYNC、RDB、命令规划 | 独立同步协议内核 |
+| sync-service | 独立 Sync Worker、lease/fence/spool | Sync 数据面 Worker |
 
 未来只有在独立发布、团队所有权、故障隔离或资源模型出现明确需求时，才将逻辑模块拆成 `cluster-service`、`sync-service`、`collector-service`、`scan-service`、`alert-service` 和 `ai-analysis-service`。
 

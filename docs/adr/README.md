@@ -30,6 +30,8 @@ ADR 记录会长期影响代码结构、运行方式、安全边界或迁移成�
 
 ## 新建模板
 
+- [ADR-014：项目内部模块和包命名](ADR-014-project-local-package-names.md)（Accepted）
+
 - [ADR-013：最小同步契约与独立仓库构建](ADR-013-minimal-sync-contract-repositories.md)（Accepted）
 
 ```markdown

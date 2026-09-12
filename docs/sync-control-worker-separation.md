@@ -11,7 +11,7 @@ Redis 同步包含两类职责：
 - 数据面：PSYNC 长连接、RDB/命令流处理、目标写入、checkpoint、spool、指标和故障恢复。
 
 数据面会长期占用网络、磁盘和内存，并且需要独立扩缩容，因此从第一版开始就使用独立的
-`governance-sync-service` 进程和制品，不与 Platform API 合并运行。
+`sync-service` 进程和制品，不与 Platform API 合并运行。
 
 需要单独决策的是：两个进程通过共享数据库协作，还是通过内部 REST API 协作。
 

@@ -31,7 +31,7 @@ cd redis-ops-frontend && npm ci && npm run build
 
 各 Maven 根可以单独复制建仓。Platform/Worker 仅依赖已发布的 contract artifact；本地联调先执行上述 contract install。企业 CI 使用各目录自身的 `.github/workflows/ci.yml` 和 Maven Registry 配置。根目录不再提供 Maven Parent。
 
-详见 [拆仓迁移说明](docs/split-repository-migration.md)。旧部署文档中的顶层 `governance-*` 与 `frontend` 路径应按上述目录映射使用。
+详见 [拆仓迁移说明](docs/split-repository-migration.md)。Platform 内部为 `common/domain/application/infrastructure/api/bootstrap`，Worker 内部为 `sync-protocol/sync-service`；Java 包分别为 `io.github.redisops.platform.*` 与 `io.github.redisops.worker.*`。
 
 ## Linux 快速部署
 
@@ -61,7 +61,7 @@ bin/redis-opsctl start all
 docker compose up -d mysql redis
 export REDIS_OPS_CREDENTIAL_KEYS="v1:$(openssl rand -base64 32)"
 ./scripts/build-platform.sh
-java -jar redis-ops-platform/governance-bootstrap/target/governance-bootstrap-0.1.0-SNAPSHOT.jar
+java -jar redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0-SNAPSHOT.jar
 cd redis-ops-frontend && npm run dev
 ```
 
@@ -110,5 +110,5 @@ mvn spotless:check
 ```
 
 `mvn verify` 会自动执行格式检查。IntelliJ IDEA 可以导入
-[`config/formatter/eclipse-java-redis-ops.xml`](config/formatter/eclipse-java-redis-ops.xml)，使 IDE
+[`redis-ops-platform/config/formatter/eclipse-java-redis-ops.xml`](redis-ops-platform/config/formatter/eclipse-java-redis-ops.xml)，使 IDE
 格式化结果与 Maven 保持一致。

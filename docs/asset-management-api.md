@@ -7,7 +7,7 @@
 ```bash
 docker compose up -d mysql redis
 export REDIS_OPS_CREDENTIAL_KEYS="v1:$(openssl rand -base64 32)"
-mvn -pl governance-bootstrap -am spring-boot:run     # 终端 1：API + Worker，端口 8080
+mvn -pl bootstrap -am spring-boot:run     # 终端 1：API + Worker，端口 8080
 cd frontend && npm install && npm run dev             # 终端 2：管理页面
 ```
 

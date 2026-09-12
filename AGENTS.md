@@ -29,14 +29,14 @@ sync-service → sync-protocol、sync-contract（禁止 Platform 实现依赖）
 frontend → REST API
 ```
 
-- `governance-domain`：领域模型、状态机、端口；不得依赖 Spring、MyBatis、Redis 客户端。
-- `governance-application`：用例编排、事务边界、校验和审计触发；不得直接拼 SQL 或持有 Redis
+- `domain`：领域模型、状态机、端口；不得依赖 Spring、MyBatis、Redis 客户端。
+- `application`：用例编排、事务边界、校验和审计触发；不得直接拼 SQL 或持有 Redis
   客户端。
-- `governance-infrastructure`：MySQL、Redis、加密、外部适配器实现。
-- `governance-api`：HTTP 请求/响应、参数校验和错误映射；不得承载业务状态机。
-- `governance-bootstrap`：Platform 进程、Flyway、API 和轻量发现调度。
-- `governance-sync-protocol`：RESP、PSYNC、RDB、命令规划；必须保持无 Spring 运行时依赖。
-- `governance-sync-service`：独立 Sync Worker，读取控制命令并执行数据面同步；不得修改主备关系
+- `infrastructure`：MySQL、Redis、加密、外部适配器实现。
+- `api`：HTTP 请求/响应、参数校验和错误映射；不得承载业务状态机。
+- `bootstrap`：Platform 进程、Flyway、API 和轻量发现调度。
+- `sync-protocol`：RESP、PSYNC、RDB、命令规划；必须保持无 Spring 运行时依赖。
+- `sync-service`：独立 Sync Worker，读取控制命令并执行数据面同步；不得修改主备关系
   或绕过 Platform 的确认流程。
 - `frontend`：React + Ant Design；所有写请求必须通过统一 API 客户端发送幂等键和版本。
 

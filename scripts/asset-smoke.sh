@@ -60,14 +60,14 @@ fail() {
 }
 
 cd "$repo_dir"
-[[ -f redis-ops-platform/governance-bootstrap/target/governance-bootstrap-0.1.0-SNAPSHOT.jar ]] ||
+[[ -f redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0-SNAPSHOT.jar ]] ||
   fail "build the application with './scripts/build-platform.sh' first"
 "$repo_dir/scripts/redis-asset-test-up.sh"
 
 if [[ -z "${REDIS_OPS_CREDENTIAL_KEYS:-}" ]]; then
   export REDIS_OPS_CREDENTIAL_KEYS="acceptance:$(openssl rand -base64 32)"
 fi
-SERVER_PORT="$smoke_port" java -jar redis-ops-platform/governance-bootstrap/target/governance-bootstrap-0.1.0-SNAPSHOT.jar >"$api_log" 2>&1 &
+SERVER_PORT="$smoke_port" java -jar redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0-SNAPSHOT.jar >"$api_log" 2>&1 &
 api_pid=$!
 
 for _ in {1..60}; do

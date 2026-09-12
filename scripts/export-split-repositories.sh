@@ -25,7 +25,7 @@ for repository in redis-ops-sync-contract redis-ops-platform redis-ops-sync-work
     "${REPO_DIR}/${repository}/" "${OUTPUT_DIR}/${repository}/"
 done
 
-cp "${REPO_DIR}/split-repositories/maven-settings.xml.template" \
+cp "${REPO_DIR}/scripts/fixtures/maven-settings.xml.template" \
   "${OUTPUT_DIR}/maven-settings.xml.template"
 
 echo "Exported independent repositories to ${OUTPUT_DIR}"

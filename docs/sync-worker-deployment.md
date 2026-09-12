@@ -1,6 +1,6 @@
 # Sync Worker 构建、部署与扩容
 
-Sync Worker 是 `governance-sync-service` 生成的独立 Java 进程。它通过共享 MySQL 领取同步
+Sync Worker 是 `sync-service` 生成的独立 Java 进程。它通过共享 MySQL 领取同步
 控制命令、维护租约和运行状态，并在本机保存加密 spool；不依赖 Platform HTTP。
 
 ## 1. 构建和安装

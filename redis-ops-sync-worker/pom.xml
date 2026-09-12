@@ -16,8 +16,8 @@
     <name>Redis Ops Sync Worker</name>
 
     <modules>
-        <module>governance-sync-protocol</module>
-        <module>governance-sync-service</module>
+        <module>sync-protocol</module>
+        <module>sync-service</module>
     </modules>
 
     <properties>
