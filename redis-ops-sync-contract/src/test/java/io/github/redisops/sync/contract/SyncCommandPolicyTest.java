@@ -39,4 +39,14 @@ class SyncCommandPolicyTest {
         assertTrue(capability.currentlyBlocked());
         assertEquals("UNKNOWN_BLOCKED", capability.category());
     }
+
+    @Test
+    void exposesPlannerClassificationQueriesAsPartOfThePublishedContract() {
+        assertTrue(SyncCommandCapabilities.singleKey("SET"));
+        assertTrue(SyncCommandCapabilities.safeSplit("MSET"));
+        assertTrue(SyncCommandCapabilities.hardBlocked("EVAL"));
+        assertTrue(SyncCommandCapabilities.destructive("FLUSHDB"));
+        assertTrue(SyncCommandCapabilities.skipped("REPLCONF"));
+        assertFalse(SyncCommandCapabilities.singleKey("FUTURECMD"));
+    }
 }

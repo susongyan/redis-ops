@@ -1,7 +1,7 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.sync.*;
 import io.github.redisops.sync.contract.SyncContractStatus;
+import io.github.redisops.sync.contract.SyncControlAction;
 import io.github.redisops.sync.worker.domain.WorkerSyncRuntime;
 import io.github.redisops.sync.worker.domain.WorkerSyncTask;
 import io.github.redisops.sync.worker.persistence.WorkerSyncStatePort;
@@ -150,7 +150,7 @@ class NativeSyncRunnerManagerTest {
         return new WorkerSyncTask(id, "SYNC-" + id, null, 11, 22, "ADHOC", "FULL_AND_INCREMENTAL",
                 SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0, "[\"*\"]", "[]", "{}",
                 50_000, 100 * 1024 * 1024L, 50L * 1024 * 1024 * 1024, 4, 100,
-                SyncAction.START.name(), true,
+                SyncControlAction.START.name(), true,
                 "test fence", null, "epoch-1", null, null, 0, now, now, null);
     }
 

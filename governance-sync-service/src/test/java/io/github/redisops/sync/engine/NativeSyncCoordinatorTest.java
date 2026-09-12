@@ -44,6 +44,7 @@ class NativeSyncCoordinatorTest {
         NativeSyncRunnerManager runners = mock(NativeSyncRunnerManager.class);
         WorkerSyncTask task = task();
         when(service.get(1)).thenReturn(task);
+        when(service.canTransitionTo(1, SyncContractStatus.FAILED)).thenReturn(true);
         doThrow(new IllegalStateException("not ready")).when(runners)
                 .prepare(eq(task), anyString(), eq(30L), eq(false));
         var coordinator = new NativeSyncCoordinator(service, prechecks, resetter, runners, "test", 30);

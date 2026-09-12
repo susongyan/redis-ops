@@ -1,6 +1,5 @@
 package io.github.redisops.sync.engine;
 
-import io.github.redisops.domain.sync.*;
 import io.github.redisops.sync.contract.SyncContractStatus;
 import io.github.redisops.sync.worker.domain.WorkerSyncTask;
 import org.junit.jupiter.api.Test;

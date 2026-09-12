@@ -24,26 +24,46 @@ public final class SyncCommandCapabilities {
     private SyncCommandCapabilities() {
     }
 
+    public static boolean singleKey(String command) {
+        return SINGLE_KEY.contains(command);
+    }
+
+    public static boolean safeSplit(String command) {
+        return SAFE_SPLIT.contains(command);
+    }
+
+    public static boolean hardBlocked(String command) {
+        return HARD_BLOCKED.contains(command);
+    }
+
+    public static boolean destructive(String command) {
+        return DESTRUCTIVE.contains(command);
+    }
+
+    public static boolean skipped(String command) {
+        return SKIPPED.contains(command);
+    }
+
     public static SyncCommandCapability classify(String command, boolean clusterTarget, SyncCommandPolicy policy) {
-        if (HARD_BLOCKED.contains(command))
+        if (hardBlocked(command))
             return new SyncCommandCapability(command, "HARD_BLOCKED", "无法保证等价转换或原子性", false, true);
-        if (DESTRUCTIVE.contains(command) && clusterTarget)
+        if (destructive(command) && clusterTarget)
             return new SyncCommandCapability(command, "HARD_BLOCKED", "Cluster 目标不支持在增量流中执行全节点清空", false, true);
-        if (SKIPPED.contains(command))
+        if (skipped(command))
             return new SyncCommandCapability(command, "IGNORED", "复制协议控制命令，不写入目标", false, false);
         if (policy.additionallyBlocks(command))
             return new SyncCommandCapability(command, "POLICY_BLOCKED", "任务策略显式屏蔽", true, true);
-        if (DESTRUCTIVE.contains(command)) {
+        if (destructive(command)) {
             boolean blocked = !policy.allowDestructiveCommands();
             return new SyncCommandCapability(command, blocked ? "POLICY_BLOCKED" : "SUPPORTED",
                     "危险命令，必须在任务策略中显式允许", true, blocked);
         }
-        if (SAFE_SPLIT.contains(command)) {
+        if (safeSplit(command)) {
             boolean blocked = !policy.allowSafeSplit();
             return new SyncCommandCapability(command, blocked ? "POLICY_BLOCKED" : "TRANSFORMABLE",
                     "可按 Key/Slot 安全拆分，但不保留跨 Key 原子性", true, blocked);
         }
-        if (SINGLE_KEY.contains(command))
+        if (singleKey(command))
             return new SyncCommandCapability(command, "SUPPORTED", "直接同步", false, false);
         return new SyncCommandCapability(command, "UNKNOWN_BLOCKED", "未知命令采用失败关闭策略", false, true);
     }
