@@ -1,11 +1,15 @@
 # Sync Worker 构建、部署与扩容
 
+独立测试/生产部署以 [部署交付入口](deployment-delivery.md) 为主，配置模板在
+[Worker deploy/config](../redis-ops-sync-worker/deploy/config/application-pro.yml.example)。
+以下合并包和 redis-opsctl 是兼容入口，不代表 Worker 构建依赖 Platform。
+
 Sync Worker 是 `sync-service` 生成的独立 Java 进程。它通过共享 MySQL 领取同步
 控制命令、维护租约和运行状态，并在本机保存加密 spool；不依赖 Platform HTTP。
 
 ## 1. 构建和安装
 
-发布包与 Platform 使用同一个构建入口：
+需要合并发布包时使用以下兼容入口；独立 Worker 在自身目录运行 `mvn clean verify`：
 
 ```bash
 ./scripts/build-release.sh
@@ -47,6 +51,11 @@ SYNC_ENGINE_DATA_DIR='/data/redis-ops-sync'
 - `SYNC_ENGINE_INSTANCE_ID` 必须在所有运行实例间唯一，建议包含机器 IP/主机名和实例序号。
 - `SYNC_ENGINE_DATA_DIR` 必须位于容量充足、只有部署用户可访问的本地持久盘。
 - `SYNC_FLYWAY_ENABLED=false` 保持默认值。数据库升级只由 Platform 执行。
+
+Worker 的运行参数由 Spring Config Data 管理。可将 Worker 专属 YAML 挂载到 `config/`，或设置
+`SPRING_CONFIG_ADDITIONAL_LOCATION`。Apollo 需先引入适配器并完成启动加载验证，参见
+[Apollo 接入说明](apollo-integration.md)。Worker 不读取 Platform 的配置文件；数据库密码和密钥环
+可直接配置为 Spring 属性，由外部配置中心负责存储安全，不要求只能通过环境变量注入。
 - Worker Actuator 端口只应向监控系统和管理网开放，不对外提供业务控制 API。
 
 建议为 Sync Worker 使用独立 MySQL 账号：集群资产和秘密表只读，同步任务、runtime、事件、

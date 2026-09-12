@@ -1,0 +1,14 @@
+-- migration 成功后执行，替换 REPLACE_WORKER_HOST。
+-- 权限根据 WorkerAssetMapper / WorkerControlJobMapper / WorkerSyncMapper 维护。
+GRANT SELECT ON redis_governance.redis_cluster TO 'redis_ops_worker'@'REPLACE_WORKER_HOST';
+GRANT SELECT ON redis_governance.redis_node TO 'redis_ops_worker'@'REPLACE_WORKER_HOST';
+GRANT SELECT ON redis_governance.redis_cluster_secret TO 'redis_ops_worker'@'REPLACE_WORKER_HOST';
+GRANT SELECT, UPDATE ON redis_governance.async_job TO 'redis_ops_worker'@'REPLACE_WORKER_HOST';
+GRANT SELECT, UPDATE ON redis_governance.sync_task TO 'redis_ops_worker'@'REPLACE_WORKER_HOST';
+GRANT SELECT, INSERT, UPDATE ON redis_governance.sync_runtime TO 'redis_ops_worker'@'REPLACE_WORKER_HOST';
+GRANT INSERT ON redis_governance.sync_task_event TO 'redis_ops_worker'@'REPLACE_WORKER_HOST';
+GRANT INSERT ON redis_governance.sync_precheck_report TO 'redis_ops_worker'@'REPLACE_WORKER_HOST';
+GRANT INSERT, UPDATE ON redis_governance.sync_channel_checkpoint TO 'redis_ops_worker'@'REPLACE_WORKER_HOST';
+GRANT INSERT ON redis_governance.sync_metric_snapshot TO 'redis_ops_worker'@'REPLACE_WORKER_HOST';
+-- Upsert 使用已有列计算 GREATEST/COALESCE，需要 SELECT。
+GRANT SELECT, INSERT, UPDATE ON redis_governance.sync_full_progress TO 'redis_ops_worker'@'REPLACE_WORKER_HOST';

@@ -1,0 +1,11 @@
+-- DBA 审核模板：替换所有 REPLACE_*，禁止原样执行或将真实凭据提交 Git。
+-- 来源主机按实际部署填写，不使用 '%'。
+CREATE DATABASE redis_governance CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'redis_ops_migrator'@'REPLACE_PLATFORM_HOST' IDENTIFIED BY 'REPLACE_MIGRATOR_PASSWORD';
+CREATE USER 'redis_ops_platform'@'REPLACE_PLATFORM_HOST' IDENTIFIED BY 'REPLACE_PLATFORM_PASSWORD';
+CREATE USER 'redis_ops_worker'@'REPLACE_WORKER_HOST' IDENTIFIED BY 'REPLACE_WORKER_PASSWORD';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES
+ON redis_governance.* TO 'redis_ops_migrator'@'REPLACE_PLATFORM_HOST';
+GRANT SELECT, INSERT, UPDATE, DELETE
+ON redis_governance.* TO 'redis_ops_platform'@'REPLACE_PLATFORM_HOST';
+-- Worker 在 migration 完成后按另一个模板逐表授权；不授予全局权限或 GRANT OPTION。

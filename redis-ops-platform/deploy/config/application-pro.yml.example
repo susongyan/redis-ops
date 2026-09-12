@@ -1,0 +1,36 @@
+# 复制到 /etc/redis-ops-platform/application-pro.yml；替换全部 REPLACE_*。
+# 不直接部署仓库内示例账号；不要将填入真实秘密的文件提交 Git。
+spring:
+  application:
+    name: redis-ops-platform
+  datasource:
+    url: "jdbc:mysql://REPLACE_MYSQL_HOST:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC"
+    username: redis_ops_platform
+    password: "REPLACE_PLATFORM_PASSWORD"
+  flyway:
+    enabled: true
+    # 独立迁移账号；url 默认沿用 datasource。schema 只由 Platform 迁移。
+    user: redis_ops_migrator
+    password: "REPLACE_MIGRATOR_PASSWORD"
+server:
+  port: 8080
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: never
+worker:
+  enabled: true
+  instance-id: platform-pro-01
+  discovery:
+    poll-interval-ms: 1000
+collector:
+  enabled: true
+  fast-interval-ms: 15000
+redis-ops:
+  credential:
+    keys: "v1:REPLACE_BASE64_32_BYTE_KEY"
+    rotation-batch-size: 50

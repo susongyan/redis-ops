@@ -1,0 +1,45 @@
+# 复制到 /etc/redis-ops-worker/application-pro.yml；替换全部 REPLACE_*。
+spring:
+  application:
+    name: redis-ops-sync-worker
+  datasource:
+    url: "jdbc:mysql://REPLACE_MYSQL_HOST:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC"
+    username: redis_ops_worker
+    password: "REPLACE_WORKER_PASSWORD"
+  flyway:
+    enabled: false
+server:
+  port: 8081
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: never
+worker:
+  enabled: false
+redis-ops:
+  credential:
+    # 必须与 Platform 密钥环一致。
+    keys: "v1:REPLACE_BASE64_32_BYTE_KEY"
+sync:
+  engine:
+    enabled: true
+    instance-id: worker-pro-01
+    data-dir: /var/lib/redis-ops-worker/spool
+    max-concurrent-tasks: 2
+    poll-interval-ms: 500
+    lease-seconds: 30
+    lease-renew-interval-ms: 5000
+    lease-safety-margin-ms: 2000
+    recovery-scan-interval-ms: 2000
+    metric-interval-ms: 1000
+    segment-bytes: 268435456
+    fsync-interval-ms: 200
+    connect-timeout-ms: 10000
+    full-apply-concurrency: 4
+    full-apply-queue-capacity: 2000
+    full-apply-pipeline-size: 100
+    full-apply-transaction-max-bytes: 4194304

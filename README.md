@@ -35,6 +35,9 @@ cd redis-ops-frontend && npm ci && npm run build
 
 ## Linux 快速部署
 
+测试/生产独立部署请从 [部署交付入口](docs/deployment-delivery.md) 开始，包含数据库初始化、
+两套外部 YAML、前端代理、Apollo 接入边界及升级验收。以下合并发布包仅保留为兼容入口。
+
 生成包含 Platform、Sync Worker、前端静态文件、Nginx/systemd 模板和统一控制脚本的自包含
 发布包：
 

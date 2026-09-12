@@ -1,5 +1,9 @@
 # Platform 前后端构建与部署
 
+独立测试/生产部署以 [部署交付入口](deployment-delivery.md) 为主，数据库步骤见
+[数据库手册](../redis-ops-platform/sql/README.md)，前端见 [Nginx 部署](frontend-deployment.md)。
+本文余下内容为既有合并发布包与 redis-opsctl 的兼容操作说明，不要求三个项目一起构建。
+
 本文说明如何从源码构建 Redis Governance Platform，并在 Linux 上以原生进程部署
 Platform API 与 Nginx 前端。生产 MySQL 和被管理 Redis 均为外部依赖。
 
@@ -22,7 +26,7 @@ Platform API 与 Nginx 前端。生产 MySQL 和被管理 Redis 均为外部依�
 ./scripts/build-release.sh
 ```
 
-脚本默认依次执行 Maven 全仓验证、`npm ci` 和前端生产构建，然后在 `release/` 下生成
+兼容脚本执行后端构建验证、`npm ci` 和前端生产构建，然后在 `release/` 下生成
 `redis-ops-<version>.tar.gz`。只在已由 CI 完成测试时才建议使用：
 
 ```bash
@@ -72,8 +76,13 @@ PLATFORM_PROXY_URL='http://127.0.0.1:8080'
 任何权限，控制脚本会拒绝加载权限高于 `600` 的文件。
 
 建议 Platform 数据库账号拥有平台业务表和 Flyway schema history 所需的 DDL/DML 权限。
-首次启动由 Platform 执行 V1–V11 migration，后续启动由 Flyway 自动识别已执行版本，不会
-重复迁移。
+首次启动由 Platform 执行发布 JAR 内的 migration，后续由 Flyway 识别已执行版本。本次已提交
+基线为 V1–V26；本地未提交 V27/V28 不属于该发布。先建库再启动，详见数据库手册。
+
+运行配置（包括数据库密码、Redis 密钥环）均可通过 Spring 属性配置。Platform 专属 YAML 可挂载到发布目录的
+`config/`，或通过 `SPRING_CONFIG_ADDITIONAL_LOCATION` 指定外部目录。Apollo 还需要应用侧适配器依赖，
+不是仅设置 import 就可用，见 [Apollo 接入说明](apollo-integration.md)。两个进程使用各自配置；
+密钥环内容一致，存储安全由外部配置管理负责，不要求只能通过环境变量注入。
 
 ## 4. 检查、启动和停止
 
