@@ -30,7 +30,7 @@ export default function IdentityGate() {
     <Form form={form} layout="vertical" onFinish={submit}>
       {!user&&<Form.Item name="username" label="本地账号" rules={[{required:true}]}><Input autoComplete="username" maxLength={64}/></Form.Item>}
       {user&&<Form.Item name="oldPassword" label="当前密码" rules={[{required:true}]}><Input.Password autoComplete="current-password" maxLength={72}/></Form.Item>}
-      <Form.Item name="password" label={user?'新密码（12–72 UTF-8 字节）':'密码'} rules={[{required:true}]}><Input.Password autoComplete={user?'new-password':'current-password'} maxLength={72}/></Form.Item>
+      <Form.Item name="password" label={user?'新密码（至少 6 个字符，最多 72 UTF-8 字节）':'密码'} rules={[{required:true}]}><Input.Password autoComplete={user?'new-password':'current-password'} maxLength={72}/></Form.Item>
       {user&&<Form.Item name="confirm" label="确认新密码" dependencies={['password']} rules={[{required:true},({getFieldValue})=>({validator:(_,v)=>v===getFieldValue('password')?Promise.resolve():Promise.reject(new Error('两次密码不一致'))})]}><Input.Password autoComplete="new-password" maxLength={72}/></Form.Item>}
       <Space wrap><Button type="primary" htmlType="submit" loading={busy}>{user?'保存并重新登录':'登录'}</Button>{user&&<Button onClick={logout}>退出</Button>}{user&&!user.passwordChangeRequired&&<Button onClick={()=>setChanging(false)}>返回</Button>}</Space>
     </Form>

@@ -31,7 +31,7 @@ export default function UsersPage(){
       <Form form={form} layout="vertical">
         {edit?.mode==='create'&&<Form.Item name="login" label="账号（3–64 位字母、数字、点、下划线、连字符）" rules={[{required:true}]}><Input maxLength={64} autoComplete="off"/></Form.Item>}
         {edit?.mode!=='reset'&&<><Form.Item name="displayName" label="显示名称" rules={[{required:true}]}><Input maxLength={128}/></Form.Item><Form.Item name="role" label="角色" rules={[{required:true}]}><Select options={[{value:'OPERATOR',label:'运维用户'},{value:'ADMIN',label:'管理员'}]}/></Form.Item></>}
-        {edit?.mode==='edit'?<Form.Item name="status" label="状态"><Select options={[{value:'ACTIVE',label:'启用'},{value:'DISABLED',label:'禁用'}]}/></Form.Item>:<Form.Item name="password" label="临时密码（12–72 UTF-8 字节，首次登录需修改）" rules={[{required:true}]}><Input.Password maxLength={72} autoComplete="new-password"/></Form.Item>}
+        {edit?.mode==='edit'?<Form.Item name="status" label="状态"><Select options={[{value:'ACTIVE',label:'启用'},{value:'DISABLED',label:'禁用'}]}/></Form.Item>:<Form.Item name="password" label="临时密码（至少 6 个字符，最多 72 UTF-8 字节，首次登录需修改）" rules={[{required:true}]}><Input.Password maxLength={72} autoComplete="new-password"/></Form.Item>}
       </Form>
     </Modal>
   </Card>
