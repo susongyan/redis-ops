@@ -69,7 +69,7 @@ public class ClusterRelationController {
     public record RelationDetail(ClusterRelation relation, List<SyncTask> tasks, List<Switchover> switchovers) {
     }
     private static String op(HttpServletRequest r) {
-        String x = r.getHeader("X-Operator");
+        String x = r.getUserPrincipal().getName();
         return x == null ? "anonymous" : x;
     }
     private static <T> ApiResponse<T> wrap(T x, HttpServletRequest r) {

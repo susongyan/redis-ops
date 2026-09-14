@@ -64,7 +64,7 @@ public class DistributionController {
                 t -> String.valueOf(t.id()), s -> service.get(Long.parseLong(s))), r);
     }
     private static String operator(HttpServletRequest r) {
-        return r.getHeader("X-Operator") == null ? "anonymous" : r.getHeader("X-Operator");
+        return r.getUserPrincipal().getName() == null ? "anonymous" : r.getUserPrincipal().getName();
     }
     private static <T> ApiResponse<T> wrap(T value, HttpServletRequest r) {
         return ApiResponse.of(value, String.valueOf(r.getAttribute(RequestIdFilter.ATTRIBUTE)));

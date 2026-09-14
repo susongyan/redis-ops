@@ -79,7 +79,7 @@ public class ValidationController {
     public record Detail(ValidationTask task, ValidationRun latestRun) {
     }
     private static String operator(HttpServletRequest request) {
-        String value = request.getHeader("X-Operator");
+        String value = request.getUserPrincipal().getName();
         return value == null ? "anonymous" : value;
     }
     private static <T> ApiResponse<T> wrap(T value, HttpServletRequest request) {

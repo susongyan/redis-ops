@@ -89,7 +89,7 @@ public class ApplicationController {
     private record BindingMutation(long applicationId, long clusterId, Object body) {
     }
     private static String operator(HttpServletRequest r) {
-        String v = r.getHeader("X-Operator");
+        String v = r.getUserPrincipal().getName();
         return v == null ? "anonymous" : v;
     }
     private static <T> ApiResponse<T> wrap(T v, HttpServletRequest r) {

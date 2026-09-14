@@ -80,7 +80,7 @@ public class TtlGovernanceController {
     record Detail(TtlGovernanceTask task, TtlGovernanceRun latestRun, List<TtlGovernanceCheckpoint> checkpoints) {
     }
     private static String operator(HttpServletRequest request) {
-        String value = request.getHeader("X-Operator");
+        String value = request.getUserPrincipal().getName();
         return value == null ? "anonymous" : value;
     }
     private static <T> ApiResponse<T> response(T data, HttpServletRequest request) {

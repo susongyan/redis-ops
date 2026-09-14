@@ -31,6 +31,7 @@ ADR 记录会长期影响代码结构、运行方式、安全边界或迁移成�
 | [ADR-016](ADR-016-task-worker-observability.md) | Accepted | 任务级 Worker 实例、机器 IP 与租约状态观测 |
 | [ADR-017](ADR-017-bounded-key-distribution.md) | Accepted | Platform 内按需执行、有界内存的 Key 分布分析 |
 | [ADR-018](ADR-018-scan-batch-throttling.md) | Accepted | 分布分析按 SCAN COUNT 与批次最小间隔限速，旧参数只读兼容 |
+| [ADR-019](ADR-019-local-identity-and-authentication-extensions.md) | Accepted | 本地用户授权与企业认证扩展边界（实现进行中） |
 
 ## 新建模板
 

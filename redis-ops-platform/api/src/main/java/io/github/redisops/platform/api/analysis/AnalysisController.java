@@ -36,7 +36,7 @@ public class AnalysisController {
             @Valid @RequestBody Request body, HttpServletRequest httpRequest) {
         AnalysisRequest analysisRequest = new AnalysisRequest(body.type, body.resourceType, body.resourceId, body.facts,
                 body.evidence, body.incidentRefs);
-        String operator = httpRequest.getHeader("X-Operator");
+        String operator = httpRequest.getUserPrincipal().getName();
         AnalysisRun run = idempotency.execute(operator == null ? "anonymous" : operator, key, "ANALYSIS_CREATE",
                 analysisRequest, () -> service.analyzeRun(analysisRequest), saved -> saved.id().toString(),
                 id -> service.get(Long.parseLong(id)));

@@ -71,7 +71,7 @@ public class AlertController {
     record Silence(@NotNull java.time.Instant until) {
     }
     private static String op(HttpServletRequest r) {
-        String x = r.getHeader("X-Operator");
+        String x = r.getUserPrincipal().getName();
         return x == null ? "anonymous" : x;
     }
     private static <T> ApiResponse<T> w(T x, HttpServletRequest r) {

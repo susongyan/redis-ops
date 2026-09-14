@@ -115,7 +115,7 @@ public class ClusterController {
     private record MutationRequest(long id, long version, Object body) {
     }
     private static String operator(HttpServletRequest r) {
-        String v = r.getHeader("X-Operator");
+        String v = r.getUserPrincipal().getName();
         return v == null ? "anonymous" : v;
     }
     private static <T> ApiResponse<T> wrap(T value, HttpServletRequest r) {

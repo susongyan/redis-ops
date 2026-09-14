@@ -10,6 +10,11 @@ import java.util.List;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    ResponseEntity<ErrorBody> unreadable(HttpServletRequest request) {
+        return ResponseEntity.badRequest()
+                .body(new ErrorBody("INVALID_REQUEST", "Invalid request body", requestId(request), List.of()));
+    }
     record ErrorBody(String code, String message, String requestId, List<String> details) {
     }
     @ExceptionHandler(BusinessException.class)

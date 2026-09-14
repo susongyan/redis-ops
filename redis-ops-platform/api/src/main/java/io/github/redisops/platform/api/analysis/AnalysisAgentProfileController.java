@@ -59,7 +59,7 @@ public class AnalysisAgentProfileController {
     }
 
     private static String operator(HttpServletRequest request) {
-        String value = request.getHeader("X-Operator");
+        String value = request.getUserPrincipal().getName();
         return value == null ? "anonymous" : value;
     }
 

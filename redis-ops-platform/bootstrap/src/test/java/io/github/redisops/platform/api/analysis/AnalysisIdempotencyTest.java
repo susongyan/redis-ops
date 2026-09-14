@@ -37,6 +37,7 @@ class AnalysisIdempotencyTest {
         var request = new AnalysisController.Request(AnalysisType.SYNC, "SYNC_TASK", "1", Map.of(), List.of(),
                 List.of());
         var http = new MockHttpServletRequest();
+        http.setUserPrincipal(() -> "anonymous");
         assertEquals(controller.analyze("same-key", request, http).data(),
                 controller.analyze("same-key", request, http).data());
         verify(service, times(1)).analyzeRun(any());

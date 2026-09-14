@@ -79,7 +79,7 @@ public class RedisOperationController {
             List<String> allowedDataTypes, String missingKeyPolicy, boolean blockedByDefault, String changeReason) {
     }
     private static String operator(HttpServletRequest r) {
-        var x = r.getHeader("X-Operator");
+        var x = r.getUserPrincipal().getName();
         return x == null ? "anonymous" : x;
     }
     private static <T> ApiResponse<T> response(T x, HttpServletRequest r) {

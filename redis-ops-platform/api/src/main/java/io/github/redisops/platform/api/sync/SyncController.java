@@ -237,7 +237,7 @@ public class SyncController {
                 rid -> service.get(Long.parseLong(rid))), request);
     }
     private static String operator(HttpServletRequest request) {
-        String x = request.getHeader("X-Operator");
+        String x = request.getUserPrincipal().getName();
         return x == null ? "anonymous" : x;
     }
     private static <T> ApiResponse<T> wrap(T value, HttpServletRequest request) {
