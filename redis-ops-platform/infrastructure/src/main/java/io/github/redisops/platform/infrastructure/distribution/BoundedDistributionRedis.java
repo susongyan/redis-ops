@@ -103,7 +103,7 @@ public class BoundedDistributionRedis implements DistributionScanPort {
     }
     @Override
     public Page scan(long clusterId, int database, Shard shard, String cursor, int count, long deadlineNanos) {
-        if (!cursor.matches("[0-9]{1,20}") || count < 1 || count > 200)
+        if (!cursor.matches("[0-9]{1,20}") || count < 1 || count > limits.scanCount())
             throw new IllegalArgumentException("INVALID_SCAN_ARGUMENT");
         try (var profile = profiles.get(clusterId);
                 Wire wire = new Wire(shard.endpoint(), profile, true, database, deadlineNanos)) {

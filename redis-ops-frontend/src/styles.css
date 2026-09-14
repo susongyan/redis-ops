@@ -32,3 +32,10 @@
 .distribution-rule{padding:12px 0;border-bottom:1px solid #edf0f4}
 .distribution-page .ant-card-body{min-width:0}
 @media(max-width:800px){.distribution-page .ant-card-body{padding:14px}.distribution-page .ant-card-head{padding:0 14px}}
+.distribution-step-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 0 4px; }
+.distribution-budget-row { border-top: 1px solid #f0f0f0; margin-top: 20px; padding-top: 16px; }
+.distribution-budget-row h4 { margin: 0 0 12px; }
+.distribution-result-rule { overflow-wrap: anywhere; padding: 10px 0; border-top: 1px solid #f0f0f0; line-height: 1.8; }
+.distribution-group-cell { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+.distribution-group-text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 400; white-space: pre-wrap; }
+.distribution-group-rule { margin-top: 6px; font-size: 12px; }

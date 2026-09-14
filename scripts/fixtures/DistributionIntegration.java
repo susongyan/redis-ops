@@ -35,7 +35,7 @@ public class DistributionIntegration {
     static void check(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
     static DistributionSpec spec(long id) {
         return new DistributionSpec(id, 0, List.of(new DistributionRule("r", "business", "",
-                DistributionRule.Kind.SEGMENTS, ":", 1)), DistributionCounter.Mode.TOP_K, 1000, 10000, 60, 1000);
+                DistributionRule.Kind.SEGMENTS, ":", 1)), DistributionCounter.Mode.TOP_K, 1000, 10000, 60, 200, 200);
     }
     static DistributionCheckpoint checkpoint(long count) {
         return new DistributionCheckpoint("a".repeat(64), List.of(new DistributionCheckpoint.Cursor(

@@ -20,7 +20,7 @@ class DistributionServiceTest {
     DistributionScanPort.Topology topology = new DistributionScanPort.Topology("a".repeat(64), List.of(shard));
     DistributionSpec spec = new DistributionSpec(1, 0,
             List.of(new DistributionRule("r", "business", "", DistributionRule.Kind.SEGMENTS, ":", 1)),
-            DistributionCounter.Mode.TOP_K, 10, 1000, 60, 1000);
+            DistributionCounter.Mode.TOP_K, 10, 1000, 60, 200, 200);
     @BeforeEach
     void setup() {
         repository = mock(DistributionRepository.class);
@@ -44,6 +44,38 @@ class DistributionServiceTest {
     }
     DistributionScanPort.Page page(String cursor) {
         return new DistributionScanPort.Page(cursor, List.of("order:1".getBytes(StandardCharsets.UTF_8)));
+    }
+    @Test
+    void newBudgetsAreBoundedAndLegacyTasksNeverScan() {
+        assertDoesNotThrow(() -> new DistributionSpec(1, 0, spec.rules(), spec.mode(), 10, 1000, 60, 5000, 10));
+        assertThrows(IllegalArgumentException.class,
+                () -> new DistributionSpec(1, 0, spec.rules(), spec.mode(), 10, 1000, 60, 5001, 10));
+        assertThrows(IllegalArgumentException.class,
+                () -> new DistributionSpec(1, 0, spec.rules(), spec.mode(), 10, 1000, 60, 200, 9));
+        var legacy = new DistributionSpec(1, 0, spec.rules(), spec.mode(), 10, 1000, 60, 1000, null, null);
+        when(repository.get(1)).thenReturn(new DistributionTask(1, 1, legacy, "RUNNING", null, 1, 0, 0, 1, 0,
+                Instant.EPOCH, Instant.EPOCH, false));
+        service.poll();
+        verify(repository, timeout(3000)).save(lease, null, "INCOMPLETE", "LEGACY_RATE_CONFIGURATION");
+        verify(repository, never()).checkpoint(anyLong());
+        verify(redis, never()).scan(anyLong(), anyInt(), any(), anyString(), anyInt());
+    }
+    @Test
+    void countAndIntervalApplyAcrossShards() {
+        var configured = new DistributionSpec(1, 0, spec.rules(), spec.mode(), 10, 1000, 60, 800, 80);
+        when(repository.get(1)).thenReturn(new DistributionTask(1, 1, configured, "RUNNING", null, 1, 0, 0, 2, 0,
+                Instant.EPOCH, Instant.EPOCH, false));
+        when(redis.topology(1, 0)).thenReturn(new DistributionScanPort.Topology("a".repeat(64),
+                List.of(shard, new DistributionScanPort.Shard("b", "localhost:6380"))));
+        List<Long> starts = Collections.synchronizedList(new ArrayList<>());
+        when(redis.scan(anyLong(), anyInt(), any(), anyString(), eq(800))).thenAnswer(invocation -> {
+            starts.add(System.nanoTime());
+            return page("0");
+        });
+        service.poll();
+        verify(repository, timeout(3000)).save(eq(lease), any(), eq("COMPLETED"), isNull());
+        assertEquals(2, starts.size());
+        assertTrue(starts.get(1) - starts.get(0) >= 75_000_000L);
     }
     @Test
     void commitsCursorAndAggregateTogetherAndCompletesOnlyAfterZero() {

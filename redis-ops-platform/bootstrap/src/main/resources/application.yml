@@ -23,10 +23,9 @@ distribution:
   # On-demand only; no periodic full scans. Values may be tightened, not enlarged.
   concurrent-tasks: 1
   max-duration-seconds: 21600
-  max-keys-per-second: 1000
-  max-scans-per-second: 5
+  max-scan-count: 5000
+  min-scan-interval-ms: 10
   max-groups: 1000
-  scan-count: 200
   max-response-bytes: 1048576
   max-response-elements: 5000
   max-key-bytes: 4096

@@ -21,13 +21,13 @@ public class DistributionService implements DisposableBean {
     private final ExecutorService executor;
     private final ScheduledExecutorService heartbeats = Executors.newScheduledThreadPool(1,
             r -> daemon(r, "distribution-heartbeat"));
-    private final int maxDuration, maxRate, maxGroups;
-    private long scanIntervalNanos = 200_000_000L;
-    @Value("${distribution.max-scans-per-second:5}")
-    public void setMaxScansPerSecond(int value) {
-        if (value < 1 || value > 5)
+    private final int maxDuration, maxScanCount, maxGroups;
+    private int minScanIntervalMillis = 10;
+    @Value("${distribution.min-scan-interval-ms:10}")
+    public void setMinScanIntervalMillis(int value) {
+        if (value < 10 || value > 60000)
             throw new IllegalArgumentException("INVALID_DISTRIBUTION_SCAN_RATE");
-        scanIntervalNanos = 1_000_000_000L / value;
+        minScanIntervalMillis = value;
     }
     private volatile boolean closing;
     private final ConcurrentMap<Long, Thread> running = new ConcurrentHashMap<>();
@@ -35,16 +35,17 @@ public class DistributionService implements DisposableBean {
             RedisConnectionProfileProvider profiles,
             @Value("${distribution.concurrent-tasks:1}") int concurrent,
             @Value("${distribution.max-duration-seconds:21600}") int maxDuration,
-            @Value("${distribution.max-keys-per-second:1000}") int maxRate,
+            @Value("${distribution.max-scan-count:5000}") int maxScanCount,
             @Value("${distribution.max-groups:1000}") int maxGroups) {
-        if (concurrent < 1 || concurrent > 2 || maxDuration < 1 || maxDuration > 21600 || maxRate < 1 || maxRate > 1000
+        if (concurrent < 1 || concurrent > 2 || maxDuration < 1 || maxDuration > 21600 || maxScanCount < 1
+                || maxScanCount > 5000
                 || maxGroups < 1 || maxGroups > 1000)
             throw new IllegalArgumentException("INVALID_DISTRIBUTION_CONFIGURATION");
         this.repository = repository;
         this.redis = redis;
         this.profiles = profiles;
         this.maxDuration = maxDuration;
-        this.maxRate = maxRate;
+        this.maxScanCount = maxScanCount;
         this.maxGroups = maxGroups;
         slots = new Semaphore(concurrent);
         executor = Executors.newFixedThreadPool(concurrent, r -> daemon(r, "distribution-scan"));
@@ -55,7 +56,10 @@ public class DistributionService implements DisposableBean {
         return t;
     }
     public DistributionTask create(DistributionSpec spec) {
-        if (spec.durationSeconds() > maxDuration || spec.keysPerSecond() > maxRate || spec.capacity() > maxGroups)
+        if (spec.legacyRateConfiguration())
+            throw new IllegalArgumentException("LEGACY_RATE_CONFIGURATION");
+        if (spec.durationSeconds() > maxDuration || spec.scanCount() > maxScanCount || spec.capacity() > maxGroups
+                || spec.scanIntervalMillis() < minScanIntervalMillis)
             throw new IllegalArgumentException("DISTRIBUTION_DEPLOYMENT_BUDGET_EXCEEDED");
         validateCluster(spec.clusterId(), spec.database());
         return repository.create(spec);
@@ -135,7 +139,8 @@ public class DistributionService implements DisposableBean {
                             throw new IllegalStateException("SCAN_TOPOLOGY_UNSTABLE");
                         lastTopology = System.nanoTime();
                     }
-                    batch = redis.scan(cluster, db, topology.shards().get(index), cursors[index], 200, until);
+                    batch = redis.scan(cluster, db, topology.shards().get(index), cursors[index],
+                            Math.min(200, maxScanCount), until);
                 } catch (IllegalStateException e) {
                     if (System.nanoTime() >= until) {
                         limit = true;
@@ -178,7 +183,8 @@ public class DistributionService implements DisposableBean {
                 if (limit)
                     break;
                 sleepUntil(Math.min(until,
-                        before + Math.max(scanIntervalNanos, batch.keys().size() * 1_000_000_000L / maxRate)));
+                        before + Math.max(Math.max(200, minScanIntervalMillis) * 1_000_000L,
+                                batch.keys().size() * 1_000_000L)));
             }
             if (System.nanoTime() < until
                     && !topology.fingerprint().equals(redis.topology(cluster, db, until).fingerprint()))
@@ -244,6 +250,14 @@ public class DistributionService implements DisposableBean {
         try {
             var task = repository.get(lease.taskId());
             var spec = task.spec();
+            if (spec.legacyRateConfiguration()) {
+                repository.save(lease, null, "INCOMPLETE", "LEGACY_RATE_CONFIGURATION");
+                return;
+            }
+            if (spec.scanCount() > maxScanCount || spec.scanIntervalMillis() < minScanIntervalMillis) {
+                repository.save(lease, null, "PAUSED", "DEPLOYMENT_BUDGET_CHANGED");
+                return;
+            }
             committed = repository.checkpoint(task.id()).orElse(null);
             long deadline = started + Math.max(0, Math.min(spec.durationSeconds(), maxDuration) * 1000L
                     - (committed == null ? 0 : committed.elapsedMillis())) * 1_000_000L;
@@ -259,7 +273,7 @@ public class DistributionService implements DisposableBean {
             var classifier = new DistributionClassifier(spec.rules());
             var counter = new DistributionCounter(spec.mode(), spec.capacity(), spec.rules());
             List<DistributionCheckpoint.Cursor> cursors = new ArrayList<>();
-            int next = 0, rate = Math.min(spec.keysPerSecond(), maxRate), slow = 0;
+            int next = 0, interval = spec.scanIntervalMillis(), slow = 0;
             long initialElapsed = 0;
             if (committed == null)
                 for (var shard : topology.shards())
@@ -269,7 +283,7 @@ public class DistributionService implements DisposableBean {
                 cursors.addAll(committed.cursors());
                 next = committed.nextShard();
                 initialElapsed = committed.elapsedMillis();
-                rate = Math.min(rate, committed.effectiveRate());
+                interval = Math.max(interval, committed.effectiveIntervalMillis());
                 slow = committed.slowStreak();
             }
             long lastSave = 0, lastTopology = System.nanoTime();
@@ -287,7 +301,7 @@ public class DistributionService implements DisposableBean {
                         repository.save(lease, committed, "INCOMPLETE", "TOPOLOGY_CHANGED");
                         return;
                     }
-                    var state = state(topology, cursors, next, counter, elapsed, rate, slow);
+                    var state = state(topology, cursors, next, counter, elapsed, interval, slow);
                     repository.save(lease, state, complete ? "COMPLETED" : "INCOMPLETE",
                             complete ? null : "BUDGET_REACHED");
                     return;
@@ -308,7 +322,8 @@ public class DistributionService implements DisposableBean {
                 long before = System.nanoTime();
                 DistributionScanPort.Page batch;
                 try {
-                    batch = redis.scan(spec.clusterId(), spec.database(), cursor.shard(), cursor.cursor(), 200,
+                    batch = redis.scan(spec.clusterId(), spec.database(), cursor.shard(), cursor.cursor(),
+                            spec.scanCount(),
                             deadline);
                     timeouts = 0;
                 } catch (IllegalStateException e) {
@@ -323,7 +338,7 @@ public class DistributionService implements DisposableBean {
                 else
                     slow = 0;
                 if (slow == 3)
-                    rate = Math.max(1, rate / 2);
+                    interval = Math.min(60000, interval * 2);
                 if (slow >= 6) {
                     repository.save(lease, committed, "PAUSED", "SCAN_SLOW");
                     return;
@@ -340,14 +355,15 @@ public class DistributionService implements DisposableBean {
                 next = (next + 1) % cursors.size();
                 if (System.nanoTime() - lastSave >= 1_000_000_000L) {
                     var state = state(topology, cursors, next, counter,
-                            initialElapsed + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started), rate, slow);
+                            initialElapsed + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started), interval,
+                            slow);
                     if (!repository.save(lease, state, "RUNNING", null))
                         return;
                     committed = state;
                     lastSave = System.nanoTime();
                 }
                 long waitUntil = Math.min(
-                        before + Math.max(scanIntervalNanos, batch.keys().size() * 1_000_000_000L / rate),
+                        before + interval * 1_000_000L,
                         started + Math.max(0, Math.min(spec.durationSeconds(), maxDuration) * 1000L - initialElapsed)
                                 * 1_000_000L);
                 while (!closing && !lost.get() && System.nanoTime() < waitUntil)
@@ -378,10 +394,11 @@ public class DistributionService implements DisposableBean {
         }
     }
     private static DistributionCheckpoint state(DistributionScanPort.Topology topology,
-            List<DistributionCheckpoint.Cursor> cursors, int next, DistributionCounter counter, long elapsed, int rate,
+            List<DistributionCheckpoint.Cursor> cursors, int next, DistributionCounter counter, long elapsed,
+            int interval,
             int slow) {
         return new DistributionCheckpoint(topology.fingerprint(), cursors, next, counter.observed(), elapsed,
-                counter.snapshot(), rate, slow);
+                counter.snapshot(), interval, slow);
     }
     private static void sleepUntil(long deadline) {
         long remaining = deadline - System.nanoTime();
