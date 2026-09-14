@@ -19,6 +19,20 @@ spring:
 mybatis:
   configuration:
     map-underscore-to-camel-case: true
+distribution:
+  # On-demand only; no periodic full scans. Values may be tightened, not enlarged.
+  concurrent-tasks: 1
+  max-duration-seconds: 21600
+  max-keys-per-second: 1000
+  max-scans-per-second: 5
+  max-groups: 1000
+  scan-count: 200
+  max-response-bytes: 1048576
+  max-response-elements: 5000
+  max-key-bytes: 4096
+  max-shards: 256
+  connect-timeout-ms: 2000
+  command-timeout-ms: 3000
 management:
   endpoints.web.exposure.include: health,info,prometheus
 collector:

@@ -319,6 +319,57 @@ CREATE TABLE `idempotency_record` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `key_distribution_group` (
+  `task_id` bigint NOT NULL,
+  `ordinal_no` int NOT NULL,
+  `rule_id` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `group_text` varchar(256) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `system_bucket` tinyint(1) NOT NULL,
+  `observed_count` bigint NOT NULL,
+  `error_count` bigint NOT NULL,
+  PRIMARY KEY (`task_id`,`ordinal_no`),
+  CONSTRAINT `fk_distribution_group_task` FOREIGN KEY (`task_id`) REFERENCES `key_distribution_task` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `key_distribution_runtime` (
+  `cluster_id` bigint NOT NULL,
+  `task_id` bigint DEFAULT NULL,
+  `owner` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `generation` bigint NOT NULL DEFAULT '0',
+  `lease_until` datetime(3) DEFAULT NULL,
+  `preview_after` datetime(3) DEFAULT NULL,
+  PRIMARY KEY (`cluster_id`),
+  KEY `idx_distribution_lease` (`lease_until`),
+  CONSTRAINT `fk_distribution_runtime_cluster` FOREIGN KEY (`cluster_id`) REFERENCES `redis_cluster` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `key_distribution_task` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `cluster_id` bigint NOT NULL,
+  `spec_json` json NOT NULL,
+  `status` varchar(24) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'QUEUED',
+  `reason` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `version` bigint NOT NULL DEFAULT '0',
+  `observed` bigint NOT NULL DEFAULT '0',
+  `capacity_reached` tinyint(1) NOT NULL DEFAULT '0',
+  `completed_shards` int NOT NULL DEFAULT '0',
+  `total_shards` int NOT NULL DEFAULT '0',
+  `elapsed_millis` bigint NOT NULL DEFAULT '0',
+  `checkpoint_json` mediumtext COLLATE utf8mb4_unicode_ci,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_distribution_queue` (`status`,`id`),
+  KEY `idx_distribution_cluster` (`cluster_id`,`status`),
+  CONSTRAINT `fk_distribution_cluster` FOREIGN KEY (`cluster_id`) REFERENCES `redis_cluster` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `notification_channel` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `channel_uuid` char(36) COLLATE utf8mb4_unicode_ci NOT NULL,

@@ -14,6 +14,12 @@ export async function request(path, options={}) {
 }
 
 export const api={
+  distributionPreview:(data,signal)=>request('/api/v1/key-distributions/preview',{method:'POST',body:JSON.stringify(data),signal,cache:'no-store'}),
+  createDistribution:data=>request('/api/v1/key-distributions/tasks',{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:JSON.stringify(data)}),
+  distributionTasks:(page=1)=>request(`/api/v1/key-distributions/tasks?page=${page}&size=20`),
+  distributionTask:id=>request(`/api/v1/key-distributions/tasks/${id}`),
+  distributionGroups:(id,page=1)=>request(`/api/v1/key-distributions/tasks/${id}/groups?page=${page}&size=20`),
+  controlDistribution:(id,version,action)=>request(`/api/v1/key-distributions/tasks/${id}/${action}`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'}),
   clusters:(params={})=>request(`/api/v1/clusters?${new URLSearchParams(Object.entries(params).filter(([,v])=>v!==undefined&&v!==''))}`),
   cluster:id=>request(`/api/v1/clusters/${id}`),
   createCluster:data=>request('/api/v1/clusters',{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:JSON.stringify(data)}),

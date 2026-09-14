@@ -39,6 +39,9 @@ Sync Worker ── PSYNC / RDB / RESP ──► Source Redis / Target Redis
 4. **独立源码与构建。** 按 ADR-013，Platform、Sync Worker、Frontend 拥有各自仓库根，
    Platform 与 Worker 只共享纯 Java sync-contract artifact；不共享业务 Service 或数据库 adapter。
    新网络服务仍需独立团队、故障或网络边界依据与 ADR。
+5. **Key 分布分析。** 按 ADR-017，由 Platform 自有任务、租约和聚合器按需执行，只统计 SCAN
+   观测次数，不占用 Sync Worker 或高频 Collector；只持久化有界分组，不保存原始样本集合。
+   游标和聚合 checkpoint 在同一 MySQL 事务内提交，超限页整体丢弃，拓扑变化停止并保留不完整结果。
 
 ## 3. 数据事实与一致性契约
 

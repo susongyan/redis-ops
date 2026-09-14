@@ -36,7 +36,7 @@ sync:
 
 先部署 Platform，由新增 V29 migration 向 sync_runtime 增加可空 IP 和上报 runtime ID 字段；再部署 Worker，最后前端。
 旧 Worker 可以继续运行，但不显示 IP。上报 runtime ID 与当前 runtime 不一致时隐藏 IP，防止旧版接管沿用历史地址。
-新环境使用 sql/latest 中的 V29 完整初始化 SQL；历史 V26 快照保持不变，使用旧快照时须继续迁移到 V29。不要直接用新 Worker 连接未升级的库。
+新环境使用 sql/latest 中的最新完整初始化 SQL（当前 V30）；历史 V26 快照保持不变，Worker IP 能力至少要求迁移到 V29。不要直接用新 Worker 连接未升级的库。
 回滚代码时保留新增可空列，不回改已执行 migration。
 
 验证：`node scripts/verify-analysis-migrations.mjs --worker-ip` 在独立临时 MySQL 中检查 V26 → V29、重复迁移、租约状态和混合版本接管。

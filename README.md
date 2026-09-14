@@ -6,6 +6,8 @@ Cluster 多 master 通道、目标 Slot 路由和安全接管已经形成闭环�
 
 数据校验支持全量、固定数量和百分比抽样，能够发现缺失、额外、类型、TTL 与摘要差异；大 Key 会安全降级，严格模式不会将含降级项的结果作为自动放行结论。
 
+[Key 分布分析](docs/key-distribution.md)支持按需有界预览、固定容量与 Top-K 前缀统计；统计 SCAN 观测次数，不读取 value，不占用 Sync Worker。
+
 ## 工程结构
 
 ```text
@@ -68,7 +70,7 @@ java -jar redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0
 cd redis-ops-frontend && npm run dev
 ```
 
-默认同一进程同时提供 API 并领取异步任务；设置 `WORKER_ENABLED=false` 可启动纯 API 实例。`REDIS_OPS_CREDENTIAL_KEYS` 的第一个 Key 用于新写入，后续 Key 仅用于读取和在线轮换旧密文。密钥只在首次部署时生成，后续重启必须复用同一密钥；生产环境应由部署系统安全注入，不能每次启动重新生成。
+默认同一进程同时提供 API 并领取异步任务；`WORKER_ENABLED=false` 停止资产发现/通用 Job 领取，不禁用独立的按需 Key 分布执行器。`REDIS_OPS_CREDENTIAL_KEYS` 的第一个 Key 用于新写入，后续 Key 仅用于读取和在线轮换旧密文。密钥只在首次部署时生成，后续重启必须复用同一密钥；生产环境应由部署系统安全注入，不能每次启动重新生成。
 
 API、内置 Worker 和 Redis 的端到端资产验收：
 

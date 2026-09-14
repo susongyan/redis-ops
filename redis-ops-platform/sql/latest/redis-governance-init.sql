@@ -1,7 +1,7 @@
--- Redis Ops V29 fresh database initialization; base commit 6fb6975756fef8006a2b95082ccee34c3bf2eeb9
+-- Redis Ops V30 fresh database initialization; base commit cf72906c493f214001e3f343c0a4ec768f6b5fa4
 -- Exact migration sources and hashes: manifest.json (may include uncommitted additions).
 -- MySQL 8.x. EMPTY ENVIRONMENT ONLY. Do not use mysql --force.
--- Contains real Flyway BASELINE version 29, not fabricated migration checksums.
+-- Contains real Flyway BASELINE version 30, not fabricated migration checksums.
 CREATE DATABASE redis_governance CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE redis_governance;
 SET time_zone = '+00:00';
@@ -324,6 +324,57 @@ CREATE TABLE `idempotency_record` (
   UNIQUE KEY `uk_idempotency_operator_key` (`operator_id`,`idempotency_key`),
   KEY `idx_idempotency_expiry` (`expires_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `key_distribution_group` (
+  `task_id` bigint NOT NULL,
+  `ordinal_no` int NOT NULL,
+  `rule_id` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `group_text` varchar(256) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `system_bucket` tinyint(1) NOT NULL,
+  `observed_count` bigint NOT NULL,
+  `error_count` bigint NOT NULL,
+  PRIMARY KEY (`task_id`,`ordinal_no`),
+  CONSTRAINT `fk_distribution_group_task` FOREIGN KEY (`task_id`) REFERENCES `key_distribution_task` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `key_distribution_runtime` (
+  `cluster_id` bigint NOT NULL,
+  `task_id` bigint DEFAULT NULL,
+  `owner` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `generation` bigint NOT NULL DEFAULT '0',
+  `lease_until` datetime(3) DEFAULT NULL,
+  `preview_after` datetime(3) DEFAULT NULL,
+  PRIMARY KEY (`cluster_id`),
+  KEY `idx_distribution_lease` (`lease_until`),
+  CONSTRAINT `fk_distribution_runtime_cluster` FOREIGN KEY (`cluster_id`) REFERENCES `redis_cluster` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `key_distribution_task` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `cluster_id` bigint NOT NULL,
+  `spec_json` json NOT NULL,
+  `status` varchar(24) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'QUEUED',
+  `reason` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `version` bigint NOT NULL DEFAULT '0',
+  `observed` bigint NOT NULL DEFAULT '0',
+  `capacity_reached` tinyint(1) NOT NULL DEFAULT '0',
+  `completed_shards` int NOT NULL DEFAULT '0',
+  `total_shards` int NOT NULL DEFAULT '0',
+  `elapsed_millis` bigint NOT NULL DEFAULT '0',
+  `checkpoint_json` mediumtext COLLATE utf8mb4_unicode_ci,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_distribution_queue` (`status`,`id`),
+  KEY `idx_distribution_cluster` (`cluster_id`,`status`),
+  CONSTRAINT `fk_distribution_cluster` FOREIGN KEY (`cluster_id`) REFERENCES `redis_cluster` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -944,7 +995,7 @@ CREATE TABLE `validation_task` (
 /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
 
 /*!40000 ALTER TABLE `operation_command_definition` DISABLE KEYS */;
-INSERT INTO `operation_command_definition` (`id`, `command_name`, `command_version`, `category`, `access_mode`, `risk_level`, `enabled`, `parameter_schema_json`, `key_position`, `routing_policy`, `approval_policy`, `max_value_bytes`, `created_at`, `updated_at`, `version`, `allowed_data_types_json`, `missing_key_policy`, `blocked_by_default`, `change_reason`, `updated_by`) VALUES (1,'GET',1,'STRING','READ','LOW',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}]',1,'SINGLE_KEY','DIRECT',4096,'2026-09-14 01:31:07.284','2026-09-14 01:31:07.548',0,'[\"string\"]','EXISTING_REQUIRED',0,NULL,NULL),(2,'TTL',1,'KEY','READ','LOW',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}]',1,'SINGLE_KEY','DIRECT',0,'2026-09-14 01:31:07.284','2026-09-14 01:31:07.555',0,'[\"string\", \"hash\", \"list\", \"set\", \"zset\", \"stream\", \"none\"]','EXISTING_REQUIRED',0,NULL,NULL),(3,'TYPE',1,'KEY','READ','LOW',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}]',1,'SINGLE_KEY','DIRECT',0,'2026-09-14 01:31:07.284','2026-09-14 01:31:07.555',0,'[\"string\", \"hash\", \"list\", \"set\", \"zset\", \"stream\", \"none\"]','EXISTING_REQUIRED',0,NULL,NULL),(4,'EXISTS',1,'KEY','READ','LOW',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}]',1,'SINGLE_KEY','DIRECT',0,'2026-09-14 01:31:07.284','2026-09-14 01:31:07.555',0,'[\"string\", \"hash\", \"list\", \"set\", \"zset\", \"stream\", \"none\"]','EXISTING_REQUIRED',0,NULL,NULL),(5,'SET',1,'STRING','WRITE','LOW',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"value\", \"type\": \"VALUE\", \"required\": true}]',1,'SINGLE_KEY','CONFIRM',4096,'2026-09-14 01:31:07.284','2026-09-14 01:31:07.562',0,'[\"string\"]','CREATE_ALLOWED',0,NULL,NULL),(6,'EXPIRE',1,'KEY','WRITE','MEDIUM',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"seconds\", \"type\": \"INTEGER\", \"required\": true}]',1,'SINGLE_KEY','APPROVAL',0,'2026-09-14 01:31:07.284','2026-09-14 01:31:07.569',0,'[\"string\", \"hash\", \"list\", \"set\", \"zset\", \"stream\"]','EXISTING_REQUIRED',0,NULL,NULL),(7,'PERSIST',1,'KEY','WRITE','MEDIUM',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}]',1,'SINGLE_KEY','APPROVAL',0,'2026-09-14 01:31:07.284','2026-09-14 01:31:07.569',0,'[\"string\", \"hash\", \"list\", \"set\", \"zset\", \"stream\"]','EXISTING_REQUIRED',0,NULL,NULL),(8,'HGET',1,'HASH','READ','LOW',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"field\", \"type\": \"TEXT\", \"required\": true}]',1,'SINGLE_KEY','DIRECT',4096,'2026-09-14 01:31:07.284','2026-09-14 01:31:07.576',0,'[\"hash\"]','EXISTING_REQUIRED',0,NULL,NULL),(9,'HSET',1,'HASH','WRITE','LOW',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"field\", \"type\": \"TEXT\", \"required\": true}, {\"name\": \"value\", \"type\": \"VALUE\", \"required\": true}]',1,'SINGLE_KEY','CONFIRM',4096,'2026-09-14 01:31:07.284','2026-09-14 01:31:07.583',0,'[\"hash\"]','CREATE_ALLOWED',0,NULL,NULL),(10,'HDEL',1,'HASH','WRITE','HIGH',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"field\", \"type\": \"TEXT\", \"required\": true}]',1,'SINGLE_KEY','APPROVAL',0,'2026-09-14 01:31:07.284','2026-09-14 01:31:07.576',0,'[\"hash\"]','EXISTING_REQUIRED',0,NULL,NULL),(11,'UNLINK',1,'KEY','WRITE','HIGH',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}]',1,'SINGLE_KEY','APPROVAL',0,'2026-09-14 01:31:07.284','2026-09-14 01:31:07.588',0,'[\"key\"]','EXISTING_REQUIRED',0,NULL,NULL),(12,'SADD',1,'SET','WRITE','MEDIUM',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"member\", \"type\": \"VALUE\", \"required\": true}]',1,'SINGLE_KEY','CONFIRM',4096,'2026-09-14 01:31:07.764','2026-09-14 01:31:07.788',0,'[\"set\"]','CREATE_ALLOWED',0,NULL,NULL),(13,'SREM',1,'SET','WRITE','HIGH',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"member\", \"type\": \"VALUE\", \"required\": true}]',1,'SINGLE_KEY','APPROVAL',4096,'2026-09-14 01:31:07.771','2026-09-14 01:31:07.771',0,'[\"set\"]','EXISTING_REQUIRED',0,NULL,NULL),(14,'ZADD',1,'ZSET','WRITE','MEDIUM',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"score\", \"type\": \"NUMBER\", \"required\": true}, {\"name\": \"member\", \"type\": \"VALUE\", \"required\": true}]',1,'SINGLE_KEY','CONFIRM',4096,'2026-09-14 01:31:07.777','2026-09-14 01:31:07.797',0,'[\"zset\"]','CREATE_ALLOWED',0,NULL,NULL),(15,'ZREM',1,'ZSET','WRITE','HIGH',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"member\", \"type\": \"VALUE\", \"required\": true}]',1,'SINGLE_KEY','APPROVAL',4096,'2026-09-14 01:31:07.783','2026-09-14 01:31:07.783',0,'[\"zset\"]','EXISTING_REQUIRED',0,NULL,NULL);
+INSERT INTO `operation_command_definition` (`id`, `command_name`, `command_version`, `category`, `access_mode`, `risk_level`, `enabled`, `parameter_schema_json`, `key_position`, `routing_policy`, `approval_policy`, `max_value_bytes`, `created_at`, `updated_at`, `version`, `allowed_data_types_json`, `missing_key_policy`, `blocked_by_default`, `change_reason`, `updated_by`) VALUES (1,'GET',1,'STRING','READ','LOW',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}]',1,'SINGLE_KEY','DIRECT',4096,'2026-09-14 03:24:18.332','2026-09-14 03:24:18.479',0,'[\"string\"]','EXISTING_REQUIRED',0,NULL,NULL),(2,'TTL',1,'KEY','READ','LOW',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}]',1,'SINGLE_KEY','DIRECT',0,'2026-09-14 03:24:18.332','2026-09-14 03:24:18.482',0,'[\"string\", \"hash\", \"list\", \"set\", \"zset\", \"stream\", \"none\"]','EXISTING_REQUIRED',0,NULL,NULL),(3,'TYPE',1,'KEY','READ','LOW',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}]',1,'SINGLE_KEY','DIRECT',0,'2026-09-14 03:24:18.332','2026-09-14 03:24:18.482',0,'[\"string\", \"hash\", \"list\", \"set\", \"zset\", \"stream\", \"none\"]','EXISTING_REQUIRED',0,NULL,NULL),(4,'EXISTS',1,'KEY','READ','LOW',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}]',1,'SINGLE_KEY','DIRECT',0,'2026-09-14 03:24:18.332','2026-09-14 03:24:18.482',0,'[\"string\", \"hash\", \"list\", \"set\", \"zset\", \"stream\", \"none\"]','EXISTING_REQUIRED',0,NULL,NULL),(5,'SET',1,'STRING','WRITE','LOW',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"value\", \"type\": \"VALUE\", \"required\": true}]',1,'SINGLE_KEY','CONFIRM',4096,'2026-09-14 03:24:18.332','2026-09-14 03:24:18.486',0,'[\"string\"]','CREATE_ALLOWED',0,NULL,NULL),(6,'EXPIRE',1,'KEY','WRITE','MEDIUM',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"seconds\", \"type\": \"INTEGER\", \"required\": true}]',1,'SINGLE_KEY','APPROVAL',0,'2026-09-14 03:24:18.332','2026-09-14 03:24:18.489',0,'[\"string\", \"hash\", \"list\", \"set\", \"zset\", \"stream\"]','EXISTING_REQUIRED',0,NULL,NULL),(7,'PERSIST',1,'KEY','WRITE','MEDIUM',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}]',1,'SINGLE_KEY','APPROVAL',0,'2026-09-14 03:24:18.332','2026-09-14 03:24:18.489',0,'[\"string\", \"hash\", \"list\", \"set\", \"zset\", \"stream\"]','EXISTING_REQUIRED',0,NULL,NULL),(8,'HGET',1,'HASH','READ','LOW',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"field\", \"type\": \"TEXT\", \"required\": true}]',1,'SINGLE_KEY','DIRECT',4096,'2026-09-14 03:24:18.332','2026-09-14 03:24:18.492',0,'[\"hash\"]','EXISTING_REQUIRED',0,NULL,NULL),(9,'HSET',1,'HASH','WRITE','LOW',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"field\", \"type\": \"TEXT\", \"required\": true}, {\"name\": \"value\", \"type\": \"VALUE\", \"required\": true}]',1,'SINGLE_KEY','CONFIRM',4096,'2026-09-14 03:24:18.332','2026-09-14 03:24:18.496',0,'[\"hash\"]','CREATE_ALLOWED',0,NULL,NULL),(10,'HDEL',1,'HASH','WRITE','HIGH',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"field\", \"type\": \"TEXT\", \"required\": true}]',1,'SINGLE_KEY','APPROVAL',0,'2026-09-14 03:24:18.332','2026-09-14 03:24:18.492',0,'[\"hash\"]','EXISTING_REQUIRED',0,NULL,NULL),(11,'UNLINK',1,'KEY','WRITE','HIGH',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}]',1,'SINGLE_KEY','APPROVAL',0,'2026-09-14 03:24:18.332','2026-09-14 03:24:18.500',0,'[\"key\"]','EXISTING_REQUIRED',0,NULL,NULL),(12,'SADD',1,'SET','WRITE','MEDIUM',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"member\", \"type\": \"VALUE\", \"required\": true}]',1,'SINGLE_KEY','CONFIRM',4096,'2026-09-14 03:24:18.603','2026-09-14 03:24:18.617',0,'[\"set\"]','CREATE_ALLOWED',0,NULL,NULL),(13,'SREM',1,'SET','WRITE','HIGH',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"member\", \"type\": \"VALUE\", \"required\": true}]',1,'SINGLE_KEY','APPROVAL',4096,'2026-09-14 03:24:18.607','2026-09-14 03:24:18.607',0,'[\"set\"]','EXISTING_REQUIRED',0,NULL,NULL),(14,'ZADD',1,'ZSET','WRITE','MEDIUM',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"score\", \"type\": \"NUMBER\", \"required\": true}, {\"name\": \"member\", \"type\": \"VALUE\", \"required\": true}]',1,'SINGLE_KEY','CONFIRM',4096,'2026-09-14 03:24:18.610','2026-09-14 03:24:18.624',0,'[\"zset\"]','CREATE_ALLOWED',0,NULL,NULL),(15,'ZREM',1,'ZSET','WRITE','HIGH',1,'[{\"name\": \"key\", \"type\": \"REDIS_KEY\", \"required\": true}, {\"name\": \"member\", \"type\": \"VALUE\", \"required\": true}]',1,'SINGLE_KEY','APPROVAL',4096,'2026-09-14 03:24:18.614','2026-09-14 03:24:18.614',0,'[\"zset\"]','EXISTING_REQUIRED',0,NULL,NULL);
 /*!40000 ALTER TABLE `operation_command_definition` ENABLE KEYS */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
@@ -986,7 +1037,7 @@ CREATE TABLE `flyway_schema_history` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 /*!40000 ALTER TABLE `flyway_schema_history` DISABLE KEYS */;
-INSERT INTO `flyway_schema_history` VALUES (1,'29','<< Flyway Baseline >>','BASELINE','<< Flyway Baseline >>',NULL,'root','2026-09-14 01:31:19',0,1);
+INSERT INTO `flyway_schema_history` VALUES (1,'30','<< Flyway Baseline >>','BASELINE','<< Flyway Baseline >>',NULL,'root','2026-09-14 03:24:28',0,1);
 /*!40000 ALTER TABLE `flyway_schema_history` ENABLE KEYS */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 

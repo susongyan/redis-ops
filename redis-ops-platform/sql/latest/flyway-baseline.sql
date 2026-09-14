@@ -28,7 +28,7 @@ CREATE TABLE `flyway_schema_history` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 /*!40000 ALTER TABLE `flyway_schema_history` DISABLE KEYS */;
-INSERT INTO `flyway_schema_history` VALUES (1,'29','<< Flyway Baseline >>','BASELINE','<< Flyway Baseline >>',NULL,'root','2026-09-14 01:31:19',0,1);
+INSERT INTO `flyway_schema_history` VALUES (1,'30','<< Flyway Baseline >>','BASELINE','<< Flyway Baseline >>',NULL,'root','2026-09-14 03:24:28',0,1);
 /*!40000 ALTER TABLE `flyway_schema_history` ENABLE KEYS */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 

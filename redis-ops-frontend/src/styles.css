@@ -28,3 +28,7 @@
 .sync-list-route{display:flex;align-items:center;gap:8px;min-width:0}
 .sync-list-route>span:first-child{flex:0 0 28px}
 .sync-list-route>.sync-list-ellipsis{flex:1}
+.distribution-page{display:flex;flex-direction:column;gap:18px;min-width:0}
+.distribution-rule{padding:12px 0;border-bottom:1px solid #edf0f4}
+.distribution-page .ant-card-body{min-width:0}
+@media(max-width:800px){.distribution-page .ant-card-body{padding:14px}.distribution-page .ant-card-head{padding:0 14px}}

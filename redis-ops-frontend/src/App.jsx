@@ -17,11 +17,12 @@ const RedisOperationsPage=lazy(()=>import('./pages/RedisOperationsPage.jsx'))
 const CommandCatalogPage=lazy(()=>import('./pages/CommandCatalogPage.jsx'))
 const AnalysisAgentsPage=lazy(()=>import('./pages/AnalysisAgentsPage.jsx'))
 const AnalysisRunsPage=lazy(()=>import('./pages/AnalysisRunsPage.jsx'))
+const KeyDistributionsPage=lazy(()=>import('./pages/KeyDistributionsPage.jsx'))
 
 const {Sider,Header,Content}=Layout
 const pageFromHash=()=>{
   const page=window.location.hash.replace(/^#\/?/,'').split('?')[0]
-  return ['clusters','locations','relations','syncTasks','validations','riskScans','metrics','alerts','ttlGovernance','cleanupGovernance','redisOperations','commandCatalog','applications','audits','analysisAgents','analysisRuns'].includes(page)?page:'clusters'
+  return ['clusters','locations','relations','syncTasks','validations','keyDistributions','riskScans','metrics','alerts','ttlGovernance','cleanupGovernance','redisOperations','commandCatalog','applications','audits','analysisAgents','analysisRuns'].includes(page)?page:'clusters'
 }
 class PageErrorBoundary extends Component{
   state={error:null}
@@ -32,7 +33,7 @@ export default function App(){
   const [page,setPage]=useState(pageFromHash)
   const [openMenuKeys,setOpenMenuKeys]=useState(['assets','observability','governance','platform'])
   const [operator,setOperator]=useState(localStorage.getItem('redis-ops-operator')||'local-admin')
-  const pages={clusters:<ClustersPage/>,applications:<ApplicationsPage/>,locations:<LocationsPage/>,relations:<RelationsPage/>,syncTasks:<SyncTasksPage/>,validations:<ValidationTasksPage/>,riskScans:<RiskScansPage/>,metrics:<MetricsPage/>,alerts:<AlertsPage/>,ttlGovernance:<TtlGovernancePage/>,cleanupGovernance:<CleanupGovernancePage/>,redisOperations:<RedisOperationsPage/>,commandCatalog:<CommandCatalogPage/>,audits:<AuditsPage/>,analysisAgents:<AnalysisAgentsPage/>,analysisRuns:<AnalysisRunsPage/>}
+  const pages={clusters:<ClustersPage/>,applications:<ApplicationsPage/>,locations:<LocationsPage/>,relations:<RelationsPage/>,syncTasks:<SyncTasksPage/>,validations:<ValidationTasksPage/>,keyDistributions:<KeyDistributionsPage/>,riskScans:<RiskScansPage/>,metrics:<MetricsPage/>,alerts:<AlertsPage/>,ttlGovernance:<TtlGovernancePage/>,cleanupGovernance:<CleanupGovernancePage/>,redisOperations:<RedisOperationsPage/>,commandCatalog:<CommandCatalogPage/>,audits:<AuditsPage/>,analysisAgents:<AnalysisAgentsPage/>,analysisRuns:<AnalysisRunsPage/>}
   const pageOptions=[
     {value:'clusters',label:'Redis 集群'},
     {value:'locations',label:'Region / IDC'},
@@ -40,6 +41,7 @@ export default function App(){
     {value:'syncTasks',label:'同步任务'},
     {value:'validations',label:'数据校验'},
     {value:'riskScans',label:'风险扫描'},
+    {value:'keyDistributions',label:'Key 分布分析'},
     {value:'metrics',label:'监控指标'},
     {value:'alerts',label:'告警中心'},
     {value:'ttlGovernance',label:'TTL 治理'},
@@ -76,6 +78,7 @@ export default function App(){
         {key:'observability',icon:<LineChartOutlined/>,label:'采集与风险',children:[
           {key:'metrics',icon:<FundProjectionScreenOutlined/>,label:'监控指标'},
           {key:'riskScans',icon:<SearchOutlined/>,label:'风险扫描'},
+          {key:'keyDistributions',icon:<SearchOutlined/>,label:'Key 分布分析'},
           {key:'alerts',icon:<AlertOutlined/>,label:'告警中心'}]},
         {key:'governance',icon:<SafetyCertificateOutlined/>,label:'质量治理',children:[
           {key:'ttlGovernance',icon:<ClockCircleOutlined/>,label:'TTL 治理'},
