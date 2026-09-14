@@ -39,3 +39,4 @@
 .distribution-group-cell { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
 .distribution-group-text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 400; white-space: pre-wrap; }
 .distribution-group-rule { margin-top: 6px; font-size: 12px; }
+.identity-login { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }

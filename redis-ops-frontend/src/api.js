@@ -1,15 +1,26 @@
-const API_BASE = import.meta.env.VITE_API_BASE || ''
+const API_BASE = import.meta.env?.VITE_API_BASE || ''
 
 function headers(extra = {}) {
-  return {'Content-Type':'application/json','X-Operator':localStorage.getItem('redis-ops-operator')||'local-admin',...extra}
+  return {'Content-Type':'application/json',...extra}
 }
 function idempotencyKey() { return crypto.randomUUID() }
 
 export async function request(path, options={}) {
-  const response=await fetch(`${API_BASE}${path}`,{...options,headers:headers(options.headers)})
+  const requestHeaders=headers(options.headers)
+  if (!['GET','HEAD','OPTIONS'].includes((options.method||'GET').toUpperCase())) {
+    const tokenResponse=await fetch(`${API_BASE}/api/v1/auth/csrf`,{credentials:'same-origin',cache:'no-store'})
+    if(!tokenResponse.ok) throw new Error('无法取得安全令牌，请重新登录')
+    const {data}=await tokenResponse.json()
+    requestHeaders[data.headerName]=data.token
+  }
+  const response=await fetch(`${API_BASE}${path}`,{...options,credentials:'same-origin',headers:requestHeaders})
   if(response.status===204)return null
   const body=await response.json().catch(()=>({}))
-  if(!response.ok)throw new Error(body.message||`请求失败 (${response.status})`)
+  if(!response.ok){
+    if(response.status===401 && path!=='/api/v1/auth/login') window.dispatchEvent(new Event('identity-expired'))
+    if(body.code==='PASSWORD_CHANGE_REQUIRED') window.dispatchEvent(new Event('identity-expired'))
+    throw new Error(body.message||`请求失败 (${response.status})`)
+  }
   return body.data
 }
 

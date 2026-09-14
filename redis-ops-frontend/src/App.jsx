@@ -1,6 +1,6 @@
 import { Component,lazy,Suspense,useEffect,useState } from 'react'
 import { AlertOutlined, AppstoreOutlined, AuditOutlined, ClockCircleOutlined, ClusterOutlined, CodeOutlined, DatabaseOutlined, DeleteOutlined, EnvironmentOutlined, FileSearchOutlined, FileTextOutlined, FundProjectionScreenOutlined, LineChartOutlined, RobotOutlined, SafetyCertificateOutlined, SearchOutlined, SettingOutlined, SwapOutlined, SyncOutlined, TeamOutlined } from '@ant-design/icons'
-import { Layout, Menu, Typography, Input, Select, Space } from 'antd'
+import { Layout, Menu, Typography, Button, Select, Space } from 'antd'
 const ClustersPage=lazy(()=>import('./pages/ClustersPage.jsx'))
 const ApplicationsPage=lazy(()=>import('./pages/ApplicationsPage.jsx'))
 const LocationsPage=lazy(()=>import('./pages/LocationsPage.jsx'))
@@ -17,24 +17,25 @@ const RedisOperationsPage=lazy(()=>import('./pages/RedisOperationsPage.jsx'))
 const CommandCatalogPage=lazy(()=>import('./pages/CommandCatalogPage.jsx'))
 const AnalysisAgentsPage=lazy(()=>import('./pages/AnalysisAgentsPage.jsx'))
 const AnalysisRunsPage=lazy(()=>import('./pages/AnalysisRunsPage.jsx'))
+const UsersPage=lazy(()=>import('./pages/UsersPage.jsx'))
 const KeyDistributionsPage=lazy(()=>import('./pages/KeyDistributionsPage.jsx'))
 
 const {Sider,Header,Content}=Layout
 const pageFromHash=()=>{
   const page=window.location.hash.replace(/^#\/?/,'').split('?')[0]
-  return ['clusters','locations','relations','syncTasks','validations','keyDistributions','riskScans','metrics','alerts','ttlGovernance','cleanupGovernance','redisOperations','commandCatalog','applications','audits','analysisAgents','analysisRuns'].includes(page)?page:'clusters'
+  return ['users','clusters','locations','relations','syncTasks','validations','keyDistributions','riskScans','metrics','alerts','ttlGovernance','cleanupGovernance','redisOperations','commandCatalog','applications','audits','analysisAgents','analysisRuns'].includes(page)?page:'clusters'
 }
 class PageErrorBoundary extends Component{
   state={error:null}
   static getDerivedStateFromError(error){return{error}}
   render(){return this.state.error?<div className="muted">页面加载失败：{this.state.error.message}</div>:this.props.children}
 }
-export default function App(){
+export default function App({user,onLogout,onPassword}){
   const [page,setPage]=useState(pageFromHash)
   const [openMenuKeys,setOpenMenuKeys]=useState(['assets','observability','governance','platform'])
-  const [operator,setOperator]=useState(localStorage.getItem('redis-ops-operator')||'local-admin')
-  const pages={clusters:<ClustersPage/>,applications:<ApplicationsPage/>,locations:<LocationsPage/>,relations:<RelationsPage/>,syncTasks:<SyncTasksPage/>,validations:<ValidationTasksPage/>,keyDistributions:<KeyDistributionsPage/>,riskScans:<RiskScansPage/>,metrics:<MetricsPage/>,alerts:<AlertsPage/>,ttlGovernance:<TtlGovernancePage/>,cleanupGovernance:<CleanupGovernancePage/>,redisOperations:<RedisOperationsPage/>,commandCatalog:<CommandCatalogPage/>,audits:<AuditsPage/>,analysisAgents:<AnalysisAgentsPage/>,analysisRuns:<AnalysisRunsPage/>}
+  const pages={users:user.role==='ADMIN'?<UsersPage/>:<div>无用户管理权限</div>,clusters:<ClustersPage/>,applications:<ApplicationsPage/>,locations:<LocationsPage/>,relations:<RelationsPage/>,syncTasks:<SyncTasksPage/>,validations:<ValidationTasksPage/>,keyDistributions:<KeyDistributionsPage/>,riskScans:<RiskScansPage/>,metrics:<MetricsPage/>,alerts:<AlertsPage/>,ttlGovernance:<TtlGovernancePage/>,cleanupGovernance:<CleanupGovernancePage/>,redisOperations:<RedisOperationsPage/>,commandCatalog:<CommandCatalogPage/>,audits:<AuditsPage/>,analysisAgents:<AnalysisAgentsPage/>,analysisRuns:<AnalysisRunsPage/>}
   const pageOptions=[
+    ...(user.role==='ADMIN'?[{value:'users',label:'用户管理'}]:[]),
     {value:'clusters',label:'Redis 集群'},
     {value:'locations',label:'Region / IDC'},
     {value:'relations',label:'主备关系'},
@@ -54,7 +55,6 @@ export default function App(){
     {value:'analysisRuns',label:'分析结果'},
   ]
   const pageTitle=page==='redisOperations'?'Redis Console':'Redis 资源管理'
-  const updateOperator=value=>{setOperator(value);localStorage.setItem('redis-ops-operator',value)}
   useEffect(()=>{
     const onHashChange=()=>setPage(pageFromHash())
     window.addEventListener('hashchange',onHashChange)
@@ -86,6 +86,7 @@ export default function App(){
           {key:'redisOperations',icon:<CodeOutlined/>,label:'redis console'},
           {key:'commandCatalog',icon:<SettingOutlined/>,label:'命令配置'}]},
         {key:'platform',icon:<TeamOutlined/>,label:'平台支撑',children:[
+          ...(user.role==='ADMIN'?[{key:'users',icon:<TeamOutlined/>,label:'用户管理'}]:[]),
           {key:'applications',icon:<AppstoreOutlined/>,label:'业务应用'},
           {key:'audits',icon:<AuditOutlined/>,label:'审计日志'},
           {key:'analysisAgents',icon:<RobotOutlined/>,label:'AI Agent'},
@@ -93,7 +94,7 @@ export default function App(){
     </Sider>
     <Layout><Header className="topbar"><Typography.Title level={4} className="page-title">{pageTitle}</Typography.Title>
       <Select className="mobile-page-select" value={page} onChange={navigate} options={pageOptions}/>
-      <Space><span className="muted">当前操作者</span><Input value={operator} onChange={e=>updateOperator(e.target.value)} style={{width:180}}/></Space>
+      <Space wrap><span>{user.displayName}</span><Button onClick={onPassword}>修改密码</Button><Button onClick={onLogout}>退出</Button></Space>
     </Header><Content className="content"><PageErrorBoundary key={page}><Suspense fallback={<div className="muted">加载中…</div>}>{pages[page]}</Suspense></PageErrorBoundary></Content></Layout>
   </Layout>
 }
