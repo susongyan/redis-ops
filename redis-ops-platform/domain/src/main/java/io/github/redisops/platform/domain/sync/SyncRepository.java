@@ -16,6 +16,7 @@ public interface SyncRepository {
     boolean updateSwitchover(Switchover switchover, long version);
     long countActiveSwitchovers(long relationId);
     Optional<SyncRuntime> findRuntime(long taskId);
+    List<SyncWorkerAssignment> findWorkerAssignments(List<Long> taskIds);
     boolean claimRuntime(long taskId, String runtimeId, String owner, long leaseSeconds);
     boolean renewRuntime(long taskId, String owner, long leaseSeconds, String phase, long spoolBytes);
     void releaseRuntime(long taskId, String owner, String phase, String error);

@@ -1,0 +1,141 @@
+{
+  "sourceCommit": "6fb6975756fef8006a2b95082ccee34c3bf2eeb9",
+  "sourceIncludesUncommittedMigrations": true,
+  "mysqlVersion": "8.4.11",
+  "baselineVersion": 29,
+  "businessTables": 43,
+  "seedRows": {
+    "operation_command_definition": 15
+  },
+  "tests": [
+    "29 migrations applied",
+    "combined SQL imported into fresh database",
+    "all business table DDL and effective column metadata compared",
+    "all business table data compared",
+    "Flyway validate passed; migrate executed 0 migrations"
+  ],
+  "migrations": [
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V1__asset_management.sql",
+      "sha256": "ec6d2026fb6280c643d5534e3a8e382e0310571dc7765829626359d764af8737"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V2__complete_asset_management.sql",
+      "sha256": "5db749973b6683c14d2eeea80d673987ef77ff4c852d374601e188c895f5896d"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V3__cross_idc_sync_model.sql",
+      "sha256": "a80fedf563acf71ae59511f6d23606d0a0cf34bf6553072a804e63ff42d21baa"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V4__encrypted_redis_credentials.sql",
+      "sha256": "3b59861e944e1a0900a643cc98bd7de94a2f497ff61b59f38d28d91b8ec7db87"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V5__cluster_credential_purpose_bindings.sql",
+      "sha256": "6e9ed74cc9f27a2d264bf650a04e3b915e7ec793d1cc98ac2ee45ec9bd2dca0e"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V6__cluster_owned_connection_secrets.sql",
+      "sha256": "3373959e8d68e03355f8f7f6ccf3f94f46655aa963b57df9156470a851ff4e38"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V7__native_sync_engine.sql",
+      "sha256": "c19d2e0648c626e235bf0b7cf748fc954c8d5c8a00f68f68fa1ab956c187fba0"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V8__sync_full_apply_tuning.sql",
+      "sha256": "1f530485460bc4ee813347015f569a6c6d40273063aa79848fa55ad541ba4a51"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V9__sync_runtime_fence_observability.sql",
+      "sha256": "16345df45b6afd625ec8305308154e4510a79362eb2d4cf2b3ca05331093a492"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V10__sync_command_policy.sql",
+      "sha256": "f5674ae09dd3ceb3b4eaddf20db21e97c9dd22712d6deced786b1f0cfa339753"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V11__sync_full_progress.sql",
+      "sha256": "4ab1ddeb7754b3c6d9817ceffc7fd196138c1b741a5bdbfdc39ee4b405a7ee43"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V12__data_validation.sql",
+      "sha256": "dd2a6e6e9e9a16c6f96f10ffb2a3576d7bc6c60ed0fd05df1f87c8a6967b3064"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V13__validation_sampling_modes.sql",
+      "sha256": "a71391f66d4f57d737b472dcc9ca5612d0aa0322c119d2918e09bcfea38c4485"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V14__validation_planned_key_progress.sql",
+      "sha256": "2d3c4234127c026fc054267da80a3fbe72d98c9f0aa9374f6f8699051d35eeb9"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V15__validation_difference_key_name.sql",
+      "sha256": "ac80a253a339ca74e12666def06b42fa5ae7ad696d0917aba421c77d58892663"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V16__collector_and_risk_scan.sql",
+      "sha256": "64a4edaa7e0dfae91798c2297aecf82b91cd03e83d82ab28a8b998337e486bfa"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V17__alerts_and_notification_channels.sql",
+      "sha256": "1e4a48f24218955f0c29dc1390b3b6bba6335dd58c7212e6f4a83cd703b09361"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V18__retain_risk_finding_key_name.sql",
+      "sha256": "05d75a72da5fd80a087c77fad9bb1ae36ebdf0eebf2a8d153ca62fdbd03b196d"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V19__risk_scan_check_options.sql",
+      "sha256": "29f50f9aa2c95726a103e54f917fc6826e37f398daae7672965fffaee413c020"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V20__risk_scan_planned_key_count.sql",
+      "sha256": "b46599420cba761490b2865eb85cdb558408e150d0badf6e2f05986eb6518b8f"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V21__ttl_governance.sql",
+      "sha256": "a0e42271804a99098483a21ff460941e807cd654511247cac2673df062415c0f"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V22__cleanup_governance.sql",
+      "sha256": "915e70ac1ed72b6403dd7861f3ef66bc86b5b2d25a7e47863e9d0790d1487312"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V23__redis_operation_catalog.sql",
+      "sha256": "bebc40449ce51b4c53bcbb8f90f5ebea953d5bea0eca020aca6c148d13eeffdc"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V24__operation_command_version.sql",
+      "sha256": "4a58369f545bf25e45284ec81343f4fcc3bfb829262fbc0fd9166d99bbd176c4"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V25__operation_command_policy.sql",
+      "sha256": "a84d612c725964eadda6ccd461146b8d4197cf45dae0e8e54eee6800eeeae9eb"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V26__add_supported_console_commands.sql",
+      "sha256": "e0b7ecdafb5904c6c0a731b35fed8f7701ff6d3caae9e15e9b0bea7494988c12"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V27__analysis_agent_registry.sql",
+      "sha256": "596d94bbbbad0d8fc76219fadce02e6029b1137f7fed04e520713c4b82194b9b"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V28__analysis_runs.sql",
+      "sha256": "302270ee6cb8cd1ec09e281296a4a5e039aac17f063d0c4b050b49aa64afe6f8"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V29__sync_worker_ip.sql",
+      "sha256": "cfd94d13e4d59995ee3ee3b6f10927a53083b8d2c4dd9f9bb4828c2c44b9748e"
+    }
+  ],
+  "files": {
+    "redis-governance-init.sql": "43355e24527b070c6ae631afe398182966bfa7f7e02ca4e896d4f735729e3eee",
+    "schema.sql": "8bac23ec7084c473b54dfe06a37558a2e4fd9380fe8acc59b40c5a58a06cfbd2",
+    "seed.sql": "8475f3330217afb57794e8cdfb16a0795b2905c8f9435743a8ce7a07a17022bc",
+    "flyway-baseline.sql": "a63012a2af33c040a472d2388bb7689aeb8e925ab85b31bb6dc3d5ad7399842f"
+  }
+}

@@ -142,6 +142,21 @@ public interface SyncMapper {
             FROM sync_runtime WHERE task_id=#{taskId}
             """)
     SyncRuntime findRuntime(long taskId);
+
+    @Select("""
+            <script>
+            SELECT t.id task_id,r.runtime_id,r.lease_owner,
+              CASE WHEN r.worker_ip_runtime_id=r.runtime_id THEN r.worker_ip ELSE NULL END worker_ip,
+              r.phase,r.heartbeat_at,r.lease_until,
+              CASE WHEN r.lease_owner IS NULL THEN 'UNASSIGNED'
+                   WHEN r.lease_until IS NULL OR r.lease_until &lt;= CURRENT_TIMESTAMP(3) THEN 'EXPIRED'
+                   ELSE 'VALID' END lease_status
+            FROM sync_task t LEFT JOIN sync_runtime r ON r.task_id=t.id WHERE t.id IN
+            <foreach collection="taskIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+            ORDER BY t.id
+            </script>
+            """)
+    List<SyncWorkerAssignment> findWorkerAssignments(@Param("taskIds") List<Long> taskIds);
     @Select("""
             SELECT id,task_id,channel_id,source_node_id,slot_ranges,replication_id,received_offset,applied_offset,
               status,last_heartbeat_at,updated_at FROM sync_channel_checkpoint WHERE task_id=#{taskId} ORDER BY id

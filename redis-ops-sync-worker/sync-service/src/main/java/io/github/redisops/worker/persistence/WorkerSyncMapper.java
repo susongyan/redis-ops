@@ -42,7 +42,7 @@ public interface WorkerSyncMapper {
     void ensureRuntime(@Param("taskId") long taskId, @Param("runtimeId") String runtimeId);
 
     @Update("""
-            UPDATE sync_runtime SET runtime_id=#{runtimeId},
+            UPDATE sync_runtime SET runtime_id=#{runtimeId},worker_ip=#{workerIp},worker_ip_runtime_id=#{runtimeId},
               takeover_count=takeover_count+IF(lease_owner IS NOT NULL AND lease_owner<>#{owner},1,0),
               recovery_action=IF(lease_owner IS NULL,'INITIAL_CLAIM','TAKEOVER_CLAIMED'),
               phase=IF(lease_owner IS NULL,'CLAIMED','TAKEOVER_CLAIMED'),lease_owner=#{owner},
@@ -52,7 +52,8 @@ public interface WorkerSyncMapper {
             WHERE task_id=#{taskId} AND (lease_owner=#{owner} OR lease_until IS NULL OR lease_until<CURRENT_TIMESTAMP(3))
             """)
     int claimRuntime(@Param("taskId") long taskId, @Param("runtimeId") String runtimeId,
-            @Param("owner") String owner, @Param("leaseSeconds") long leaseSeconds);
+            @Param("owner") String owner, @Param("leaseSeconds") long leaseSeconds,
+            @Param("workerIp") String workerIp);
 
     @Update("""
             UPDATE sync_runtime SET lease_until=DATE_ADD(CURRENT_TIMESTAMP(3),INTERVAL #{leaseSeconds} SECOND),

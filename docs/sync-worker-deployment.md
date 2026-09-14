@@ -1,5 +1,7 @@
 # Sync Worker 构建、部署与扩容
 
+任务对应的执行实例、机器 IP 与租约状态见 [Worker 状态展示及配置](sync-worker-visibility.md)。
+
 独立测试/生产部署以 [部署交付入口](deployment-delivery.md) 为主，配置模板在
 [Worker deploy/config](../redis-ops-sync-worker/deploy/config/application-pro.yml.example)。
 以下合并包和 redis-opsctl 是兼容入口，不代表 Worker 构建依赖 Platform。

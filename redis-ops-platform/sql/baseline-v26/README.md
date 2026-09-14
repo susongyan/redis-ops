@@ -1,5 +1,7 @@
 # DBA 完整初始化包：V26
 
+历史归档与升级回归输入。新环境请使用 [最新完整初始化包](../latest/README.md)，本目录不再覆盖更新。
+
 本次已验证环境：MySQL 8.4.11；41 张业务表 + 1 张 Flyway 历史表，15 条命令定义初始化数据。
 其他 MySQL 8.x 小版本须在对应 UAT 环境先验证，不能仅凭语法兼容认定生产可用。
 
@@ -56,8 +58,8 @@ history 应是一条 version=26、type=BASELINE、success=1，不是伪造的 26
 
 ## 生成与验证
 
-在仓库根目录运行 `node scripts/generate-database-baseline.mjs`（需要 Node、JDK、Docker、unzip 和已构建的
-Platform JAR 作为 Flyway/MySQL 客户端依赖来源）。脚本只取 HEAD 已提交 V1–V26，不读取工作区 V27/V28。
+本归档由当时版本的 `scripts/generate-database-baseline.mjs` 生成（需要 Node、JDK、Docker、unzip 和已构建的
+Platform JAR 作为 Flyway/MySQL 客户端依赖来源）。当时脚本只取已提交 V1–V26；当前脚本已改为更新 sql/latest，不再生成本归档。
 它创建一个仅发布回环临时端口的独立 MySQL 8.4 容器，迁移生成、导出、回灌、对比后删除该临时容器和卷。
 不会连接现有项目 MySQL。临时目录只保存迁移和 Java 依赖，不写数据库口令。
 临时 root/% 账号只供隔离容器内与回环 JDBC 验证，不是生产账号模板，不能复用。
@@ -65,4 +67,4 @@ Platform JAR 作为 Flyway/MySQL 客户端依赖来源）。脚本只取 HEAD �
 验证覆盖：完整迁移链、完整 SQL 在另一空库初始化、全部业务表结构与数据对比、Flyway validate、
 baseline 后 migrate 不重复执行 V1–V26。实际结果与文件校验和见 manifest；生产仍应先做 UAT 初始化验收。
 
-当前快照只覆盖 V26，不包含 V27/V28 分析表；本次 Platform 发布启动时继续执行这两项迁移。不能把当前快照描述为 V28 完整 SQL。
+当前快照只覆盖 V26，不包含 V27/V28 分析表；本次 Platform 发布启动时继续执行 V27/V28/V29。不能把当前快照描述为 V29 完整 SQL。

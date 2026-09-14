@@ -15,6 +15,26 @@ import static org.mockito.Mockito.*;
 
 class WorkerMyBatisSyncRepositoryTest {
     @Test
+    void validatesExplicitMachineIpWithoutAcceptingNamesOrLoopback() {
+        assertThat(WorkerMyBatisSyncRepository.resolveIp(" 10.0.0.12 ")).isEqualTo("10.0.0.12");
+        assertThat(WorkerMyBatisSyncRepository.resolveIp("2001:db8::1")).contains(":");
+        for (String invalid : java.util.List.of("example.com", "127.0.0.1", "0.0.0.0", "999.1.1.1", "::1"))
+            assertThatThrownBy(() -> WorkerMyBatisSyncRepository.resolveIp(invalid))
+                    .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void claimSqlPublishesIpInSameFencedClaim() {
+        org.apache.ibatis.session.Configuration configuration = new org.apache.ibatis.session.Configuration();
+        configuration.addMapper(WorkerSyncMapper.class);
+        String sql = configuration.getMappedStatement(WorkerSyncMapper.class.getName() + ".claimRuntime")
+                .getBoundSql(java.util.Map.of("taskId", 7L, "runtimeId", "r", "owner", "w", "leaseSeconds", 30L,
+                        "workerIp", "10.0.0.12"))
+                .getSql();
+        assertThat(sql).contains("worker_ip=?", "worker_ip_runtime_id=?", "fencing_generation=fencing_generation+1",
+                "lease_until<CURRENT_TIMESTAMP(3)");
+    }
+    @Test
     void recoveryQueryKeepsSqlTokenBoundariesAndUnambiguousTaskColumns() {
         org.apache.ibatis.session.Configuration configuration = new org.apache.ibatis.session.Configuration();
         configuration.addMapper(WorkerSyncMapper.class);
@@ -25,7 +45,7 @@ class WorkerMyBatisSyncRepositoryTest {
     }
 
     private final WorkerSyncMapper mapper = mock(WorkerSyncMapper.class);
-    private final WorkerMyBatisSyncRepository repository = new WorkerMyBatisSyncRepository(mapper);
+    private final WorkerMyBatisSyncRepository repository = new WorkerMyBatisSyncRepository(mapper, "10.0.0.12");
 
     @Test
     void rejectsIllegalTransitionWithoutWriting() {
@@ -70,7 +90,7 @@ class WorkerMyBatisSyncRepositoryTest {
 
     @Test
     void claimsThenRenewsWithProvidedOwner() {
-        when(mapper.claimRuntime(7, "runtime", "worker-a", 30)).thenReturn(1);
+        when(mapper.claimRuntime(7, "runtime", "worker-a", 30, "10.0.0.12")).thenReturn(1);
         when(mapper.renewRuntime(7, "worker-a", 30, "RUNNING", 9)).thenReturn(1);
 
         assertThat(repository.claimRuntime(7, "runtime", "worker-a", 30)).isTrue();

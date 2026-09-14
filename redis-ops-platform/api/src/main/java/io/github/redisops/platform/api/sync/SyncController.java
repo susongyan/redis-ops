@@ -68,6 +68,11 @@ public class SyncController {
                 service.precheck(id).orElse(null), service.metrics(id, 100), service.fullProgress(id)), request);
     }
 
+    @GetMapping("/api/v1/sync-task-workers")
+    ApiResponse<List<SyncWorkerAssignment>> workers(@RequestParam List<Long> taskIds, HttpServletRequest request) {
+        return wrap(service.workerAssignments(taskIds), request);
+    }
+
     @GetMapping("/api/v1/sync-tasks/{id}/events")
     ApiResponse<PageResult<SyncTaskEvent>> events(@PathVariable long id,
             @RequestParam(defaultValue = "1") int page,

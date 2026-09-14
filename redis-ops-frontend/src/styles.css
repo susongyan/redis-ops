@@ -18,3 +18,13 @@
 .redis-console-page .terminal-actions .ant-btn{color:#e9f2fc!important;border-color:#7590ad!important}
 .redis-console-page .terminal-actions .ant-btn-primary{background:#1677ff!important;color:#fff!important;border-color:#1677ff!important}
 .redis-console-page .terminal-prompt .ant-input{color:#f1f6fb!important}
+.sync-task-list .ant-table-cell{vertical-align:top;padding:16px!important}
+.sync-task-list .ant-table-thead th{white-space:nowrap}
+.sync-list-stack{display:flex;flex-direction:column;gap:6px;min-width:0}
+.sync-list-stack .muted{font-size:12px}
+.sync-list-ellipsis{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sync-list-primary{font-weight:500;overflow-wrap:anywhere}
+.sync-list-task-link.ant-btn{align-self:flex-start;height:auto;padding:0;font-weight:600}
+.sync-list-route{display:flex;align-items:center;gap:8px;min-width:0}
+.sync-list-route>span:first-child{flex:0 0 28px}
+.sync-list-route>.sync-list-ellipsis{flex:1}

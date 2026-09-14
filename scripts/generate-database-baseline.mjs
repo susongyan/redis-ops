@@ -1,13 +1,13 @@
-// Run from the repository root. Generates SQL from committed migrations in a disposable MySQL container.
+// Run from the repository root. Generates the latest snapshot from versioned migration sources, never live data.
 import {execFileSync} from 'node:child_process';
-import {mkdtempSync, mkdirSync, writeFileSync, readFileSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {randomBytes, createHash} from 'node:crypto';
 
 const root=process.cwd();
 const run=mkdtempSync(join(tmpdir(),'redis-ops-ddl-'));
-const output=resolve('redis-ops-platform/sql/baseline-v26');
+const output=resolve('redis-ops-platform/sql/latest');
 const jar=resolve('redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0-SNAPSHOT.jar');
 const password=randomBytes(24).toString('hex');
 const command=(bin,args,options={})=>{
@@ -17,12 +17,17 @@ const command=(bin,args,options={})=>{
 const git=(...args)=>command('git',args);
 const sourceCommit=git('rev-parse','HEAD').trim();
 const prefix='redis-ops-platform/bootstrap/src/main/resources/db/migration/';
-const migrations=git('ls-tree','-r','--name-only','HEAD',prefix).trim().split('\n')
-  .filter(p=>/\/V\d+__.*\.sql$/.test(p)&&Number(p.match(/\/V(\d+)__/)[1])<=26)
+const migrations=readdirSync(prefix).filter(p=>/^V\d+__.*\.sql$/.test(p)).map(p=>prefix+p)
   .sort((a,b)=>Number(a.match(/\/V(\d+)__/)[1])-Number(b.match(/\/V(\d+)__/)[1]));
-if(migrations.length!==26)throw Error('Expected exactly 26 committed migrations');
+if(!migrations.length)throw Error('No migrations found');
+const version=Number(migrations.at(-1).match(/\/V(\d+)__/)[1]);
+if(migrations.some((p,i)=>Number(p.match(/\/V(\d+)__/)[1])!==i+1))throw Error('Migration versions must be unique and contiguous');
+const committed=git('ls-tree','-r','--name-only','HEAD',prefix).trim().split('\n').filter(p=>/\/V\d+__.*\.sql$/.test(p));
+for(const p of committed)if(!readFileSync(p).equals(Buffer.from(git('show',`HEAD:${p}`))))throw Error(`Committed migration changed: ${p}`);
+const migrationSources=new Map(migrations.map(p=>[p,readFileSync(p)]));
+const sourceIncludesUncommittedMigrations=migrations.some(p=>!committed.includes(p));
 mkdirSync(join(run,'migrations'));
-for(const p of migrations)writeFileSync(join(run,'migrations',p.slice(prefix.length)),git('show',`HEAD:${p}`));
+for(const p of migrations)writeFileSync(join(run,'migrations',p.slice(prefix.length)),migrationSources.get(p));
 command('unzip',['-q',jar,'BOOT-INF/lib/*','-d',run]);
 const classpath=join(run,'BOOT-INF/lib/*');
 command('javac',['-cp',classpath,'-d',run,resolve('scripts/fixtures/BaselineDatabase.java')]);
@@ -37,11 +42,11 @@ try {
   try {mysql('SELECT 1;');break;}catch{if(n>=90)throw Error('Temporary MySQL not ready');await new Promise(r=>setTimeout(r,1000));}
  }
  const port=command('docker',['port',container,'3306']).trim().split(':').at(-1);
- const flyway=(db,operation)=>command('java',['-cp',`${run}:${classpath}`,'BaselineDatabase',operation,join(run,'migrations')],
+ const flyway=(db,operation)=>command('java',['-cp',`${run}:${classpath}`,'BaselineDatabase',operation,join(run,'migrations'),String(version)],
   {env:{...process.env,BASELINE_DB_PASSWORD:password,BASELINE_JDBC_URL:`jdbc:mysql://127.0.0.1:${port}/${db}?serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false`}});
  mysql('CREATE DATABASE reference CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE restored CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;');
  flyway('reference','migrate');
- console.log('Committed V1–V26 migration chain applied in isolated MySQL');
+ console.log(`V1–V${version} migration chain applied in isolated MySQL`);
  const dump=(db,flags,tables=[])=>docker(['mysqldump','-uroot','--skip-comments','--skip-add-drop-table','--skip-add-locks',
   '--skip-lock-tables','--no-tablespaces','--set-gtid-purged=OFF','--hex-blob',...flags,db,...tables]).trimEnd()+'\n';
  const tables=mysql('SHOW TABLES FROM reference;').trim().split('\n').filter(t=>t!=='flyway_schema_history');
@@ -52,7 +57,7 @@ try {
  flyway('restored','baseline');
  flyway('restored','verify');
  const history=dump('restored',[],['flyway_schema_history']);
- const combined=`-- Redis Ops V26 fresh database initialization; generated from ${sourceCommit}\n-- MySQL 8.x. EMPTY ENVIRONMENT ONLY. Do not use mysql --force.\n-- Contains real Flyway BASELINE version 26, not fabricated migration checksums.\nCREATE DATABASE redis_governance CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\nUSE redis_governance;\nSET time_zone = '+00:00';\n\n${ddl}\n${seed}\n${history}`;
+ const combined=`-- Redis Ops V${version} fresh database initialization; base commit ${sourceCommit}\n-- Exact migration sources and hashes: manifest.json (may include uncommitted additions).\n-- MySQL 8.x. EMPTY ENVIRONMENT ONLY. Do not use mysql --force.\n-- Contains real Flyway BASELINE version ${version}, not fabricated migration checksums.\nCREATE DATABASE redis_governance CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\nUSE redis_governance;\nSET time_zone = '+00:00';\n\n${ddl}\n${seed}\n${history}`;
  // Exercise the exact delivered script in another fresh database, including CREATE DATABASE and USE.
  mysql(combined);
  flyway('redis_governance','verify');
@@ -73,15 +78,16 @@ try {
   if(expected!==actual)throw Error(`Data roundtrip mismatch: ${t}`);
  }
  mkdirSync(output,{recursive:true});
- writeFileSync(join(output,'redis-governance-v26-init.sql'),combined);
- writeFileSync(join(output,'schema-v26.sql'),ddl);
- writeFileSync(join(output,'seed-v26.sql'),seed);
- writeFileSync(join(output,'flyway-baseline-v26.sql'),history);
- const manifest={sourceCommit,mysqlVersion:mysql('SELECT VERSION();').trim(),baselineVersion:26,
+ for(const p of migrations)if(!readFileSync(p).equals(migrationSources.get(p)))throw Error(`Migration changed during generation: ${p}`);
+ writeFileSync(join(output,'redis-governance-init.sql'),combined);
+ writeFileSync(join(output,'schema.sql'),ddl);
+ writeFileSync(join(output,'seed.sql'),seed);
+ writeFileSync(join(output,'flyway-baseline.sql'),history);
+ const manifest={sourceCommit,sourceIncludesUncommittedMigrations,mysqlVersion:mysql('SELECT VERSION();').trim(),baselineVersion:version,
   businessTables:tables.length,seedRows:Object.fromEntries(seeded.map(t=>[t,Number(mysql(`SELECT COUNT(*) FROM reference.\`${t}\`;`).trim())])),
-  tests:['26 migrations applied','combined SQL imported into fresh database','all business table DDL and effective column metadata compared','all business table data compared','Flyway validate passed; migrate executed 0 migrations'],
-  migrations:migrations.map(p=>({path:p,sha256:createHash('sha256').update(git('show',`HEAD:${p}`)).digest('hex')})),
-  files:Object.fromEntries(['redis-governance-v26-init.sql','schema-v26.sql','seed-v26.sql','flyway-baseline-v26.sql'].map(f=>[f,createHash('sha256').update(readFileSync(join(output,f))).digest('hex')]))};
+  tests:[`${migrations.length} migrations applied`,'combined SQL imported into fresh database','all business table DDL and effective column metadata compared','all business table data compared','Flyway validate passed; migrate executed 0 migrations'],
+  migrations:migrations.map(p=>({path:p,sha256:createHash('sha256').update(migrationSources.get(p)).digest('hex')})),
+  files:Object.fromEntries(['redis-governance-init.sql','schema.sql','seed.sql','flyway-baseline.sql'].map(f=>[f,createHash('sha256').update(readFileSync(join(output,f))).digest('hex')]))};
  writeFileSync(join(output,'manifest.json'),JSON.stringify(manifest,null,2)+'\n');
  console.log(`Validated ${tables.length} business tables; seed tables: ${seeded.join(', ')}; output: ${output}`);
 } finally {

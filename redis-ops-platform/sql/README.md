@@ -2,17 +2,18 @@
 
 ## DBA 直接初始化：完整 SQL
 
-新环境可使用 [V26 完整初始化包](baseline-v26/README.md) 中的
-`baseline-v26/redis-governance-v26-init.sql`，包含建库、最终完整 DDL、必需种子数据以及
-由 Flyway 实际生成的 V26 BASELINE。无需 DBA 按顺序执行 26 个增量文件。
+新环境使用 [最新完整初始化包](latest/README.md) 中的
+`latest/redis-governance-init.sql`，包含建库、最终完整 DDL、必需种子数据以及
+由 Flyway 实际生成的 BASELINE，当前为 V29。只看完整表定义时使用 `latest/schema.sql`。
 完整包导入与下文“空库运行全部 migration”是两个替代方案，不能重复执行。
 
 ## 唯一 schema 来源
 
 业务 DDL/DML 在 `../bootstrap/src/main/resources/db/migration/`，随 Platform JAR 发布。
 本目录 `.sql.template` 仅用于 DBA 建库/授权，不会自动执行；完整快照由隔离迁移生成，不手工维护第二套 schema。
-已发布 migration 禁止修改/重编号。本次发布包含 V1–V28；完整 SQL 快照仍为 V26，
-Platform 启动后继续执行 V27/V28 分析表迁移。以所选 commit/tag 的 JAR 为准：
+已发布 migration 禁止修改/重编号。完整快照维护在 `latest/`，历史迭代变化保留在上述 migration 目录，不复制第二套增量 SQL。
+当前最新快照为 V29，初始化后跳过 V1–V29；`baseline-v26/` 只用于历史归档和升级回归。
+以所选 commit/tag 的 JAR 和 `latest/manifest.json` 为准：
 
 ```bash
 jar tf /opt/redis-ops-platform/app/platform.jar | sort | sed -n '/BOOT-INF\/classes\/db\/migration\//p'

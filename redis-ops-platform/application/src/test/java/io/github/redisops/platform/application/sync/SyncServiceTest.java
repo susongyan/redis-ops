@@ -22,6 +22,18 @@ import static org.mockito.Mockito.*;
 class SyncServiceTest {
 
     @Test
+    void workerAssignmentsUseOneBoundedBatchAndRejectInvalidIds() {
+        Fixture fixture = new Fixture();
+        when(fixture.sync.findWorkerAssignments(List.of(1L, 2L))).thenReturn(List.of());
+        assertEquals(List.of(), fixture.service.workerAssignments(List.of(1L, 2L, 1L)));
+        verify(fixture.sync).findWorkerAssignments(List.of(1L, 2L));
+        assertThrows(BusinessException.class, () -> fixture.service.workerAssignments(List.of()));
+        assertThrows(BusinessException.class, () -> fixture.service.workerAssignments(List.of(-1L)));
+        assertThrows(BusinessException.class,
+                () -> fixture.service.workerAssignments(java.util.Collections.nCopies(101, 1L)));
+    }
+
+    @Test
     void startsControlledSwitchoverOnlyAfterStableRpo() {
         Fixture fixture = new Fixture();
         Instant now = Instant.now();

@@ -28,19 +28,9 @@ import {
   WarningOutlined,
 } from '@ant-design/icons'
 import { api } from '../api.js'
+import { syncWorkerStatus } from '../syncWorkerStatus.js'
 
 const editableFullApplyStatuses = new Set(['CREATED', 'CHECKING', 'READY', 'FAILED', 'BLOCKED'])
-const activeStatuses = new Set([
-  'CHECKING',
-  'STARTING',
-  'FULL_SYNCING',
-  'INCR_SYNCING',
-  'CAUGHT_UP',
-  'PAUSING',
-  'PAUSED',
-  'RESUMING',
-  'STOPPING',
-])
 const terminalStatuses = new Set(['FINISHED', 'CANCELLED'])
 const statusMeta = {
   CREATED: ['已创建', 'default'],
@@ -242,6 +232,7 @@ export default function SyncTasksPage() {
         api.idcs(),
       ])
       setRows(tasks)
+      await refreshWorkers(tasks)
       setRelations(relationRows)
       setClusters(clusterPage.items)
       setIdcs(idcRows)
@@ -254,19 +245,61 @@ export default function SyncTasksPage() {
     load()
   }, [])
 
+  const [workers, setWorkers] = useState({})
+  const [workersUnavailable, setWorkersUnavailable] = useState(false)
+  const workerRequest = useRef(0)
+  const refreshWorkers = async (tasks) => {
+    const request = ++workerRequest.current
+    try {
+      const entries = []
+      for (let start = 0; start < tasks.length; start += 100) {
+        entries.push(...await api.syncTaskWorkers(tasks.slice(start, start + 100).map(task => task.id)))
+      }
+      if (request !== workerRequest.current) return
+      setWorkers(Object.fromEntries(entries.map(worker => [worker.taskId, worker])))
+      setWorkersUnavailable(false)
+    } catch {
+      if (request === workerRequest.current) setWorkersUnavailable(true)
+    }
+  }
+
+  const renderWorker = (taskId, compact = false) => {
+    const worker = workers[taskId]
+    const state = syncWorkerStatus(worker, workersUnavailable)
+    if (compact) return <div className="sync-list-stack">
+      <div className="sync-list-primary">{worker?.leaseOwner ? worker.workerIp || 'IP 未上报' : '暂无执行 Worker'}</div>
+      {worker?.leaseOwner && <Tooltip title={worker.leaseOwner}><span className="sync-list-ellipsis muted">{worker.leaseOwner}</span></Tooltip>}
+      <Tooltip title={`最近心跳：${worker?.heartbeatAt ? new Date(worker.heartbeatAt).toLocaleString() : '未上报'}；租约状态不代表机器健康，过期显示的是上次执行者。`}>
+        <span><Tag color={state.color}>{state.label}</Tag></span>
+      </Tooltip>
+    </div>
+    return <Space direction="vertical" size={2} style={{ maxWidth: 280 }}>
+      <Tooltip title="任务租约状态，不代表机器健康；过期时展示的是上次执行者。"><Tag color={state.color}>{state.label}</Tag></Tooltip>
+      <span style={{ overflowWrap: 'anywhere' }}>{worker?.leaseOwner || '—'}</span>
+      <span className="muted">机器 IP：{worker?.leaseOwner ? worker.workerIp || '未上报' : '—'}</span>
+      <span className="muted">心跳：{worker?.heartbeatAt ? new Date(worker.heartbeatAt).toLocaleString() : '—'}</span>
+    </Space>
+  }
+
   useEffect(() => {
-    if (!rows.some((task) => activeStatuses.has(task.status))) return undefined
+    let refreshing = false
     const timer = window.setInterval(async () => {
+      if (refreshing) return
+      refreshing = true
       try {
         const tasks = await api.syncTasks()
         setRows(tasks)
+        await refreshWorkers(tasks)
         if (detail?.task?.id) applyDetailSnapshot(await api.syncTask(detail.task.id))
       } catch {
+        setWorkersUnavailable(true)
         // Keep the last usable snapshot; explicit actions still surface errors.
+      } finally {
+        refreshing = false
       }
     }, 5000)
     return () => window.clearInterval(timer)
-  }, [rows, detail?.task?.id])
+  }, [detail?.task?.id])
 
   const name = (id) => clusters.find((cluster) => cluster.id === id)?.name || id
   const mode = (id) => clusters.find((cluster) => cluster.id === id)?.mode
@@ -519,40 +552,38 @@ export default function SyncTasksPage() {
 
   const columns = [
     {
-      title: '任务号',
+      title: '任务',
+      width: 190,
       dataIndex: 'taskNo',
-      render: (value, task) => <Button type="link" onClick={() => show(task)}>{value}</Button>,
-    },
-    { title: '类型', dataIndex: 'purpose' },
-    {
-      title: '关系',
-      dataIndex: 'relationId',
-      render: (id) => relations.find((relation) => relation.id === id)?.name || '-',
+      render: (value, task) => <div className="sync-list-stack">
+        <Button className="sync-list-task-link" type="link" onClick={() => show(task)}>任务 #{task.id}</Button>
+        <Tooltip title={value}><span className="sync-list-ellipsis muted">{value}</span></Tooltip>
+        <span className="muted">{task.purpose === 'ADHOC' ? '临时同步' : task.purpose}</span>
+      </div>,
     },
     {
-      title: '方向',
-      render: (_, task) => `${name(task.sourceClusterId)} → ${name(task.targetClusterId)}`,
+      title: '同步方向', width: 250,
+      render: (_, task) => <div className="sync-list-stack">
+        <Tooltip title={name(task.sourceClusterId)}><div className="sync-list-route"><span className="muted">源</span><span className="sync-list-ellipsis">{name(task.sourceClusterId)}</span></div></Tooltip>
+        <Tooltip title={name(task.targetClusterId)}><div className="sync-list-route"><span className="muted">目标</span><span className="sync-list-ellipsis">{name(task.targetClusterId)}</span></div></Tooltip>
+        {task.relationId && <Tooltip title={relations.find(relation => relation.id === task.relationId)?.name || String(task.relationId)}><span className="sync-list-ellipsis muted">关系：{relations.find(relation => relation.id === task.relationId)?.name || task.relationId}</span></Tooltip>}
+      </div>,
+    },
+    { title: 'Worker / 机器 IP', width: 220, render: (_, task) => renderWorker(task.id, true) },
+    {
+      title: '状态 / 指标', width: 140,
+      render: (_, task) => <div className="sync-list-stack">
+        <span>{renderStatus(task.status)}</span>
+        <Tooltip title="最近一次观测的数据时间延迟，不代表实时状态"><span className="muted">RPO：{task.lastRpoSeconds == null ? '—' : `${task.lastRpoSeconds}s`}</span></Tooltip>
+        <Tooltip title="全量恢复并发数 × Pipeline 大小"><span className="muted">并发：{task.fullApplyConcurrency} × {task.fullApplyPipelineSize}</span></Tooltip>
+      </div>,
     },
     {
-      title: '全量并发',
-      render: (_, task) => `${task.fullApplyConcurrency} × ${task.fullApplyPipelineSize}`,
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      render: renderStatus,
-    },
-    {
-      title: <TipLabel label="RPO" tip="目标端相对源端的数据时间延迟；0 秒表示当前采样时刻已追平。" />,
-      dataIndex: 'lastRpoSeconds',
-      render: (value) => value == null ? '-' : `${value}s`,
-    },
-    {
-      title: '操作',
+      title: '操作', width: 100,
       render: (_, task) => (
-        <Space>
-          <Button onClick={() => show(task)}>管理</Button>
-          <Button icon={<SettingOutlined />} onClick={() => openTuning(task)}>参数</Button>
+        <Space direction="vertical" size={4}>
+          <Button size="small" onClick={() => show(task)}>管理</Button>
+          <Button size="small" type="text" icon={<SettingOutlined />} onClick={() => openTuning(task)}>参数</Button>
         </Space>
       ),
     },
@@ -566,7 +597,7 @@ export default function SyncTasksPage() {
         <div className="muted">全量阶段支持任务级并发 RESTORE；增量阶段保持 offset 有序提交</div>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增同步任务</Button>
       </div>
-      <Table rowKey="id" dataSource={rows} columns={columns} scroll={{ x: 1100 }} />
+      <Table className="sync-task-list" rowKey="id" dataSource={rows} columns={columns} tableLayout="fixed" scroll={{ x: 900 }} />
 
       <Modal
         title="新增同步任务"
@@ -1137,7 +1168,7 @@ export default function SyncTasksPage() {
             column={3}
             items={[
               { key: 'phase', label: '阶段', children: detail.runtime.phase },
-              { key: 'owner', label: 'Worker', children: detail.runtime.leaseOwner },
+              { key: 'owner', label: 'Worker / 机器 IP', children: renderWorker(detail.task.id) },
               {
                 key: 'generation',
                 label: <TipLabel label="租约 Generation" tip="Worker 从 MySQL 领取运行租约时递增的代次；代次越大表示接管越新。" />,

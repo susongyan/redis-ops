@@ -77,7 +77,7 @@ PLATFORM_PROXY_URL='http://127.0.0.1:8080'
 
 建议 Platform 数据库账号拥有平台业务表和 Flyway schema history 所需的 DDL/DML 权限。
 首次启动由 Platform 执行发布 JAR 内的 migration，后续由 Flyway 识别已执行版本。本次已提交
-迁移为 V1–V28；使用 V26 完整 SQL 初始化后，Platform 会继续执行 V27/V28。先建库再启动，详见数据库手册。
+迁移为 V1–V29；使用 sql/latest 完整 SQL 初始化后，Platform 不会重复执行 V1–V29。先初始化再启动，详见数据库手册。
 
 运行配置（包括数据库密码、Redis 密钥环）均可通过 Spring 属性配置。Platform 专属 YAML 可挂载到发布目录的
 `config/`，或通过 `SPRING_CONFIG_ADDITIONAL_LOCATION` 指定外部目录。Apollo 还需要应用侧适配器依赖，

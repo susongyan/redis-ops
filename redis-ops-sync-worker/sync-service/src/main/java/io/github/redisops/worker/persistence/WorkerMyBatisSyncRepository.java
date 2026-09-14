@@ -12,9 +12,40 @@ import java.util.Optional;
 @Repository
 public class WorkerMyBatisSyncRepository implements WorkerSyncStatePort, WorkerSyncExecutionPort {
     private final WorkerSyncMapper mapper;
+    private final String workerIp;
 
-    public WorkerMyBatisSyncRepository(WorkerSyncMapper mapper) {
+    public WorkerMyBatisSyncRepository(WorkerSyncMapper mapper,
+            @org.springframework.beans.factory.annotation.Value("${sync.engine.worker-ip:}") String workerIp) {
         this.mapper = mapper;
+        this.workerIp = resolveIp(workerIp);
+    }
+
+    static String resolveIp(String configured) {
+        String host = configured == null ? "" : configured.trim();
+        if (host.isEmpty()) {
+            try {
+                var address = java.net.InetAddress.getLocalHost();
+                return usable(address) ? address.getHostAddress() : null;
+            } catch (java.net.UnknownHostException ignored) {
+                return null;
+            }
+        }
+        // Only literal addresses: never resolve an arbitrary configured hostname through DNS.
+        if (!host.matches("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}") && !host.matches("[0-9a-fA-F]*:[0-9a-fA-F:]+"))
+            throw new IllegalArgumentException("worker-ip must be a literal IPv4 or IPv6 address");
+        try {
+            var address = java.net.InetAddress.getByName(host);
+            if (!usable(address))
+                throw new IllegalArgumentException("worker-ip must be a non-loopback unicast address");
+            return address.getHostAddress();
+        } catch (java.net.UnknownHostException ignored) {
+            throw new IllegalArgumentException("worker-ip must be a valid IPv4 or IPv6 address");
+        }
+    }
+
+    private static boolean usable(java.net.InetAddress address) {
+        return !address.isLoopbackAddress() && !address.isAnyLocalAddress()
+                && !address.isMulticastAddress() && !address.isLinkLocalAddress();
     }
 
     @Override
@@ -34,7 +65,7 @@ public class WorkerMyBatisSyncRepository implements WorkerSyncStatePort, WorkerS
     @Transactional
     public boolean claimRuntime(long taskId, String runtimeId, String owner, long leaseSeconds) {
         mapper.ensureRuntime(taskId, runtimeId);
-        return mapper.claimRuntime(taskId, runtimeId, owner, leaseSeconds) == 1;
+        return mapper.claimRuntime(taskId, runtimeId, owner, leaseSeconds, workerIp) == 1;
     }
 
     @Override

@@ -121,6 +121,13 @@ public class SyncService {
         return sync.findRuntime(id);
     }
 
+    public List<SyncWorkerAssignment> workerAssignments(List<Long> taskIds) {
+        if (taskIds == null || taskIds.isEmpty() || taskIds.size() > 100
+                || taskIds.stream().anyMatch(id -> id == null || id < 1))
+            throw invalid("taskIds must contain between 1 and 100 positive IDs");
+        return sync.findWorkerAssignments(taskIds.stream().distinct().toList());
+    }
+
     public void appendEngineEvent(long id, String message, String engine) {
         get(id);
         sync.appendTaskEvent(id, engine, message);

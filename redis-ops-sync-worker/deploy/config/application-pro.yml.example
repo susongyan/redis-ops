@@ -28,6 +28,7 @@ sync:
   engine:
     enabled: true
     instance-id: worker-pro-01
+    worker-ip: "" # Automatically detect IP address; set the deployment machine IP when containerized.
     data-dir: /var/lib/redis-ops-worker/spool
     max-concurrent-tasks: 2
     poll-interval-ms: 500

@@ -28,6 +28,8 @@ sync:
   engine:
     enabled: ${SYNC_ENGINE_ENABLED:true}
     instance-id: ${SYNC_ENGINE_INSTANCE_ID:${HOSTNAME:local-sync}}
+    # Empty detects this process's IP address; containers can explicitly report their deployment node.
+    worker-ip: ${SYNC_ENGINE_WORKER_IP:}
     poll-interval-ms: ${SYNC_ENGINE_POLL_INTERVAL_MS:500}
     lease-seconds: ${SYNC_ENGINE_LEASE_SECONDS:30}
     lease-renew-interval-ms: ${SYNC_ENGINE_LEASE_RENEW_INTERVAL_MS:5000}

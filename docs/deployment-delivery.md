@@ -7,7 +7,7 @@
 ## 1. 发布边界与文件清单
 
 以审核过的 commit/tag 为发布输入，不直接打包有未提交文件的工作区。
-本次发布包含 V1–V28；完整初始化 SQL 快照仍为 V26，Platform 首次启动会继续执行 V27/V28 分析表迁移。
+本次完整初始化快照为 V29，位于 `redis-ops-platform/sql/latest/`；历史增量保留在 Platform migration 目录。
 将来以所选发布 JAR 内实际包含的 migration 为准，不在运维脚本中写死最高版本。
 
 | 交付件 | 源码位置 | 安装位置示例 |
@@ -62,8 +62,8 @@ npm run build
 ## 4. 首次部署顺序
 
 1. DBA 按[数据库手册](../redis-ops-platform/sql/README.md)准备数据库与账号；可以选择
-   [V26 完整 SQL 初始化包](../redis-ops-platform/sql/baseline-v26/README.md)，或空库由 Flyway 逐条迁移，二选一。
-   完整 SQL 已包含建库和 BASELINE，不再重复建库或执行 V1–V26；先不启动 Worker。
+   [最新完整 SQL 初始化包](../redis-ops-platform/sql/latest/README.md)，或空库由 Flyway 逐条迁移，二选一。
+   完整 SQL 已包含建库和 BASELINE，不再重复建库或执行 V1–V29；先不启动 Worker。
 2. 将两个示例配置分别复制到各自 `/etc/redis-ops-*/application-pro.yml`，替换所有占位符。
 3. 两边配置同一数据库和同一 Redis 凭据密钥环；不要每次启动生成新密钥。
 4. 以独立部署用户创建应用日志目录与 Worker 数据目录；配置只对服务用户开放读取，目录按公司策略保护。

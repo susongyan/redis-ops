@@ -64,6 +64,9 @@ public class MyBatisSyncRepository implements SyncRepository {
     public Optional<SyncRuntime> findRuntime(long taskId) {
         return Optional.ofNullable(mapper.findRuntime(taskId));
     }
+    public List<SyncWorkerAssignment> findWorkerAssignments(List<Long> taskIds) {
+        return taskIds.isEmpty() ? List.of() : mapper.findWorkerAssignments(taskIds);
+    }
     public boolean claimRuntime(long taskId, String runtimeId, String owner, long leaseSeconds) {
         mapper.ensureRuntime(taskId, runtimeId);
         return mapper.claimRuntime(taskId, runtimeId, owner, leaseSeconds) == 1;
