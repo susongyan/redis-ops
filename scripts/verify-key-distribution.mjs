@@ -66,9 +66,10 @@ try {
   run('javac', ['-cp', cp, '-d', dir, resolve('scripts/fixtures/DistributionMemoryProbe.java')]);
   console.log(run('java', ['-Xmx64m', '-cp', cp, 'DistributionMemoryProbe']));
   if (process.env.DISTRIBUTION_TEST_UI === '1') {
+    if (!process.env.IDENTITY_BOOTSTRAP_PASSWORD) throw Error('UI QA requires IDENTITY_BOOTSTRAP_PASSWORD; first login must change it.');
     sql(`USE redis_governance; UPDATE redis_cluster SET endpoint='127.0.0.1:${standalone}' WHERE id=1;`);
     apiProcess = spawn('java', ['-jar', resolve('redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0-SNAPSHOT.jar'),
-      '--server.address=127.0.0.1', '--server.port=8080', '--collector.enabled=false', '--worker.enabled=false'], {
+      '--server.address=127.0.0.1', '--server.port=8080', '--collector.enabled=false', '--worker.enabled=false', '--identity.cookie-secure=false'], {
       env: {...process.env, DB_URL: `jdbc:mysql://127.0.0.1:${mysqlPort}/redis_governance?serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false`,
         DB_USERNAME: 'root', DB_PASSWORD: password, REDIS_OPS_CREDENTIAL_KEYS: `test:${randomBytes(32).toString('base64')}`},
       stdio: ['ignore', 'ignore', 'ignore']

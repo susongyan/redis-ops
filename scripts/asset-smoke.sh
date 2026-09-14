@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+: "${ASSET_SMOKE_PASSWORD:?Set the test platform account password; never use production credentials}"
+export ASSET_SMOKE_USERNAME="${ASSET_SMOKE_USERNAME:-admin}"
+auth_cookie="$(mktemp -t redis-ops-cookie.XXXXXX)"
+auth_ready=0
+# All existing HTTP calls share the same JDBC session and refresh CSRF before writes.
+curl() {
+  if [[ "$auth_ready" == "1" ]]; then
+    local token
+    token="$(command curl -fsS -b "$auth_cookie" -c "$auth_cookie" "$base/auth/csrf" | jq -er '.data.token')" || return 1
+    command curl -b "$auth_cookie" -c "$auth_cookie" -H "X-CSRF-TOKEN: $token" "$@"
+  else
+    command curl "$@"
+  fi
+}
+
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 api_log="$(mktemp -t redis-ops-api.XXXXXX)"
 api_pid=""
@@ -19,13 +34,13 @@ cleanup() {
   if [[ "$cleanup_done" != "1" && -n "$api_pid" ]]; then
     if [[ -n "$app_id" ]]; then
       for cluster_id in "${cluster_ids[@]}"; do
-        curl -sS -X DELETE -H "X-Operator: cleanup" \
+        curl -sS -X DELETE \
           -H "Idempotency-Key: cleanup-unbind-$app_id-$cluster_id" \
           "$base/applications/$app_id/clusters/$cluster_id" >/dev/null 2>&1 || true
       done
       current_app_version="$(curl -sS "$base/applications/$app_id" | jq -r '.data.version // empty' 2>/dev/null || true)"
       if [[ -n "$current_app_version" ]]; then
-        curl -sS -X DELETE -H "X-Operator: cleanup" \
+        curl -sS -X DELETE \
           -H "Idempotency-Key: cleanup-app-$app_id" -H "If-Match: $current_app_version" \
           "$base/applications/$app_id" >/dev/null 2>&1 || true
       fi
@@ -33,23 +48,24 @@ cleanup() {
     for cluster_id in "${cluster_ids[@]}"; do
       current_cluster_version="$(curl -sS "$base/clusters/$cluster_id" | jq -r '.data.cluster.version // empty' 2>/dev/null || true)"
       if [[ -n "$current_cluster_version" ]]; then
-        curl -sS -X DELETE -H "X-Operator: cleanup" \
+        curl -sS -X DELETE \
           -H "Idempotency-Key: cleanup-cluster-$cluster_id" -H "If-Match: $current_cluster_version" \
           "$base/clusters/$cluster_id" >/dev/null 2>&1 || true
       fi
     done
     if [[ -n "$idc_id" && -n "$idc_version" ]]; then
-      curl -sS -X DELETE -H "X-Operator: cleanup" \
+      curl -sS -X DELETE \
         -H "Idempotency-Key: cleanup-idc-$idc_id" -H "If-Match: $idc_version" \
         "$base/idcs/$idc_id" >/dev/null 2>&1 || true
     fi
     if [[ -n "$region_id" && -n "$region_version" ]]; then
-      curl -sS -X DELETE -H "X-Operator: cleanup" \
+      curl -sS -X DELETE \
         -H "Idempotency-Key: cleanup-region-$region_id" -H "If-Match: $region_version" \
         "$base/regions/$region_id" >/dev/null 2>&1 || true
     fi
   fi
   if [[ -n "$api_pid" ]]; then kill "$api_pid" 2>/dev/null || true; fi
+  rm -f "$auth_cookie"
 }
 trap cleanup EXIT
 
@@ -67,7 +83,7 @@ cd "$repo_dir"
 if [[ -z "${REDIS_OPS_CREDENTIAL_KEYS:-}" ]]; then
   export REDIS_OPS_CREDENTIAL_KEYS="acceptance:$(openssl rand -base64 32)"
 fi
-SERVER_PORT="$smoke_port" java -jar redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0-SNAPSHOT.jar >"$api_log" 2>&1 &
+IDENTITY_BOOTSTRAP_USERNAME="$ASSET_SMOKE_USERNAME" IDENTITY_BOOTSTRAP_PASSWORD="$ASSET_SMOKE_PASSWORD" IDENTITY_COOKIE_SECURE=false SERVER_PORT="$smoke_port" java -jar redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0-SNAPSHOT.jar >"$api_log" 2>&1 &
 api_pid=$!
 
 for _ in {1..60}; do
@@ -78,27 +94,36 @@ curl -fsS "http://127.0.0.1:${smoke_port}/actuator/health" >/dev/null ||
   fail "API did not become healthy on port $smoke_port"
 
 suffix="$(date +%s)-$$"
-operator="asset-acceptance"
+auth_ready=1
+login_response="$(jq -n '{username:env.ASSET_SMOKE_USERNAME,password:env.ASSET_SMOKE_PASSWORD}' | curl -fsS -H 'Content-Type: application/json' --data-binary @- "$base/auth/login")"
+if [[ "$(jq -r '.data.passwordChangeRequired' <<<"$login_response")" == "true" ]]; then
+  : "${ASSET_SMOKE_NEW_PASSWORD:?Initial account requires a distinct new password}"
+  export ASSET_SMOKE_NEW_PASSWORD
+  jq -n '{oldPassword:env.ASSET_SMOKE_PASSWORD,newPassword:env.ASSET_SMOKE_NEW_PASSWORD}' | curl -fsS -H 'Content-Type: application/json' -H "If-Match: $(jq -r '.data.version' <<<"$login_response")" --data-binary @- "$base/auth/password" >/dev/null
+  export ASSET_SMOKE_PASSWORD="$ASSET_SMOKE_NEW_PASSWORD"
+  login_response="$(jq -n '{username:env.ASSET_SMOKE_USERNAME,password:env.ASSET_SMOKE_PASSWORD}' | curl -fsS -H 'Content-Type: application/json' --data-binary @- "$base/auth/login")"
+fi
+operator="user:$(jq -er '.data.id' <<<"$login_response")"
 
 post() {
-  curl -fsS -H 'Content-Type: application/json' -H "X-Operator: $operator" \
+  curl -fsS -H 'Content-Type: application/json' \
     -H "Idempotency-Key: $1" -d "$2" "$3"
 }
 put() {
-  curl -fsS -X PUT -H 'Content-Type: application/json' -H "X-Operator: $operator" \
+  curl -fsS -X PUT -H 'Content-Type: application/json' \
     -H "Idempotency-Key: $1" -H "If-Match: $2" -d "$3" "$4"
 }
 delete_resource() {
-  curl -fsS -X DELETE -H "X-Operator: $operator" -H "Idempotency-Key: $1" \
+  curl -fsS -X DELETE -H "Idempotency-Key: $1" \
     -H "If-Match: $2" "$3"
 }
 test_connection() {
-  curl -fsS -H 'Content-Type: application/json' -H "X-Operator: $operator" \
+  curl -fsS -H 'Content-Type: application/json' \
     -d "$1" "$base/clusters/connection-tests"
 }
 discover() {
   local cluster_id="$1" key="$2"
-  curl -fsS -X POST -H 'Content-Type: application/json' -H "X-Operator: $operator" \
+  curl -fsS -X POST -H 'Content-Type: application/json' \
     -H "Idempotency-Key: $key" -d '{}' "$base/clusters/$cluster_id/discoveries"
 }
 wait_for_job() {
@@ -153,7 +178,7 @@ create_cluster "acl" "STANDALONE" "127.0.0.1:6384" ',"authEnabled":true,"usernam
 create_cluster "sentinel" "SENTINEL" "phase1-master@127.0.0.1:26379" ',"authEnabled":false' 2
 create_cluster "cluster" "CLUSTER" "127.0.0.1:7001,127.0.0.1:7002,127.0.0.1:7003" ',"authEnabled":false' 3
 
-wrong_password_response="$(curl -sS -H 'Content-Type: application/json' -H "X-Operator: $operator" \
+wrong_password_response="$(curl -sS -H 'Content-Type: application/json' \
   -d '{"mode":"STANDALONE","endpoint":"127.0.0.1:6384","authEnabled":true,"username":"redis-reader","password":"wrong-password"}' \
   "$base/clusters/connection-tests")"
 [[ "$(jq -r '.code' <<<"$wrong_password_response")" == "REDIS_AUTHENTICATION_FAILED" ]] ||
@@ -203,7 +228,7 @@ app_version="$(jq -r '.data.version' <<<"$app_response")"
 binding_body='{"clientType":"Lettuce","clientVersion":"6.3","poolConfig":"{\"maxTotal\":16}"}'
 binding_url="$base/applications/$app_id/clusters/${cluster_ids[0]}"
 for _ in 1 2; do
-  curl -fsS -X PUT -H 'Content-Type: application/json' -H "X-Operator: $operator" \
+  curl -fsS -X PUT -H 'Content-Type: application/json' \
     -H "Idempotency-Key: bind-$suffix" -d "$binding_body" "$binding_url" >/dev/null
 done
 binding_count="$(curl -fsS "$base/applications/$app_id" | jq '.data.bindings | length')"
@@ -222,7 +247,7 @@ audit_response="$(curl -fsS "$base/audits?operator=$operator&resourceType=APPLIC
 [[ "$audit_response" != *"phase1-test-password"* ]] || fail "audit response exposed a password"
 
 for _ in 1 2; do
-  curl -fsS -X DELETE -H "X-Operator: $operator" -H "Idempotency-Key: unbind-$suffix" \
+  curl -fsS -X DELETE -H "Idempotency-Key: unbind-$suffix" \
     "$binding_url" >/dev/null
 done
 for _ in 1 2; do

@@ -12,6 +12,12 @@ spring:
     # 独立迁移账号；url 默认沿用 datasource。schema 只由 Platform 迁移。
     user: redis_ops_migrator
     password: "REPLACE_MIGRATOR_PASSWORD"
+identity:
+  bootstrap:
+    username: admin
+    # 首次初始化前设置强随机密码；初始化并改密后删除本项。重启不覆盖账户。
+    password: "REPLACE_INITIAL_ADMIN_PASSWORD"
+  cookie-secure: true
 server:
   port: 8080
 management:
