@@ -7,7 +7,7 @@
 ## 1. 发布边界与文件清单
 
 以审核过的 commit/tag 为发布输入，不直接打包有未提交文件的工作区。
-本次完整初始化快照为 V30，位于 `redis-ops-platform/sql/latest/`；历史增量保留在 Platform migration 目录。
+完整初始化快照位于 `redis-ops-platform/sql/latest/`，当前版本与校验和以该目录的 `manifest.json` 和 README 为准；历史增量保留在 Platform migration 目录。
 将来以所选发布 JAR 内实际包含的 migration 为准，不在运维脚本中写死最高版本。
 
 | 交付件 | 源码位置 | 安装位置示例 |
@@ -44,6 +44,19 @@ Worker 不依赖 Platform HTTP。Cluster 场景必须能到达拓扑返回的全
 
 ## 3. 独立构建
 
+### Platform 后台任务配置
+
+通用后台任务统一使用 `platform.jobs.*`：`enabled`、`instance-id`，以及
+`discovery / risk-scan / validation / ttl-governance / cleanup-governance` 下的 `poll-interval-ms`。
+开关默认 true，各任务轮询默认 1000 ms。环境变量使用 `PLATFORM_JOBS_ENABLED`，
+发现轮询使用 `PLATFORM_JOBS_DISCOVERY_POLL_INTERVAL_MS`。
+
+这是不兼容的配置重命名：升级时必须迁移旧 `worker.*` 配置和旧环境变量；旧名称不再生效，
+只设置旧关闭开关会导致新开关使用默认 true。请尤其检查纯 API 实例及部署配置中心。
+该开关控制拓扑发现、风险扫描、数据校验、TTL / 清理治理和凭据后台重加密；
+不控制独立 Sync Worker、Collector、Key 分布执行器和通知发送。重加密自身间隔仍使用
+`redis-ops.credential.rotation-*`，加密算法不变。配置按进程重启生效，不提供动态热切换。
+
 在各自代码根目录执行（Maven 已配置可解析 contract）：
 
 ```bash
@@ -56,7 +69,7 @@ npm ci
 npm run build
 ```
 
-后端使用 Java 17+、Maven 3.9+；前端构建使用 Node 20+。运行前端只需 Nginx，不需要 Node。
+后端编译目标 Java 17，可使用 JDK 17 或 JDK 21、Maven 3.9+；当前前端 Vite 要求 Node.js `^20.19.0 || >=22.12.0`。运行前端只需 Nginx，不需要 Node。
 记录 commit、JAR/静态包校验和、migration 清单及测试证据。不得把真实配置和密钥装进发布包。
 
 ## 4. 首次部署顺序

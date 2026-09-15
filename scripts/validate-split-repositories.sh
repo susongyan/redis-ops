@@ -66,7 +66,7 @@ mvn --settings "${SETTINGS_FILE}" --batch-mode --no-transfer-progress \
 mvn --settings "${SETTINGS_FILE}" --batch-mode --no-transfer-progress \
   -Dmaven.repo.local="${PLATFORM_LOCAL_REPO}" \
   -f "${PLATFORM_DIR}/pom.xml" dependency:tree \
-  -Dincludes=io.github.redisops > "${VALIDATION_DIR}/platform-dependencies.txt"
+  -Dincludes=io.github.susongyan.redisops > "${VALIDATION_DIR}/platform-dependencies.txt"
 
 mvn --settings "${SETTINGS_FILE}" --batch-mode --no-transfer-progress \
   -Dmaven.repo.local="${WORKER_LOCAL_REPO}" \
@@ -74,7 +74,7 @@ mvn --settings "${SETTINGS_FILE}" --batch-mode --no-transfer-progress \
 mvn --settings "${SETTINGS_FILE}" --batch-mode --no-transfer-progress \
   -Dmaven.repo.local="${WORKER_LOCAL_REPO}" \
   -f "${WORKER_DIR}/pom.xml" dependency:tree \
-  -Dincludes=io.github.redisops > "${VALIDATION_DIR}/worker-dependencies.txt"
+  -Dincludes=io.github.susongyan.redisops > "${VALIDATION_DIR}/worker-dependencies.txt"
 
 if rg -q 'redis-ops-worker-(protocol|service)' "${VALIDATION_DIR}/platform-dependencies.txt"; then
   echo "Platform dependency tree contains Worker artifacts" >&2

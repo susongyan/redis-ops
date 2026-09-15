@@ -1,6 +1,6 @@
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.redisops.platform.domain.distribution.*;
-import io.github.redisops.platform.infrastructure.distribution.*;
+import io.github.susongyan.redisops.platform.domain.distribution.*;
+import io.github.susongyan.redisops.platform.infrastructure.distribution.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;

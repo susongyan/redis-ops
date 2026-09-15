@@ -3,6 +3,7 @@
 - 状态：Accepted
 - 日期：2026-09-12
 - 关联：[ADR-013](ADR-013-minimal-sync-contract-repositories.md)
+- 命名空间由 [ADR-020](ADR-020-author-package-prefix.md) 更新；以下保留历史决策。
 
 物理拆仓后，Platform 使用 common/domain/application/infrastructure/api/bootstrap 子目录，
 Maven artifact 为 redis-ops-platform-*；Worker 使用 sync-protocol/sync-service 子目录，

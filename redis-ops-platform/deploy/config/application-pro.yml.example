@@ -28,11 +28,20 @@ management:
   endpoint:
     health:
       show-details: never
-worker:
-  enabled: true
-  instance-id: platform-pro-01
-  discovery:
-    poll-interval-ms: 1000
+platform:
+  jobs:
+    enabled: true
+    instance-id: platform-pro-01
+    discovery:
+      poll-interval-ms: 1000
+    risk-scan:
+      poll-interval-ms: 1000
+    validation:
+      poll-interval-ms: 1000
+    ttl-governance:
+      poll-interval-ms: 1000
+    cleanup-governance:
+      poll-interval-ms: 1000
 collector:
   enabled: true
   fast-interval-ms: 15000

@@ -55,7 +55,7 @@ Redis 密码随集群通过 write-only `password` 提交，平台使用 AES-256-
 
 每个集群维护一套连接账号，发现、同步、治理和访问层统一使用。`authEnabled=false` 表示无认证；用户名为空表示 requirepass/default 用户，填写用户名表示 ACL 认证。集群详情只返回认证状态、用户名、认证类型和密码是否已配置。
 
-`endpoint` 支持多个 Seed，按顺序连接直到成功。Standalone/Cluster 使用 `host1:port,host2:port`，Sentinel 使用 `masterName@sentinel1:26379,sentinel2:26379`。发现请求只负责创建持久化任务并返回 `202 Accepted`；同进程 Worker 仅携带 `clusterId`，运行时从集群秘密表读取连接信息，通过数据库租约领取、失败重试，并在成功后原子刷新节点快照。设置 `WORKER_ENABLED=false` 后不领取任务，但资产 CRUD 仍正常，积压任务会在启用 Worker 后继续处理。
+`endpoint` 支持多个 Seed，按顺序连接直到成功。Standalone/Cluster 使用 `host1:port,host2:port`，Sentinel 使用 `masterName@sentinel1:26379,sentinel2:26379`。发现请求只负责创建持久化任务并返回 `202 Accepted`；同进程 Worker 仅携带 `clusterId`，运行时从集群秘密表读取连接信息，通过数据库租约领取、失败重试，并在成功后原子刷新节点快照。设置 `PLATFORM_JOBS_ENABLED=false` 后不领取任务，但资产 CRUD 仍正常，积压任务会在启用 Worker 后继续处理。
 
 ### 配置校验与连通性测试
 

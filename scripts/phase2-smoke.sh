@@ -9,7 +9,7 @@ export REDIS_OPS_CREDENTIAL_KEYS="${REDIS_OPS_CREDENTIAL_KEYS:-v1:AAAAAAAAAAAAAA
 export DB_URL="${DB_URL:-jdbc:mysql://localhost:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}"
 export DB_USERNAME="${DB_USERNAME:-redis_governance}"
 export DB_PASSWORD="${DB_PASSWORD:-redis_governance}"
-export WORKER_ENABLED=true
+export PLATFORM_JOBS_ENABLED=true
 java -jar redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0-SNAPSHOT.jar --server.port="$port" >"$log" 2>&1 & pid=$!
 for _ in {1..60}; do curl -fsS "http://127.0.0.1:$port/actuator/health" >/dev/null 2>&1 && break; sleep .5; done
 curl -fsS "http://127.0.0.1:$port/actuator/health" >/dev/null || { tail -100 "$log"; exit 1; }

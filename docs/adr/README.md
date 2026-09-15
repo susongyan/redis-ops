@@ -16,6 +16,7 @@ ADR 记录会长期影响代码结构、运行方式、安全边界或迁移成�
 
 | ADR | 状态 | 决策 |
 |---|---|---|
+| [ADR-020](ADR-020-author-package-prefix.md) | Accepted | 作者命名空间与 Maven groupId 统一 |
 | [ADR-001](ADR-001-modular-monolith-and-separate-sync-worker.md) | Accepted | 模块化单体控制面与独立 Sync Worker |
 | [ADR-002](ADR-002-mysql-lease-control-plane.md) | Accepted | 共享 MySQL 租约控制面与目标 Redis 最终 fence |
 | [ADR-003](ADR-003-cluster-owned-encrypted-connection-secret.md) | Accepted | 集群内置加密连接秘密 |

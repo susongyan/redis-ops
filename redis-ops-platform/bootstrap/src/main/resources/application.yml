@@ -44,10 +44,21 @@ collector:
   enabled: ${COLLECTOR_ENABLED:true}
   fast-interval-ms: ${COLLECTOR_FAST_INTERVAL_MS:15000}
   page-size: ${COLLECTOR_PAGE_SIZE:200}
-worker:
-  enabled: ${WORKER_ENABLED:true}
-  discovery:
-    poll-interval-ms: ${DISCOVERY_POLL_INTERVAL_MS:1000}
+platform:
+  jobs:
+    # Platform jobs and credential re-encryption; not the independent Sync Worker.
+    enabled: ${PLATFORM_JOBS_ENABLED:true}
+    instance-id: ${PLATFORM_JOBS_INSTANCE_ID:${HOSTNAME:local-platform}}
+    discovery:
+      poll-interval-ms: ${PLATFORM_JOBS_DISCOVERY_POLL_INTERVAL_MS:1000}
+    risk-scan:
+      poll-interval-ms: 1000
+    validation:
+      poll-interval-ms: 1000
+    ttl-governance:
+      poll-interval-ms: 1000
+    cleanup-governance:
+      poll-interval-ms: 1000
 redis-ops:
   analysis:
     http:

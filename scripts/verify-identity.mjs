@@ -12,7 +12,7 @@ const run=(bin,args,options={})=>execFileSync(bin,args,{encoding:'utf8',stdio:['
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 async function start(index,port){
   const config=join(dir,`instance-${index}.properties`),log=join(dir,`instance-${index}.log`);
-  writeFileSync(config,`server.address=127.0.0.1\nserver.port=0\nspring.datasource.url=jdbc:mysql://127.0.0.1:${port}/identity_test?serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false\nspring.datasource.username=root\nspring.datasource.password=${secret}\nidentity.bootstrap.password=${initial}\nidentity.cookie-secure=false\nredis-ops.credential.keys=test:${randomBytes(32).toString('base64')}\ncollector.enabled=false\nworker.enabled=false\n`,{mode:0o600});
+  writeFileSync(config,`server.address=127.0.0.1\nserver.port=0\nspring.datasource.url=jdbc:mysql://127.0.0.1:${port}/identity_test?serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false\nspring.datasource.username=root\nspring.datasource.password=${secret}\nidentity.bootstrap.password=${initial}\nidentity.cookie-secure=false\nredis-ops.credential.keys=test:${randomBytes(32).toString('base64')}\ncollector.enabled=false\nplatform.jobs.enabled=false\n`,{mode:0o600});
   const fd=openSync(log,'a',0o600),child=spawn('java',['-Xmx256m','-jar',resolve('redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0-SNAPSHOT.jar'),`--spring.config.additional-location=file:${config}`],{stdio:['ignore',fd,fd]});
   closeSync(fd);processes.push(child);
   for(let n=0;n<120;n++){

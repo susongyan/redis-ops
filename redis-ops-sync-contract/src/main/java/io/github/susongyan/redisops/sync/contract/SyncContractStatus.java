@@ -1,0 +1,5 @@
+package io.github.susongyan.redisops.sync.contract;
+
+public enum SyncContractStatus {
+    CREATED, CHECKING, READY, STARTING, FULL_SYNCING, INCR_SYNCING, CAUGHT_UP, PAUSING, PAUSED, RESUMING, STOPPING, BLOCKED, FAILED, FINISHED, CANCELLED
+}

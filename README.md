@@ -1,119 +1,155 @@
-# Redis Governance Platform
+# Redis Ops · Redis 运维治理平台
 
-Redis 轻量级运维治理平台。Phase 1 已完成 Redis 资产管理，并已交付数据校验报告能力；自研同步数据面正在持续完善：
-Standalone 全量/增量闭环已经可运行，Sentinel 单通道与 failover 重连代码已经完成，
-Cluster 多 master 通道、目标 Slot 路由和安全接管已经形成闭环。RBAC 暂不实现。
+面向授权运维人员的 Redis 旁路管理平台，提供资产、同步、观测分析和治理能力，不承载业务 Redis 流量。
 
-数据校验支持全量、固定数量和百分比抽样，能够发现缺失、额外、类型、TTL 与摘要差异；大 Key 会安全降级，严格模式不会将含降级项的结果作为自动放行结论。
+**[功能介绍与截图](docs/demo/README.md)** · **[测试 / 生产部署](docs/deployment-delivery.md)** · **[用户登录与权限](docs/user-access.md)**
 
-[Key 分布分析](docs/key-distribution.md)支持按需有界预览、固定容量与 Top-K 前缀统计；统计 SCAN 观测次数，不读取 value，不占用 Sync Worker。
+## 当前能力与边界
+
+| 领域 | 已实现 | 边界 |
+| --- | --- | --- |
+| 资产 | Standalone / Sentinel / Cluster 登记、Region / IDC、连接测试、拓扑发现 | 不负责 Redis 安装、扩缩容或自动切换 |
+| 应用 | 应用与集群多对多、双向维护，新增集群可多选应用 | 人工资产关系，不修改业务连接配置 |
+| 同步 | 独立 Worker 全量 / 增量同步、租约、checkpoint、fence 与任务控制 | 写入必须遵守预检查和确认；上线前按版本及规模验收 |
+| 数据校验 | 全量及抽样，缺失、额外、类型、TTL、摘要差异 | 大 Key 可安全降级，严格模式不把降级结果视为自动放行依据 |
+| 观测与治理 | 指标采集、风险扫描、告警、TTL 治理、数据清理、受控 Redis Console | 依赖环境权限和配置，不表示当前部署全部可用 |
+| Key 分布 | 按需预览、固定容量 / 有界 Top-K、规则快照、CSV 导出 | SCAN 观测次数，不精确去重、不读取 value、不占用 Sync Worker |
+| 用户 | 本地账号、ADMIN / OPERATOR、MySQL 共享会话 | 无集群级权限；企业 OIDC / LDAP 仅预留扩展，未提供登录入口 |
+| AI 分析 | 按需分析入口与外部适配边界 | 依赖外部服务配置，不赋予 Agent Redis 修改权限 |
+
+演示环境监控页曾出现指标接口 403，见[图册问题记录](docs/demo/README.md)。管理端点默认访问边界见[用户说明](docs/user-access.md)，不能假设 Prometheus 匿名可用。
 
 ## 工程结构
 
 ```text
-redis-ops
-├── redis-ops-platform         # Platform 独立 Maven 根（含 sql/Flyway）
-├── redis-ops-sync-worker      # Worker 独立 Maven 根
-├── redis-ops-frontend         # 前端独立 npm 根
-├── redis-ops-sync-contract    # 纯 Java 17 发布 artifact
-├── docs                       # 架构与跨仓联调说明
-└── compose.yaml               # 本地联调基础设施
+redis-ops/
+├── redis-ops-platform/       # REST API、控制面与采集治理，独立 Maven 根
+├── redis-ops-sync-worker/    # 同步数据面，独立 Maven 根
+├── redis-ops-frontend/       # React 前端，独立 npm 根，产物为静态文件
+├── redis-ops-sync-contract/ # 纯 Java 契约 artifact，不是运行服务
+├── docs/                    # 架构、部署和使用说明
+└── compose.yaml             # 本地联调 MySQL / Redis
 ```
 
-## 本地构建
+Platform 与 Worker 共享一个 MySQL 逻辑库，通过控制表和契约协作；Worker 不依赖 Platform HTTP 或实现模块。Platform 负责 Flyway，Worker 不执行迁移。
 
-要求 JDK 17、Maven 3.9+、Node.js 20+ 和 Docker。
+Platform 的通用 Job 执行器与独立 Sync Worker 不同：`platform.jobs.enabled`（环境变量 `PLATFORM_JOBS_ENABLED`）控制前者，不是同步进程开关，也不关闭按需 Key 分布执行器。该开关同时控制后台凭据重加密。
+
+三个运行项目可独立构建部署；公司拆仓、私服、CI 和 Apollo 服务建设由企业负责。详见[拆仓说明](docs/split-repository-migration.md)。
+
+Java 包和 Maven groupId 统一为 `io.github.susongyan.redisops`，模块子包为
+`platform`、`worker` 和 `sync.contract`。旧命名空间不提供兼容，需先安装新坐标的契约再构建消费者，
+详见 [ADR-020](docs/adr/ADR-020-author-package-prefix.md)。
+
+## 构建
+
+- 后端编译目标 Java 17，可使用 JDK 17 或 21；Maven 3.9+。
+- 当前 Vite 要求 Node.js `^20.19.0 || >=22.12.0`；部署静态文件不需要 Node。
+- Docker / Colima 用于本地依赖及隔离测试，不是运行 JAR 的必需条件。
+
+仓库根执行：
 
 ```bash
 mvn -f redis-ops-sync-contract/pom.xml clean install
 ./scripts/build-platform.sh
 ./scripts/build-sync-worker.sh
-cd redis-ops-frontend && npm ci && npm run build
+cd redis-ops-frontend
+npm ci
+npm run build
 ```
 
-各 Maven 根可以单独复制建仓。Platform/Worker 仅依赖已发布的 contract artifact；本地联调先执行上述 contract install。企业 CI 使用各目录自身的 `.github/workflows/ci.yml` 和 Maven Registry 配置。根目录不再提供 Maven Parent。
+能够解析 contract artifact 后，可在 Platform / Worker 各自根目录执行 `mvn clean verify`。仓库根没有 Maven Parent。
 
-详见 [拆仓迁移说明](docs/split-repository-migration.md)。Platform 内部为 `common/domain/application/infrastructure/api/bootstrap`，Worker 内部为 `sync-protocol/sync-service`；Java 包分别为 `io.github.redisops.platform.*` 与 `io.github.redisops.worker.*`。
+## 本地快速开始
 
-## Linux 快速部署
+仅用于隔离本机环境，不要将 Compose 默认账号和无认证 Redis 暴露到公网。已有实例先检查端口，避免重复启动。
 
-测试/生产独立部署请从 [部署交付入口](docs/deployment-delivery.md) 开始，包含数据库初始化、
-两套外部 YAML、前端代理、Apollo 接入边界及升级验收。以下合并发布包仅保留为兼容入口。
-
-生成包含 Platform、Sync Worker、前端静态文件、Nginx/systemd 模板和统一控制脚本的自包含
-发布包：
+### 1. 启动依赖并构建
 
 ```bash
-./scripts/build-release.sh
+docker compose up -d mysql redis redis-sync-target
 ```
 
-解压后复制并保护配置，再按角色启动：
+等待 MySQL 健康，按上节构建。新空库由 Platform Flyway 初始化；已有库按增量升级，不重复导入完整 SQL。
+
+### 2. 准备外部配置
+
+在仓库外创建并保护本地配置，例如 `/absolute/path/local-redis-ops.yml`。以下模板必须替换占位符：
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC
+    username: redis_governance
+    password: redis_governance
+identity:
+  bootstrap:
+    username: admin
+    password: "REPLACE_WITH_INITIAL_PASSWORD"
+  cookie-secure: false # 仅本地 HTTP；生产 HTTPS 保持 true
+redis-ops:
+  credential:
+    keys: "v1:REPLACE_WITH_BASE64_32_BYTE_KEY"
+```
+
+凭据密钥可首次用 `openssl rand -base64 32` 生成并填入配置。**重启必须复用原密钥**，不可每次重新生成。配置不得提交 Git；Platform / Worker 使用相同密钥环解密 Redis 凭据。
+
+管理员初始密码没有内置默认值。首次登录必须改密，完成后移除配置中的初始密码。重启不覆盖现有账号，详见[用户接入](docs/user-access.md)。
+
+### 3. 启动 Platform 和前端
+
+仓库根终端：
 
 ```bash
-cp conf/redis-ops.env.example conf/redis-ops.env
-chmod 600 conf/redis-ops.env
-bin/redis-opsctl doctor all
-bin/redis-opsctl start all
+java -jar redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0-SNAPSHOT.jar \
+  --spring.config.additional-location=file:/absolute/path/local-redis-ops.yml
 ```
 
-支持 `platform`、`frontend`、`worker` 分角色部署，也支持可选 systemd 安装。完整说明见
-[Platform 前后端构建与部署](docs/platform-deployment.md) 和
-[Sync Worker 构建、部署与扩容](docs/sync-worker-deployment.md)。
-
-## 本地运行
+另一个终端：
 
 ```bash
-docker compose up -d mysql redis
-export REDIS_OPS_CREDENTIAL_KEYS="v1:$(openssl rand -base64 32)"
-./scripts/build-platform.sh
-java -jar redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0-SNAPSHOT.jar
-cd redis-ops-frontend && npm run dev
+cd redis-ops-frontend
+npm run dev
 ```
 
-默认同一进程同时提供 API 并领取异步任务；`WORKER_ENABLED=false` 停止资产发现/通用 Job 领取，不禁用独立的按需 Key 分布执行器。`REDIS_OPS_CREDENTIAL_KEYS` 的第一个 Key 用于新写入，后续 Key 仅用于读取和在线轮换旧密文。密钥只在首次部署时生成，后续重启必须复用同一密钥；生产环境应由部署系统安全注入，不能每次启动重新生成。
+访问 `http://127.0.0.1:5173`，用自己配置的账号登录并改密。API 默认 8080。开发代理及生产同源 Nginx 配置见[前端部署](docs/frontend-deployment.md)。
 
-API、内置 Worker 和 Redis 的端到端资产验收：
+此步骤不启动同步数据面。执行同步还需按[Worker 部署](docs/sync-worker-deployment.md)配置共享数据库、密钥、唯一身份与 spool 持久目录并启动 Worker。不要为了查看页面启动真实同步。
+
+## 测试 / 生产部署
+
+以[部署交付入口](docs/deployment-delivery.md)为操作导航：
+
+1. 选择审核过的 commit/tag，独立构建三个运行项目。
+2. DBA 初始化空库使用 [sql/latest 完整包](redis-ops-platform/sql/latest/README.md)，版本与校验和以 manifest 为准；已有库只做增量升级。
+3. 配置两进程各自的 Spring 外部 YAML、数据库账号、密钥与初始管理员。配置存储安全交给外部部署系统 / 配置中心，应用 AES-GCM 逻辑不变。
+4. Nginx 托管静态文件，HTTPS 同源代理 `/api/`。会话存储在共享 MySQL，不需要 Redis 或粘性会话。
+5. 验证登录、权限、迁移和所需核心流程，再按生产数据规模验收。
+
+Apollo 需企业提供服务并接入适配器，不是只填写 Namespace 就生效，见[Apollo 边界](docs/apollo-integration.md)。根目录合并发布包及控制脚本仅保留为兼容入口，不替代独立部署手册。
+
+## 验证与规范
+
+后端在对应 Maven 根执行 `mvn verify`，格式化执行 `mvn spotless:apply`。
 
 ```bash
-./scripts/build-platform.sh
-./scripts/asset-smoke.sh
+cd redis-ops-frontend
+node --test src/*.test.js
+npm run build
 ```
 
-同步引擎的 Redis 版本矩阵和 Cluster 拓扑转换验收：
+隔离测试入口包括 `scripts/asset-smoke.sh`、`scripts/verify-identity.mjs`、`scripts/sync-version-matrix.sh` 和 `scripts/sync-cluster-it.sh`。先阅读脚本及手册，核对目标及影响范围；资产验收需要登录凭据配置，见[用户说明](docs/user-access.md)。不得指向生产环境。
 
-```bash
-./scripts/sync-version-matrix.sh
-./scripts/sync-cluster-it.sh
-```
+## 文档导航与维护
 
-验收脚本会启动无认证 Standalone、ACL Standalone、Sentinel 和三主节点 Cluster，验证连通性、
-异步拓扑发现、失败快照保留、幂等、审计及秘密脱敏。只启动这些 Redis 测试实例可执行：
+| 主题 | 入口 |
+| --- | --- |
+| 功能截图与演示 | [图册](docs/demo/README.md) |
+| 机器、数据库、配置、上线 | [部署交付](docs/deployment-delivery.md) |
+| 登录、角色、共享会话 | [用户接入](docs/user-access.md) |
+| 应用与集群关系 | [关联管理](docs/application-bindings.md) |
+| Key 分布及导出 | [分布分析](docs/key-distribution.md) |
+| 同步恢复与安全 | [生命周期](docs/sync-worker-lifecycle.md)、[运行手册](docs/sync-operations-runbook.md) |
+| 架构与约束 | [架构契约](docs/architecture-contract.md)、[ADR](docs/adr/README.md) |
 
-```bash
-./scripts/redis-asset-test-up.sh
-```
-
-详细设计见 [架构设计](docs/architecture.md)、[跨机房关系与同步](docs/cross-idc-sync.md)、
-[架构契约](docs/architecture-contract.md)、[架构决策记录](docs/adr/README.md)、
-[同步管理面与 Worker 分离](docs/sync-control-worker-separation.md)、
-[同步 Worker 管理流程与生命周期](docs/sync-worker-lifecycle.md)、
-[同步服务部署与恢复手册](docs/sync-operations-runbook.md)、
-[Platform 前后端构建与部署](docs/platform-deployment.md)、
-[Sync Worker 构建、部署与扩容](docs/sync-worker-deployment.md)、
-[RPO 计算与切换判定](docs/rpo-calculation-and-switchover.md) 和
-[Phase 1 任务拆分](docs/phase1-tasks.md)。
-
-Redis 资产模块的启动方式和接口见 [Asset Management API](docs/asset-management-api.md)。
-
-## Java 代码格式
-
-项目使用 Spotless 调用 Eclipse Formatter，统一采用 4 空格缩进和 120 字符行宽：
-
-```bash
-mvn spotless:apply
-mvn spotless:check
-```
-
-`mvn verify` 会自动执行格式检查。IntelliJ IDEA 可以导入
-[`redis-ops-platform/config/formatter/eclipse-java-redis-ops.xml`](redis-ops-platform/config/formatter/eclipse-java-redis-ops.xml)，使 IDE
-格式化结果与 Maven 保持一致。
+README 维护当前能力和入口，不重复固化最高数据库版本或完整配置清单。功能、认证、依赖和部署方式变化时同步检查本文。历史 Phase 计划仅用于追溯，不作为当前交付状态或操作指南。

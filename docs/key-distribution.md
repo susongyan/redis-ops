@@ -114,7 +114,7 @@ Cluster DB 固定 0，只扫描主节点，核对完整 slot 覆盖和迁移标�
 
 旧任务的 Key/s 快照仅供历史查看，不转换为新参数；旧排队/恢复任务结束为 `INCOMPLETE / LEGACY_RATE_CONFIGURATION`，需要重新创建。升级前停止旧 Platform，不混跑两版。无需修改数据库结构，也不会自动清理生产历史结果。详见 ADR-018。
 终态任务默认保留 30 天，每小时最多清理 20 个并级联删除结果；排队/暂停任务不自动删除。
-此调度独立于 `worker.enabled` 的资产发现/通用 Job 开关；该开关不会禁用 Key 分布任务或预览。
+此调度独立于 `platform.jobs.enabled` 的资产发现/通用 Job 开关；该开关不会禁用 Key 分布任务或预览。
 
 新环境交给 DBA 执行 [最新完整 SQL](../redis-ops-platform/sql/latest/redis-governance-init.sql)。已有 V29 环境由 Platform Flyway 执行 V30；
 不要把最新初始化包导入已有库。回退应用不删除 V30 表，先暂停/取消分析任务，保留表和结果待后续版本接管。
