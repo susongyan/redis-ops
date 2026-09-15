@@ -98,7 +98,7 @@ export const api={
   ,startRiskScanTask:(id,version)=>request(`/api/v1/risk-scan-tasks/${id}/start`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
   ,cancelRiskScanTask:(id,version)=>request(`/api/v1/risk-scan-tasks/${id}/cancel`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
   ,riskFindings:(id,page=1,size=20,riskType)=>request(`/api/v1/risk-scan-tasks/${id}/findings?${new URLSearchParams({page,size,...(riskType?{riskType}: {})})}`)
-  ,collectorMetrics:async()=>{const response=await fetch('/actuator/prometheus');if(!response.ok)throw new Error(`指标请求失败 (${response.status})`);return response.text()}
+  ,collectorMetrics:()=>request('/api/v1/collector/metrics',{cache:'no-store'})
   ,collectorNodes:clusterId=>request(`/api/v1/collector/clusters/${clusterId}/nodes`)
   ,alertRules:()=>request('/api/v1/alert-rules')
   ,createAlertRule:data=>request('/api/v1/alert-rules',{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:JSON.stringify(data)})

@@ -46,6 +46,8 @@ POST /api/v1/users/{id}/reset-password 重置。
 Nginx / Vite 保持前后端同源，转发 /api/；跨站 VITE_API_BASE 不受首期支持。
 管理端点仅无详情 health 匿名可用，其余默认拒绝；旧匿名 Prometheus/info 抓取需调整，
 待明确独立管理入口授权方式后另行启用。
+监控页面使用受登录保护的 `/api/v1/collector/metrics` 读取白名单数值，详见
+[业务指标接口](collector-metrics-api.md)，不依赖 Actuator 放行。
 
 ## 恢复与验证
 

@@ -17,7 +17,7 @@
 | 用户 | 本地账号、ADMIN / OPERATOR、MySQL 共享会话 | 无集群级权限；企业 OIDC / LDAP 仅预留扩展，未提供登录入口 |
 | AI 分析 | 按需分析入口与外部适配边界 | 依赖外部服务配置，不赋予 Agent Redis 修改权限 |
 
-演示环境监控页曾出现指标接口 403，见[图册问题记录](docs/demo/README.md)。管理端点默认访问边界见[用户说明](docs/user-access.md)，不能假设 Prometheus 匿名可用。
+监控页面通过[受登录保护的业务指标接口](docs/collector-metrics-api.md)读取快照。管理端点默认访问边界见[用户说明](docs/user-access.md)，不能假设 Prometheus 匿名可用。
 
 ## 工程结构
 
