@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>org.springframework.boot</groupId>
@@ -14,7 +12,6 @@
     <version>0.1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>Redis Ops Platform</name>
-
     <modules>
         <module>common</module>
         <module>domain</module>
@@ -23,7 +20,6 @@
         <module>api</module>
         <module>bootstrap</module>
     </modules>
-
     <properties>
         <java.version>17</java.version>
         <redis-ops.sync-contract.version>0.1.0</redis-ops.sync-contract.version>
@@ -31,7 +27,6 @@
         <flyway.version>10.20.1</flyway.version>
         <spotless-maven-plugin.version>2.46.1</spotless-maven-plugin.version>
     </properties>
-
     <dependencyManagement>
         <dependencies>
             <dependency>
@@ -46,7 +41,6 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
-
     <build>
         <plugins>
             <plugin>
@@ -68,7 +62,9 @@
                     <execution>
                         <id>spotless-check</id>
                         <phase>verify</phase>
-                        <goals><goal>check</goal></goals>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
                     </execution>
                 </executions>
             </plugin>
