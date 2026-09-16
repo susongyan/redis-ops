@@ -1,3 +1,18 @@
+logging:
+  file:
+    name: ${LOG_DIR:./log}/platform.log
+  level:
+    root: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSSXXX} %5p [${spring.application.name}] [pid=${PID:-}] [%t] %logger{48} - %msg%n%wEx"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSSXXX} %5p [${spring.application.name}] [pid=${PID:-}] [%t] %logger{48} - %msg%n%wEx"
+  logback:
+    rollingpolicy:
+      file-name-pattern: "${LOG_DIR:./log}/archive/platform.%d{yyyy-MM-dd}.%i.log.gz"
+      max-file-size: 20MB
+      max-history: 14
+      total-size-cap: 1GB
+      clean-history-on-start: true
 spring:
   profiles:
     default: dev

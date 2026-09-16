@@ -65,7 +65,7 @@ load_config() {
   SYNC_WORKER_JAVA_OPTS="${SYNC_WORKER_JAVA_OPTS:--Xms1g -Xmx2g}"
   STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-90}"
   STOP_TIMEOUT_SECONDS="${STOP_TIMEOUT_SECONDS:-30}"
-  LOG_DIR="${LOG_DIR:-${INSTALL_DIR}/var/log}"
+  LOG_DIR="${LOG_DIR:-${INSTALL_DIR}/log}"
   SYNC_ENGINE_DATA_DIR="${SYNC_ENGINE_DATA_DIR:-${INSTALL_DIR}/var/data/sync}"
   SYNC_ENGINE_INSTANCE_ID="${SYNC_ENGINE_INSTANCE_ID:-$(hostname)-sync-1}"
 
@@ -101,7 +101,7 @@ pid_file() {
 }
 
 log_file() {
-  printf '%s/%s.log' "${LOG_DIR}" "$1"
+  printf '%s/%s-console.log' "${LOG_DIR}" "$1"
 }
 
 expected_process_pattern() {

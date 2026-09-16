@@ -130,6 +130,8 @@ Apollo 需企业提供服务并接入适配器，不是只填写 Namespace 就�
 
 ## 验证与规范
 
+日志默认写入启动工作目录的 `log/platform.log`、`log/worker.log`，格式与滚动策略见[日志配置](docs/logging.md)。
+
 后端在对应 Maven 根执行 `mvn verify`，格式化执行 `mvn spotless:apply`。
 
 ```bash
