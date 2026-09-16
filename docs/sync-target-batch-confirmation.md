@@ -38,6 +38,8 @@ checkpoint/fence 键；已验证真实三主节点 Cluster 的同 Slot 批次故
   `BLOCKED_DESTRUCTIVE_BATCH_CONFIRMATION`，即使旧任务策略允许危险命令也不执行。
   现有能力展示需在后续契约联调时对齐；在对齐前不部署此 Worker 到业务任务。
 - 本机制增加两个事务往返；吞吐、延迟及 Cluster 部分分片成功后的恢复需要后续压测。
+- 业务命令保持有界批量发送，再逐条检查 QUEUED 和 EXEC 回复；不为每条业务命令增加独立网络往返。
+  排队期参数错误会关闭事务连接、保留 pending，不执行已排队的其他命令，也不自动重放。
 - 本批修复覆盖增量 apply；全量 restore、FUNCTION LOAD 等既有路径不应据此宣称获得新确认协议。
 
 ## 首批验证
@@ -61,6 +63,14 @@ Cluster 发现结果，只转换 Docker NAT 地址，不模拟目标回复：
 - 三分片全部确认成功后，接管重放同一 offset 不重复执行，各分片计数保持为 1。
 
 这些案例不替代 MOVED/ASK 或主从切换的完整验收。
+
+后续增加排队期错误测试及 `COMMAND GETKEYS` 元数据交叉校验。Key 解析测试覆盖 20 个
+首批命令／变体；Redis 6.2 与 7.x 返回 Key 的顺序可能不同，比较完整多重集合而非返回顺序。
+纯协议测试另覆盖非法 Key 数量、整数溢出、重复／未知选项和无效权重，错误文本保持固定。
+COPY 的目标 DB 只被解析记录，后续准入必须检查跨 DB 边界，不能据此直接放行。
+参数依据：[COPY](https://redis.io/docs/latest/commands/copy/)、
+[LMOVE](https://redis.io/docs/latest/commands/lmove/)、
+[ZUNIONSTORE](https://redis.io/docs/latest/commands/zunionstore/)。首批限制在 6.2/7.x 参数范围。
 
 阶段一仍需补齐：能力协议/领取兼容性、吞吐对比和部署门禁；拓扑变更故障矩阵仍需扩展。
 通过这些门槛后才冻结最终协议并开放阶段二命令。

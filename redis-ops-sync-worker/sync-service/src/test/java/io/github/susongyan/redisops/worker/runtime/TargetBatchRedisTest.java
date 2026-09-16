@@ -11,6 +11,49 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Opt-in: requires a disposable Redis. Uses unique keys; never FLUSHes any database. */
 class TargetBatchRedisTest {
+    @Test
+    void queueTimeErrorClosesTransactionWithoutApplyingEarlierQueuedCommands() throws Exception {
+        try (var target = session()) {
+            target.publishFence(fence, guard);
+            var blocked = assertThrows(SyncBlockedException.class,
+                    () -> target.apply(List.of(planned("INCR", key("counter")), planned("INCR")), next(), fence,
+                            guard));
+            assertEquals("BLOCKED_TARGET_BATCH_UNCONFIRMED", blocked.reason());
+        }
+        assertEquals(RespValue.NullValue.INSTANCE, call("GET", key("counter")));
+        try (var restarted = session()) {
+            assertThrows(SyncBlockedException.class, () -> restarted.checkpoint());
+        }
+    }
+    @Test
+    void keyParserMatchesRedisCommandGetKeysForFirstBatch() throws Exception {
+        List<List<String>> commands = List.of(
+                List.of("DEL", "a", "b"), List.of("UNLINK", "a", "b"),
+                List.of("MSET", "a", "1", "b", "2"), List.of("MSETNX", "a", "1", "b", "2"),
+                List.of("RENAME", "a", "b"), List.of("RENAMENX", "a", "b"),
+                List.of("SMOVE", "a", "b", "member"), List.of("LMOVE", "a", "b", "RIGHT", "LEFT"),
+                List.of("RPOPLPUSH", "a", "b"), List.of("COPY", "a", "b", "DB", "0", "REPLACE"),
+                List.of("BITOP", "AND", "out", "a", "b"), List.of("BITOP", "NOT", "out", "a"),
+                List.of("SUNIONSTORE", "out", "a", "b"), List.of("SINTERSTORE", "out", "a", "b"),
+                List.of("SDIFFSTORE", "out", "a", "b"), List.of("PFMERGE", "out", "a", "b"),
+                List.of("ZUNIONSTORE", "out", "2", "a", "b", "WEIGHTS", "2", "3", "AGGREGATE", "MAX"),
+                List.of("ZINTERSTORE", "out", "2", "a", "b", "AGGREGATE", "MIN", "WEIGHTS", "-1", "2"),
+                List.of("ZDIFFSTORE", "out", "2", "a", "b"), List.of("XGROUP", "CREATE", "a", "group", "0"));
+        for (var args : commands) {
+            var query = new ArrayList<>(List.of("COMMAND", "GETKEYS"));
+            query.addAll(args);
+            var actual = (RespValue.Array) call(query.toArray(String[]::new));
+            var encoded = args.stream().map(s -> s.getBytes(StandardCharsets.UTF_8)).toList();
+            var parsed = CommandKeySemantics.describe(args.get(0), encoded).orElseThrow();
+            assertEquals(parsed.keys().size(), actual.values().size(), args.get(0));
+            // Redis 6.2's movable-key callbacks and 7.x key specs can order results differently.
+            var expectedKeys = parsed.keys().stream().map(k -> HexFormat.of().formatHex(encoded.get(k.index())))
+                    .sorted().toList();
+            var actualKeys = actual.values().stream().map(v -> HexFormat.of().formatHex(((RespValue.Bulk) v).value()))
+                    .sorted().toList();
+            assertEquals(expectedKeys, actualKeys, args.get(0));
+        }
+    }
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2, 3})
     void takeoverBetweenWatchAndExecRevokesStaleWriter(int selectedExec) throws Exception {

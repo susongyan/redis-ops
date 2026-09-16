@@ -365,7 +365,10 @@ public final class TargetCommandSession implements AutoCloseable {
                 watchPending(operationFenceKey, operationCheckpointKey, pending, expectedFence, leaseGuard);
                 expectOk(command("MULTI"), "MULTI");
                 for (CommandPlan.PlannedCommand planned : commands)
-                    expectQueued(command(planned.arguments().toArray(byte[][]::new)));
+                    codec.writeCommandBuffered(planned.arguments().toArray(byte[][]::new));
+                codec.flush();
+                for (int i = 0; i < commands.size(); i++)
+                    expectQueued(codec.read());
                 leaseGuard.assertValid();
                 RespValue applied = command("EXEC");
                 if (!(applied instanceof RespValue.Array array) || array.values().size() != commands.size())
