@@ -352,6 +352,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         lastFailure = channel.spec.channel() + " (" + channel.sourceEndpoint + ", RDB "
                 + channel.fullRdbBytes + " bytes): " + safe;
         if (error instanceof SyncBlockedException blocked) {
+            SyncCommandObservations.blocked();
             phase = "BLOCKED";
             reporter.transition(task.id(), SyncContractStatus.BLOCKED, null, blocked.reason(), safe,
                     "Cluster channel blocked: " + channel.spec.channel());
@@ -755,6 +756,9 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                     else
                         singleTarget.apply(result.plan().commands(), checkpoint, channelFence, leaseGuard);
                     applied.set(unit.endOffset());
+                    var observations = new SyncCommandObservations.Batch();
+                    observations.transaction(unit, result.plan());
+                    observations.confirmed();
                     caughtUp = false;
                     updateChannelThrottled();
                     spool.pruneCommandsThrough(applied.get());
@@ -765,6 +769,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         }
 
         private void applyOrdinaryBatch(List<ReplicationCommand> commands) throws IOException {
+            var observations = new SyncCommandObservations.Batch();
             beforeApply();
             try {
                 List<CommandPlan.PlannedCommand> planned = new ArrayList<>();
@@ -789,6 +794,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                                 command.name() + " at offset " + command.endOffset() + ": " + plan.reason());
                     throttle(command, plan.commands().size());
                     planned.addAll(plan.commands());
+                    observations.ordinary(command, plan);
                     heartbeat = Math.max(heartbeat, heartbeatTimestamp(command));
                     last = command;
                 }
@@ -800,6 +806,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                 else
                     singleTarget.apply(planned, checkpoint, channelFence, leaseGuard);
                 applied.set(last.endOffset());
+                observations.confirmed();
                 lastHeartbeatMillis = Math.max(lastHeartbeatMillis, heartbeat);
                 caughtUp = false;
                 updateChannelThrottled();

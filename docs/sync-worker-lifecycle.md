@@ -303,8 +303,9 @@ Runtime 规则：
 - `sync.engine.full-apply-queue-capacity` 仍是 Worker 部署级安全配置，默认 2000；实际容量不会
   小于任务并发数。
 
-并发仅用于全量阶段不同 Key 的 RESTORE。增量命令仍严格按 replication offset 顺序规划并与
-checkpoint 原子提交。暂停时所有目标连接共用同一个写入闸门；已在途 pipeline 完成后
+并发仅用于全量阶段不同 Key 的 RESTORE。增量命令仍严格按 replication offset 顺序规划，使用
+pending → 业务事务 → checkpoint 确认协议，不将 Redis EXEC 误认为出错时可回滚。
+暂停时所有目标连接共用同一个写入闸门；已在途 pipeline 完成后
 `pause()` 才返回。
 
 ### 6.3 增量同步与追平
@@ -316,7 +317,8 @@ checkpoint 原子提交。暂停时所有目标连接共用同一个写入闸门
 3. 根据目标模式拆分安全的多 Key 命令；不可等价拆分则进入 `BLOCKED_FILTER_BOUNDARY`。
 4. 写入加密 spool 并 fsync。
 5. 按目标节点或 slot 批量应用业务命令。
-6. 业务命令和目标 checkpoint 在同一个原子提交中完成。
+6. 在 fence 保护下先持久化 pending，执行业务事务并检查全部回复，再确认目标 checkpoint。
+   未确认结果阻塞，不自动重放；具体边界见[目标批次确认记录](sync-target-batch-confirmation.md)。
 7. checkpoint 成功后推进 applied offset，并删除不再需要的 spool segment。
 8. 默认每 1 秒将 channel 和 metric 摘要写入 MySQL；可通过
    `SYNC_ENGINE_METRIC_INTERVAL_MS` 调整。

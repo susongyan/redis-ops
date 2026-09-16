@@ -5,7 +5,8 @@
 ## 版本与范围
 
 契约 artifact 为 `sync-contract:0.3.0`。任务显式使用 `commandPolicy.policyVersion=v3`；
-默认仍为 v1，v2 仍只增加多 Key 命令准入，不自动支持源事务。Worker 领取 SQL 和能力声明同步区分版本。
+API 缺省仍为 v1，第四阶段新建任务页面显式选择 v3；v2 仍只增加多 Key 命令准入，不自动支持源事务。
+Worker 领取 SQL 和能力声明同步区分版本。
 先升级 Worker，再允许创建 v3 任务；旧策略不原地升级，过滤范围扩大需重新建立全量基线。
 
 v3 处理复制流中的 `MULTI ... EXEC`，包括 Redis 6.2 / 7.x 的 Lua 写入 effects。
@@ -53,5 +54,6 @@ Standalone / Cluster 执行器测试检查 EXEC 前无写入、一次完整提�
 已有目标批次故障矩阵继续通过，没有因事务接入跳过 pending / fence 检查。
 
 仍须完成生产发布门禁：持续高吞吐 / 多通道受限堆、真实主从切换、MOVED / ASK、
-运行中暂停恢复和接管的整条任务链路测试。不得以单元测试或数据校验替代这些门禁。
+生产网络故障矩阵。第四阶段已补充 Standalone / Cluster 完整任务链路中的暂停恢复与接管测试，
+见[交付记录](sync-business-key-delivery.md)。不得以单元测试或数据校验替代其余门禁。
 未新增表或修改数据库 schema；已有 checkpoint / pending / fence 协议保持不变。

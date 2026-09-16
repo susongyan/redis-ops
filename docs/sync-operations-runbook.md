@@ -22,6 +22,9 @@ REDIS_OPS_CREDENTIAL_KEYS=v2:<base64-32-byte>,v1:<base64-32-byte>
 
 ## 2. 发布与回滚
 
+业务过滤与 v2 / v3 策略升级另须遵守[交付说明](sync-business-key-delivery.md)：先 Worker，
+再 Platform，最后前端；旧任务策略不变。存在 `pending-batch-v2` 时禁止直接降级或自动重放。
+
 1. 先备份 MySQL，并确认 Flyway migration 版本。
 2. 暂停领取新的 START/PRECHECK 控制命令。
 3. 等待正在运行的 Worker 完成续租，逐实例滚动发布。
@@ -63,8 +66,10 @@ REDIS_OPS_CREDENTIAL_KEYS=v2:<base64-32-byte>,v1:<base64-32-byte>
 Java、格式与前端：
 
 ```bash
-mvn clean verify
-cd frontend && npm ci && npm run build
+mvn -f redis-ops-sync-contract/pom.xml clean install
+mvn -f redis-ops-platform/pom.xml clean verify
+mvn -f redis-ops-sync-worker/pom.xml clean verify
+cd redis-ops-frontend && npm ci && node --test src/*.test.js && npm run build
 ```
 
 Redis 版本矩阵：

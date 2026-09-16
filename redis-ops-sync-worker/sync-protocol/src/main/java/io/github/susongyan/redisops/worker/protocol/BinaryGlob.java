@@ -1,39 +1,39 @@
 package io.github.susongyan.redisops.worker.protocol;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 
 public final class BinaryGlob {
-    private final byte[] pattern;
+    private final int[] tokens;
     public BinaryGlob(String pattern) {
-        this.pattern = pattern.getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = pattern.getBytes(StandardCharsets.UTF_8);
+        var parsed = new ArrayList<Integer>();
+        for (int i = 0; i < bytes.length; i++) {
+            int value = Byte.toUnsignedInt(bytes[i]);
+            if (value == '\\' && i + 1 < bytes.length)
+                parsed.add(Byte.toUnsignedInt(bytes[++i]));
+            else
+                parsed.add(value == '*' ? -1 : value == '?' ? -2 : value);
+        }
+        tokens = parsed.stream().mapToInt(Integer::intValue).toArray();
     }
     public boolean matches(byte[] value) {
-        return match(0, 0, value);
-    }
-    private boolean match(int p, int v, byte[] value) {
-        while (p < pattern.length) {
-            byte token = pattern[p++];
-            if (token == '*') {
-                while (p < pattern.length && pattern[p] == '*')
-                    p++;
-                if (p == pattern.length)
-                    return true;
-                for (int i = v; i <= value.length; i++)
-                    if (match(p, i, value))
-                        return true;
-                return false;
-            }
-            if (v >= value.length)
-                return false;
-            if (token == '?') {
+        int p = 0, v = 0, star = -1, retry = 0;
+        while (v < value.length) {
+            if (p < tokens.length && (tokens[p] == -2 || tokens[p] == Byte.toUnsignedInt(value[v]))) {
+                p++;
                 v++;
-                continue;
-            }
-            if (token == '\\' && p < pattern.length)
-                token = pattern[p++];
-            if (token != value[v++])
+            } else if (p < tokens.length && tokens[p] == -1) {
+                star = p++;
+                retry = v;
+            } else if (star >= 0) {
+                p = star + 1;
+                v = ++retry;
+            } else
                 return false;
         }
-        return v == value.length;
+        while (p < tokens.length && tokens[p] == -1)
+            p++;
+        return p == tokens.length;
     }
 }

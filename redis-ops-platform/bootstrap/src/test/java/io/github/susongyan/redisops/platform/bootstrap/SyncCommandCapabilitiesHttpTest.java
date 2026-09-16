@@ -11,6 +11,29 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class SyncCommandCapabilitiesHttpTest {
     @Test
+    void scopeConfirmationAcceptsExplicitConsentOrRestrictedIncludes() throws Exception {
+        var json = new ObjectMapper();
+        try (var factory = jakarta.validation.Validation.buildDefaultValidatorFactory()) {
+            for (String body : new String[]{"{\"confirmFullKeyspace\":true}",
+                    "{\"includePatterns\":[\"***\"],\"confirmFullKeyspace\":true}",
+                    "{\"includePatterns\":[\"biz:*\"]}"}) {
+                var request = json.readValue(body, SyncController.SyncTaskRequest.class);
+                assertTrue(factory.getValidator().validate(request).isEmpty());
+            }
+            var unconfirmed = json.readValue("{\"includePatterns\":[\"***\"]}", SyncController.SyncTaskRequest.class);
+            assertFalse(factory.getValidator().validate(unconfirmed).isEmpty());
+        }
+    }
+    @Test
+    void fullScopeCreationRequiresExplicitConfirmationBeforeInvokingServices() throws Exception {
+        var mvc = MockMvcBuilders.standaloneSetup(new SyncController(null, null)).build();
+        for (String body : new String[]{"{}", "{\"includePatterns\":[\"*\"]}", "{\"includePatterns\":[]}"})
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/sync-tasks")
+                    .header("Idempotency-Key", "scope-test").contentType("application/json").content(body))
+                    .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void capabilityQueryUsesExplicitPolicyWithoutUpgradingLegacyRequests() throws Exception {
         var mvc = MockMvcBuilders.standaloneSetup(new SyncController(null, null)).build();
         var json = new ObjectMapper();

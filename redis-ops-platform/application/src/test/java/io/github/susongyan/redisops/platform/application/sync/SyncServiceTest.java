@@ -22,6 +22,21 @@ import static org.mockito.Mockito.*;
 class SyncServiceTest {
 
     @Test
+    void rejectsNullBlankAndOversizeUtf8RulesBeforePersistence() {
+        for (String rule : new String[]{null, " ", "a".repeat(1025), "中".repeat(342)}) {
+            Fixture fixture = new Fixture();
+            when(fixture.clusters.findById(11)).thenReturn(Optional.of(cluster(11, ClusterMode.STANDALONE)));
+            when(fixture.clusters.findById(22)).thenReturn(Optional.of(cluster(22, ClusterMode.STANDALONE)));
+            BusinessException error = assertThrows(BusinessException.class,
+                    () -> fixture.service.create(null, 11L, 22L, SyncPurpose.ADHOC,
+                            SyncMode.FULL_AND_INCREMENTAL, 0, 0, java.util.Collections.singletonList(rule), List.of(),
+                            null, null, null, null, null, "operator"));
+            assertEquals("INVALID_ARGUMENT", error.code());
+            verify(fixture.sync, never()).saveTask(any(), anyString(), anyString());
+        }
+    }
+
+    @Test
     void workerAssignmentsUseOneBoundedBatchAndRejectInvalidIds() {
         Fixture fixture = new Fixture();
         when(fixture.sync.findWorkerAssignments(List.of(1L, 2L))).thenReturn(List.of());

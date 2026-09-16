@@ -202,7 +202,13 @@ public class SyncController {
             @Positive Long spoolLimitBytes,
             @Min(1) @Max(64) Integer fullApplyConcurrency,
             @Min(1) @Max(10000) Integer fullApplyPipelineSize,
-            @Valid SyncCommandPolicyRequest commandPolicy) {
+            @Valid SyncCommandPolicyRequest commandPolicy, Boolean confirmFullKeyspace) {
+        @AssertTrue(message = "full keyspace requires explicit confirmation")
+        public boolean isFullKeyspaceConfirmed() {
+            boolean full = includePatterns == null || includePatterns.isEmpty()
+                    || includePatterns.stream().anyMatch(pattern -> pattern != null && pattern.matches("\\*+"));
+            return !full || Boolean.TRUE.equals(confirmFullKeyspace);
+        }
     }
     public record SyncCommandPolicyRequest(
             Boolean allowDestructiveCommands,

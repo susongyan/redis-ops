@@ -498,12 +498,13 @@ public class SyncService {
     private static List<String> patterns(List<String> value, boolean include) {
         List<String> result = value == null || value.isEmpty()
                 ? (include ? List.of("*") : List.of())
-                : List.copyOf(value);
+                : value;
         if (result.size() > 100)
             throw invalid("include/exclude patterns support at most 100 entries");
-        if (result.stream().anyMatch(x -> x == null || x.isBlank()))
-            throw invalid("key patterns cannot be blank");
-        return result;
+        if (result.stream().anyMatch(x -> x == null || x.isBlank()
+                || x.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 1024))
+            throw invalid("key patterns must be nonblank and at most 1024 UTF-8 bytes");
+        return List.copyOf(result);
     }
     private static long positiveOrDefault(Long value, long fallback, String field) {
         if (value == null)

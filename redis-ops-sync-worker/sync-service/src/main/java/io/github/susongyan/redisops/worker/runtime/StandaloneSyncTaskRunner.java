@@ -573,7 +573,9 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             for (var command : unit.commands())
                 throttle(command);
             sourceDatabase = result.sourceDatabase();
-            commitPlanned(result.plan().commands(), unit.endOffset(), 0);
+            var observations = new SyncCommandObservations.Batch();
+            observations.transaction(unit, result.plan());
+            commitPlanned(result.plan().commands(), unit.endOffset(), 0, observations);
         }
     }
 
@@ -588,6 +590,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     }
 
     private void applyOrdinaryBatch(List<ReplicationCommand> commands) throws IOException {
+        var observations = new SyncCommandObservations.Batch();
         var planned = new java.util.ArrayList<CommandPlan.PlannedCommand>();
         ReplicationCommand last = null;
         long appliedHeartbeat = 0;
@@ -609,21 +612,24 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                         : "BLOCKED_UNSUPPORTED_COMMAND",
                         "command " + command.name() + " at offset " + command.endOffset() + " cannot be applied");
             planned.addAll(plan.commands());
+            observations.ordinary(command, plan);
             appliedHeartbeat = Math.max(appliedHeartbeat, heartbeatTimestamp(command));
             throttle(command);
             last = command;
         }
         if (last == null)
             return;
-        commitPlanned(planned, last.endOffset(), appliedHeartbeat);
+        commitPlanned(planned, last.endOffset(), appliedHeartbeat, observations);
     }
 
-    private void commitPlanned(List<CommandPlan.PlannedCommand> planned, long endOffset, long appliedHeartbeat)
+    private void commitPlanned(List<CommandPlan.PlannedCommand> planned, long endOffset, long appliedHeartbeat,
+            SyncCommandObservations.Batch observations)
             throws IOException {
         TargetCheckpoint checkpoint = new TargetCheckpoint(originalTask.fullSyncEpoch(), generation,
                 replicationId, endOffset, sourceDatabase, Instant.now());
         TargetCheckpoint committed = applyTarget(planned, checkpoint);
         appliedOffset.set(committed.appliedOffset());
+        observations.confirmed();
         if (appliedHeartbeat > 0)
             lastAppliedHeartbeatMillis = appliedHeartbeat;
         if (shouldLeaveCaughtUp(caughtUp, appliedOffset.get(), receivedOffset.get(), applyQueue.isEmpty())) {
@@ -982,6 +988,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             return;
         }
         if (error instanceof SyncBlockedException blocked) {
+            SyncCommandObservations.blocked();
             phase = "BLOCKED";
             sync.updateRuntimeObservation(new WorkerRuntimeObservation(originalTask.id(), targetFence.workerId(),
                     "BLOCKED", targetFence.generation(), targetFence.publishedAt(), blocked.reason(), safe(error)));

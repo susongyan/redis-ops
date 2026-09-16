@@ -7,6 +7,20 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class SourceTransactionAssemblerTest {
     @Test
+    void releasesCompletedTransactionsDuringMillionCommandStream() {
+        var assembler = new SourceTransactionAssembler();
+        long offset = 0;
+        for (int transaction = 0; transaction < 10_000; transaction++) {
+            assembler.accept(command(++offset, "MULTI"));
+            for (int item = 0; item < 100; item++)
+                assembler.accept(command(++offset, "SET", "business:" + offset, "value"));
+            assertEquals(100, assembler.accept(command(++offset, "EXEC")).orElseThrow().commands().size());
+            assertEquals(0, assembler.bufferedCommands());
+            assertEquals(0, assembler.bufferedBytes());
+        }
+        assembler.endOfInput();
+    }
+    @Test
     void emitsOnlyAtExecAcrossArbitraryReadBatches() {
         var assembler = new SourceTransactionAssembler();
         assertTrue(assembler.accept(command(1, "MULTI")).isEmpty());

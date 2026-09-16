@@ -28,6 +28,53 @@ class StandaloneSyncTaskRunnerIntegrationTest {
     Path dataDirectory;
 
     @Test
+    @EnabledIfEnvironmentVariable(named = "SYNC_IT_POLICY_VERSION", matches = "v3")
+    void usesSameBusinessScopeForFullAndIncrementalAndBlocksMixedLua() throws Exception {
+        RedisClient sourceClient = RedisClient.create("redis://127.0.0.1:6390");
+        RedisClient targetClient = RedisClient.create("redis://127.0.0.1:6391");
+        try (var source = sourceClient.connect(); var target = targetClient.connect()) {
+            source.sync().flushall();
+            target.sync().flushall();
+            source.sync().set("biz:base", "base");
+            source.sync().set("other:base", "outside");
+            source.sync().set("biz:private:base", "excluded");
+            var task = task(194, "epoch-scoped", "[\"biz:*\"]", "[\"biz:private:*\"]");
+            WorkerRedisConnectionProfilePort profiles = clusterId -> new WorkerRedisConnectionProfile(clusterId,
+                    WorkerClusterMode.STANDALONE, List.of("127.0.0.1:" + (clusterId == 1 ? 6390 : 6391)),
+                    null, null, "NONE", null);
+            var runner = runner(task, false, profiles, "v1:" + Base64.getEncoder().encodeToString(new byte[32]));
+            try {
+                runner.prepare();
+                runner.leaseAcquired(runtime(task.id(), 1));
+                runner.start();
+                await(() -> "base".equals(target.sync().get("biz:base")), runner);
+                assertNull(target.sync().get("other:base"));
+                assertNull(target.sync().get("biz:private:base"));
+                source.sync().set("other:new", "outside");
+                source.sync().set("biz:private:new", "excluded");
+                source.sync().set("biz:new", "included");
+                source.sync().rename("biz:new", "biz:renamed");
+                source.sync().bitopOr("biz:result", "biz:base");
+                await(() -> "base".equals(target.sync().get("biz:result"))
+                        && "included".equals(target.sync().get("biz:renamed")), runner);
+                assertNull(target.sync().get("other:new"));
+                assertNull(target.sync().get("biz:private:new"));
+                assertNull(target.sync().get("biz:new"));
+                source.sync().eval("redis.call('INCR',KEYS[1]); redis.call('INCR',KEYS[2]); return 1",
+                        io.lettuce.core.ScriptOutputType.INTEGER, new String[]{"biz:counter", "other:counter"});
+                await(() -> "BLOCKED".equals(runner.phase()), runner);
+                assertNull(target.sync().get("biz:counter"), "mixed-scope effects must not partially apply");
+                assertNull(target.sync().get("other:counter"));
+            } finally {
+                runner.close();
+            }
+        } finally {
+            sourceClient.shutdown();
+            targetClient.shutdown();
+        }
+    }
+
+    @Test
     void copiesFullRdbAndContinuesWithNonIdempotentCommands() throws Exception {
         RedisClient sourceClient = RedisClient.create(RedisURI.create("redis://127.0.0.1:6390"));
         RedisClient targetClient = RedisClient.create(RedisURI.create("redis://127.0.0.1:6391"));
@@ -86,12 +133,38 @@ class StandaloneSyncTaskRunnerIntegrationTest {
                 await(() -> "copied".equals(target.sync().get("selected-db-incremental")), runner);
                 assertNull(target.sync().get("other-db-incremental"));
 
+                if (v3()) {
+                    source.sync().multi();
+                    source.sync().incr("v3:tx:a");
+                    source.sync().incr("v3:tx:b");
+                    source.sync().exec();
+                    await(() -> "1".equals(target.sync().get("v3:tx:a")) && "1".equals(target.sync().get("v3:tx:b")),
+                            runner);
+                    source.sync().eval("redis.call('INCR',KEYS[1]); redis.call('INCR',KEYS[2]); return 1",
+                            io.lettuce.core.ScriptOutputType.INTEGER, new String[]{"v3:tx:a", "v3:tx:b"});
+                    await(() -> "2".equals(target.sync().get("v3:tx:a")) && "2".equals(target.sync().get("v3:tx:b")),
+                            runner);
+                }
+
                 runner.pause();
                 source.sync().incr("paused-counter");
+                if (v3()) {
+                    source.sync().multi();
+                    source.sync().incr("v3:tx:a");
+                    source.sync().incr("v3:tx:b");
+                    source.sync().exec();
+                }
                 Thread.sleep(500);
                 assertNull(target.sync().get("paused-counter"));
+                if (v3())
+                    assertEquals("2", target.sync().get("v3:tx:a"));
                 runner.resume();
                 await(() -> "1".equals(target.sync().get("paused-counter")), runner);
+                if (v3())
+                    await(() -> "3".equals(target.sync().get("v3:tx:a")) && "3".equals(target.sync().get("v3:tx:b")),
+                            runner);
+                // Wait for checkpoint confirmation, not merely visible business writes.
+                runner.pause();
             } finally {
                 runner.close();
             }
@@ -104,6 +177,10 @@ class StandaloneSyncTaskRunnerIntegrationTest {
                 Thread.sleep(500);
                 assertEquals("1", target.sync().get("counter"),
                         "checkpoint recovery must not replay a committed INCR");
+                if (v3()) {
+                    assertEquals("3", target.sync().get("v3:tx:a"));
+                    assertEquals("3", target.sync().get("v3:tx:b"));
+                }
                 source.sync().incr("counter");
                 await(() -> "2".equals(target.sync().get("counter")), recovered);
 
@@ -129,7 +206,8 @@ class StandaloneSyncTaskRunnerIntegrationTest {
                             new TargetCheckpoint(task.fullSyncEpoch(), 2, current.replicationId(),
                                     current.appliedOffset() - 1, current.sourceDatabase(), Instant.now()),
                             currentFence, validLease);
-                    assertEquals(current.appliedOffset(), nonRegressed.appliedOffset());
+                    assertTrue(nonRegressed.appliedOffset() >= current.appliedOffset(),
+                            "an active runner may advance after the snapshot, but must never regress");
                     assertTrue(targetSession.checkpoint().orElseThrow().appliedOffset() >= current.appliedOffset(),
                             "a concurrently advancing replication stream must never regress the checkpoint");
                 }
@@ -195,10 +273,15 @@ class StandaloneSyncTaskRunnerIntegrationTest {
     }
 
     private static WorkerSyncTask task(long id, String epoch) {
+        return task(id, epoch, "[\"*\"]", "[]");
+    }
+
+    private static WorkerSyncTask task(long id, String epoch, String includes, String excludes) {
         Instant now = Instant.now();
         return new WorkerSyncTask(id, "SYNC-IT-" + id, null, 1, 2, "MIGRATION", "FULL_AND_INCREMENTAL",
                 SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0,
-                "[\"*\"]", "[]", "{}", 50_000, 100_000_000, 50 * 1024 * 1024, 4, 8, "START", true, "integration",
+                includes, excludes, v3() ? "{\"policyVersion\":\"v3\",\"allowSafeSplit\":true}" : "{}", 50_000,
+                100_000_000, 50 * 1024 * 1024, 4, 8, "START", true, "integration",
                 null, epoch, null, null, 0, now, now, null);
     }
 
@@ -209,6 +292,10 @@ class StandaloneSyncTaskRunnerIntegrationTest {
                 new RedisDataEndpointResolver(5000), new ObjectMapper(),
                 dataDirectory, 1024 * 1024, Duration.ofSeconds(5), 4, 32, 8,
                 4 * 1024 * 1024L, Duration.ofSeconds(2), Duration.ofSeconds(1));
+    }
+
+    private static boolean v3() {
+        return "v3".equals(System.getenv("SYNC_IT_POLICY_VERSION"));
     }
 
     private static WorkerSyncRuntime runtime(long taskId, long generation) {

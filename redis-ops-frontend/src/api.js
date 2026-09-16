@@ -71,6 +71,7 @@ export const api={
       targetMode,
       allowDestructiveCommands:String(!!policy.allowDestructiveCommands),
       allowSafeSplit:String(policy.allowSafeSplit!==false),
+      policyVersion:policy.policyVersion||'v1',
     })
     ;(policy.additionalBlockedCommands||[]).forEach(command=>params.append('additionalBlockedCommands',command))
     return request(`/api/v1/sync-command-capabilities?${params}`)

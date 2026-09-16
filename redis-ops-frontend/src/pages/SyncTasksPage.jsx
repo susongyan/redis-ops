@@ -29,6 +29,7 @@ import {
 } from '@ant-design/icons'
 import { api } from '../api.js'
 import { syncWorkerStatus } from '../syncWorkerStatus.js'
+import { previewSyncKeys } from '../syncKeyRules.js'
 
 const editableFullApplyStatuses = new Set(['CREATED', 'CHECKING', 'READY', 'FAILED', 'BLOCKED'])
 const terminalStatuses = new Set(['FINISHED', 'CANCELLED'])
@@ -54,6 +55,7 @@ const gib = 1024 * 1024 * 1024
 const capabilityMeta = {
   SUPPORTED: ['直接同步', 'success'],
   TRANSFORMABLE: ['转换后同步', 'warning'],
+  CONDITIONAL: ['有条件支持', 'processing'],
   HARD_BLOCKED: ['硬阻塞', 'error'],
   POLICY_BLOCKED: ['策略阻塞', 'error'],
   UNKNOWN_BLOCKED: ['未知即阻塞', 'error'],
@@ -103,6 +105,8 @@ export default function SyncTasksPage() {
   const [clusters, setClusters] = useState([])
   const [idcs, setIdcs] = useState([])
   const [open, setOpen] = useState(false)
+  const [keyExamples, setKeyExamples] = useState('')
+  const [fullKeyspaceConfirmed, setFullKeyspaceConfirmed] = useState(false)
   const [tuning, setTuning] = useState(null)
   const [detail, setDetail] = useState(null)
   const [eventRows, setEventRows] = useState([])
@@ -127,6 +131,17 @@ export default function SyncTasksPage() {
   const relationId = Form.useWatch('relationId', form)
   const selectedSourceClusterId = Form.useWatch('sourceClusterId', form)
   const selectedTargetClusterId = Form.useWatch('targetClusterId', form)
+  const includePatterns = Form.useWatch('includePatterns', form) || []
+  const excludePatterns = Form.useWatch('excludePatterns', form) || []
+  const fullKeyspace = !includePatterns.length || includePatterns.some(pattern => /^\*+$/.test(pattern))
+  const keyPreview = previewSyncKeys(keyExamples, includePatterns, excludePatterns)
+  useEffect(() => { if (!open) setKeyExamples('') }, [open])
+  useEffect(() => {
+    if (!keyExamples) return
+    const timer = window.setTimeout(() => setKeyExamples(''), 5 * 60 * 1000)
+    return () => window.clearTimeout(timer)
+  }, [keyExamples])
+  useEffect(() => { setFullKeyspaceConfirmed(false) }, [JSON.stringify(includePatterns)])
   const selectedRelation = relations.find((relation) => relation.id === relationId)
   const sourceCluster = clusters.find((cluster) => (
     cluster.id === (selectedRelation?.primaryClusterId || selectedSourceClusterId)
@@ -145,12 +160,30 @@ export default function SyncTasksPage() {
       return {}
     }
   }
+  const patternLabel = (value, fallback) => {
+    try { return JSON.parse(value || '[]').join('；') || fallback }
+    catch { return '历史规则无法解析，请核查任务配置' }
+  }
 
   const blockedReasonLabel = (reason) => ({
     BLOCKED_UNSUPPORTED_COMMAND: '检测到不兼容或被策略屏蔽的 Redis 命令',
     BLOCKED_FILTER_BOUNDARY: '命令跨越 Key 过滤边界，无法保证等价同步',
     BLOCKED_REQUIRES_FULL_RESYNC: '复制积压不足，需要人工确认重新全量同步',
     BLOCKED_RESERVED_NAMESPACE: '目标端保留命名空间存在冲突',
+    BLOCKED_OUTSIDE_INPUT_DEPENDENCY: '范围内结果依赖范围外 Key，无法完整复制',
+    BLOCKED_CROSS_SCOPE_WRITE: '同一命令同时修改范围内外 Key',
+    BLOCKED_CROSS_SLOT: '多 Key 命令涉及不同 Slot，不能保持原子性',
+    BLOCKED_CROSS_DATABASE: '不支持跨源 DB 的 COPY',
+    BLOCKED_COMMAND_ARGUMENTS: '命令参数不满足已适配的语法',
+    BLOCKED_COMMAND_POLICY: '任务策略明确屏蔽了该命令',
+    BLOCKED_UNSUPPORTED_REDIS_VERSION: '当前策略仅适配 Redis 6.2 / 7.x',
+    BLOCKED_VERSION_CHECK_UNAVAILABLE: '无法确认实际 Redis 版本',
+    BLOCKED_TRANSACTION_MIXED_SCOPE: '事务涉及范围内外 Key，不能只同步其中一部分',
+    BLOCKED_TRANSACTION_CROSS_SLOT: '事务涉及不同 Slot，不能拆成多次提交',
+    BLOCKED_TRANSACTION_LIMIT: '源事务超过 10,000 条命令或 16 MiB 容量限制',
+    BLOCKED_TRANSACTION_INCOMPLETE: '源输入结束时事务尚未闭合，未提交半事务',
+    BLOCKED_TRANSACTION_STRUCTURE: '复制流事务结构异常',
+    BLOCKED_TARGET_BATCH_UNCONFIRMED: '目标批次执行结果待核实，禁止自动重放',
   }[reason] || reason || '同步任务执行失败')
 
   const precheckChecks = (report) => {
@@ -303,8 +336,13 @@ export default function SyncTasksPage() {
   const create = async () => {
     try {
       const values = await form.validateFields()
+      if (fullKeyspace && !fullKeyspaceConfirmed) {
+        message.warning('请确认包含规则为空或通配全部时的同步范围')
+        return
+      }
       const payload = {
         ...values,
+        confirmFullKeyspace: fullKeyspaceConfirmed,
         commandPolicy: { ...values.commandPolicy, allowDestructiveCommands: false },
         sourceDb: sourceDbRequired ? values.sourceDb : 0,
         targetDb: targetDbRequired ? values.targetDb : 0,
@@ -329,6 +367,8 @@ export default function SyncTasksPage() {
 
   const openCreate = () => {
     form.resetFields()
+    setKeyExamples('')
+    setFullKeyspaceConfirmed(false)
     form.setFieldsValue({
       purpose: 'ADHOC',
       syncMode: 'FULL_AND_INCREMENTAL',
@@ -339,7 +379,10 @@ export default function SyncTasksPage() {
       spoolLimitGiB: 50,
       fullApplyConcurrency: 4,
       fullApplyPipelineSize: 100,
+      includePatterns: [],
+      excludePatterns: [],
       commandPolicy: {
+        policyVersion: 'v3',
         allowDestructiveCommands: false,
         allowSafeSplit: true,
         additionalBlockedCommands: [],
@@ -667,6 +710,34 @@ export default function SyncTasksPage() {
             </Col>}
           </Row>}
 
+          <section className="sync-command-policy-section">
+            <h3>业务 Key 范围</h3>
+            <div className="muted">全量与增量使用同一规则；排除优先，规则随任务固定。扩大范围需要新建全量基线。</div>
+            <Row gutter={16}>
+              {['includePatterns', 'excludePatterns'].map((field, index) => <Col xs={24} md={12} key={field}>
+                <Form.Item name={field} label={index === 0 ? '包含规则' : '排除规则'}
+                  rules={[{ validator: (_, patterns = []) => patterns.length <= 100 && patterns.every(p => p.trim().length > 0 && new TextEncoder().encode(p).length <= 1024)
+                    ? Promise.resolve() : Promise.reject(new Error('最多 100 条，每条非空且不超过 1024 UTF-8 字节')) }]}>
+                  <Select mode="tags" placeholder={index === 0 ? '例如 order:*，回车添加；留空表示全部' : '例如 order:temp:*，回车添加'} />
+                </Form.Item>
+              </Col>)}
+            </Row>
+            <div className="muted">支持 *（任意字节序列）、?（一个字节）和反斜杠转义；不是正则，[] 按字面匹配。</div>
+            {fullKeyspace && <Alert type="warning" showIcon style={{ marginTop: 12 }}
+              message="当前包含规则覆盖全部 Key（仍应用排除规则）"
+              description={<Checkbox checked={fullKeyspaceConfirmed} onChange={event => setFullKeyspaceConfirmed(event.target.checked)}>
+                我确认这个同步范围，不仅仅是某个业务前缀
+              </Checkbox>} />}
+            <Form.Item label="示例 Key 预览（仅当前浏览器）" extra="每行一个，最多预览 20 个；不发送后端，不保存，关闭窗口或五分钟后清除。">
+              <Input.TextArea rows={3} maxLength={16384} value={keyExamples} onChange={event => setKeyExamples(event.target.value)}
+                placeholder="手动输入示例，例如 order:1001" />
+            </Form.Item>
+            {keyPreview.length > 0 && <Table size="small" pagination={false} rowKey="id" dataSource={keyPreview}
+              columns={[
+                { title: '示例 Key', dataIndex: 'key', render: value => <span style={{ overflowWrap: 'anywhere' }}>{value}</span> },
+                { title: '匹配结果', dataIndex: 'decision', width: 150, render: value => <Tag style={{ whiteSpace: 'normal' }} color={value === '包含' ? 'green' : 'default'}>{value}</Tag> },
+              ]} tableLayout="fixed" />}
+          </section>
           <h3>全量应用</h3>
           <Row gutter={16}>
             <Col span={12}>
@@ -727,9 +798,17 @@ export default function SyncTasksPage() {
               type="info"
               showIcon
               message="未知命令和无法安全转换的命令始终阻塞任务"
-              description="可配置已知多 Key 命令的拆分策略；未知命令和增量清空命令不能放开。"
+              description="v2 支持范围完整的多 Key 命令；v3 进一步支持完整源事务与 Lua effects。未知命令、脚本原文和增量清空仍阻塞。"
               style={{ marginBottom: 16 }}
             />
+            <Form.Item name={['commandPolicy', 'policyVersion']} label="策略版本" rules={[{ required: true }]}
+              extra="使用 v2 / v3 前，需先升级 Worker；旧任务不会自动改变策略。">
+              <Select options={[
+                { value: 'v3', label: 'v3 · 多 Key + 源事务 / Lua effects（Redis 6.2 / 7.x）' },
+                { value: 'v2', label: 'v2 · 多 Key 命令（不支持源事务）' },
+                { value: 'v1', label: 'v1 · 旧版保守范围' },
+              ]} />
+            </Form.Item>
             <Row gutter={16}>
               <Col xs={24} md={12}>
                 <div className="sync-policy-option">
@@ -934,6 +1013,8 @@ export default function SyncTasksPage() {
                 { key: 'status', label: '状态', children: renderStatus(detail.task.status) },
                 { key: 'db', label: 'DB 映射', children: `${detail.task.sourceDb} → ${detail.task.targetDb}` },
                 { key: 'desired', label: '期望动作', children: detail.task.desiredAction || '-' },
+                { key: 'includes', label: '包含规则', span: 2, children: <span style={{ overflowWrap: 'anywhere' }}>{patternLabel(detail.task.includePatternsJson, '全部 Key')}</span> },
+                { key: 'excludes', label: '排除规则', span: 2, children: <span style={{ overflowWrap: 'anywhere' }}>{patternLabel(detail.task.excludePatternsJson, '无')}</span> },
                 { key: 'concurrency', label: 'RESTORE 并发', children: detail.task.fullApplyConcurrency },
                 { key: 'pipeline', label: 'Pipeline', children: detail.task.fullApplyPipelineSize },
                 { key: 'rate', label: '最大 ops/s', children: detail.task.rateLimitOps },
@@ -945,6 +1026,7 @@ export default function SyncTasksPage() {
                     const policy = commandPolicy(detail.task)
                     return (
                       <Space wrap>
+                        <Tag color="purple">策略：{policy.policyVersion || 'v1'}</Tag>
                         <Tag color={policy.allowSafeSplit === false ? 'default' : 'blue'}>
                           安全拆分：{policy.allowSafeSplit === false ? '关闭' : '开启'}
                         </Tag>

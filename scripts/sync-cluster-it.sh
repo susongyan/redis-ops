@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source_container="redis-ops-sync-cluster-source"
-target_container="redis-ops-sync-cluster-target"
-standalone_container="redis-ops-sync-cluster-standalone"
+source_container="redis-ops-sync-cluster-source-$$"
+target_container="redis-ops-sync-cluster-target-$$"
+standalone_container="redis-ops-sync-cluster-standalone-$$"
 redis_image="${REDIS_SYNC_CLUSTER_IMAGE:-redis:7.4-alpine}"
 
 cleanup() {
   docker rm -f "${source_container}" "${target_container}" "${standalone_container}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
-cleanup
 
 start_cluster_container() {
   local name="$1"
@@ -18,9 +17,9 @@ start_cluster_container() {
   local second_port="$3"
   local third_port="$4"
   docker run -d --name "${name}" \
-    -p "${first_port}:${first_port}" \
-    -p "${second_port}:${second_port}" \
-    -p "${third_port}:${third_port}" \
+    -p "127.0.0.1:${first_port}:${first_port}" \
+    -p "127.0.0.1:${second_port}:${second_port}" \
+    -p "127.0.0.1:${third_port}:${third_port}" \
     "${redis_image}" sh -c "
       redis-server --port ${first_port} --cluster-enabled yes \
         --cluster-config-file /tmp/nodes-${first_port}.conf --cluster-node-timeout 5000 \
@@ -38,7 +37,7 @@ start_cluster_container() {
 start_cluster_container "${source_container}" 7101 7102 7103
 start_cluster_container "${target_container}" 7201 7202 7203
 docker run -d --name "${standalone_container}" \
-  -p 7301:7301 -p 7302:7302 \
+  -p 127.0.0.1:7301:7301 -p 127.0.0.1:7302:7302 \
   "${redis_image}" sh -c "
     redis-server --port 7301 --appendonly no --save '' --protected-mode no --daemonize yes
     redis-server --port 7302 --appendonly no --save '' --protected-mode no --daemonize yes
@@ -76,5 +75,5 @@ docker exec "${target_container}" redis-cli --cluster create \
   127.0.0.1:7201 127.0.0.1:7202 127.0.0.1:7203 \
   --cluster-replicas 0 --cluster-yes >/dev/null
 
-REDIS_SYNC_CLUSTER_IT=true mvn -f redis-ops-sync-worker/pom.xml -pl sync-service -am \
+REDIS_SYNC_CLUSTER_IT=true mvn -f "${SYNC_TEST_WORKER_POM:-redis-ops-sync-worker/pom.xml}" -pl sync-service -am \
   -Dtest=ClusterSyncTaskRunnerIntegrationTest -Dsurefire.failIfNoSpecifiedTests=false test

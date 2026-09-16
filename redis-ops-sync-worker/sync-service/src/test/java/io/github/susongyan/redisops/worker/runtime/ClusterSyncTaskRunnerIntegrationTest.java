@@ -71,10 +71,21 @@ class ClusterSyncTaskRunnerIntegrationTest {
 
                 runner.pause();
                 sourceCommands.incr("{orders}:paused");
+                if (v3())
+                    sourceCommands.eval("redis.call('INCR',KEYS[1]); redis.call('INCR',KEYS[2]); return 1",
+                            io.lettuce.core.ScriptOutputType.INTEGER, new String[]{"{orders}:tx-a", "{orders}:tx-b"});
                 Thread.sleep(500);
                 assertEquals(null, targetCommands.get("{orders}:paused"));
+                if (v3())
+                    assertEquals(null, targetCommands.get("{orders}:tx-a"));
                 runner.resume();
                 await(() -> "1".equals(targetCommands.get("{orders}:paused")), runner);
+                if (v3())
+                    await(() -> "1".equals(targetCommands.get("{orders}:tx-a"))
+                            && "1".equals(targetCommands.get("{orders}:tx-b")), runner);
+                // Business values may be visible before checkpoint confirmation. This is the
+                // confirmed-boundary recovery test; interrupted pending is tested separately.
+                runner.pause();
             } finally {
                 runner.close();
             }
@@ -87,6 +98,10 @@ class ClusterSyncTaskRunnerIntegrationTest {
                 Thread.sleep(500);
                 assertEquals("1", targetCommands.get("{orders}:counter"),
                         "checkpoint recovery must not replay a committed INCR");
+                if (v3()) {
+                    assertEquals("1", targetCommands.get("{orders}:tx-a"));
+                    assertEquals("1", targetCommands.get("{orders}:tx-b"));
+                }
                 sourceCommands.incr("{orders}:counter");
                 sourceCommands.lpush("{events}:queue", "recovered");
                 await(() -> "2".equals(targetCommands.get("{orders}:counter"))
@@ -197,7 +212,8 @@ class ClusterSyncTaskRunnerIntegrationTest {
         Instant now = Instant.now();
         return new WorkerSyncTask(id, "SYNC-CLUSTER-IT-" + id, null, sourceClusterId, targetClusterId,
                 "MIGRATION", "FULL_AND_INCREMENTAL", SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0,
-                "[\"*\"]", "[]", "{}", 50_000, 100_000_000, 64 * 1024 * 1024, 4, 8, "START", true,
+                "[\"*\"]", "[]", v3() ? "{\"policyVersion\":\"v3\",\"allowSafeSplit\":true}" : "{}", 50_000,
+                100_000_000, 64 * 1024 * 1024, 4, 8, "START", true,
                 "cluster integration", null, epoch, null, null, 0, now, now, null);
     }
 
@@ -205,6 +221,10 @@ class ClusterSyncTaskRunnerIntegrationTest {
         return new WorkerSyncRuntime(taskId, "runtime-" + generation, "worker", Instant.now().plusSeconds(30),
                 generation, "CLAIMED", Instant.now(), 0, null, null, 0,
                 null, null, Instant.now(), Instant.now());
+    }
+
+    private static boolean v3() {
+        return "v3".equals(System.getenv("SYNC_IT_POLICY_VERSION"));
     }
 
     private static RedisClusterClient clusterClient(List<Integer> ports) {
