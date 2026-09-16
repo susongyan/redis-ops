@@ -12,6 +12,70 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Opt-in: requires a disposable Redis. Uses unique keys; never FLUSHes any database. */
 class TargetBatchRedisTest {
     @Test
+    void v2FirstBatchMatchesNativeRedisEffects() throws Exception {
+        record Case(String[] command, List<String[]> setup) {
+        }
+        List<String[]> strings = List.of(new String[]{"SET", "@a", "ab"}, new String[]{"SET", "@b", "cd"});
+        List<String[]> sets = List.of(new String[]{"SADD", "@a", "1", "2"}, new String[]{"SADD", "@b", "2", "3"});
+        List<String[]> lists = List.of(new String[]{"RPUSH", "@a", "1", "2"}, new String[]{"RPUSH", "@b", "3"});
+        List<String[]> zsets = List.of(new String[]{"ZADD", "@a", "1", "x", "2", "y"},
+                new String[]{"ZADD", "@b", "3", "y", "4", "z"});
+        var cases = List.of(
+                new Case(new String[]{"MSETNX", "@a", "1", "@b", "2"}, List.of()),
+                new Case(new String[]{"RENAME", "@a", "@b"}, strings),
+                new Case(new String[]{"RENAMENX", "@a", "@out"}, strings),
+                new Case(new String[]{"SMOVE", "@a", "@b", "1"}, sets),
+                new Case(new String[]{"LMOVE", "@a", "@b", "RIGHT", "LEFT"}, lists),
+                new Case(new String[]{"RPOPLPUSH", "@a", "@b"}, lists),
+                new Case(new String[]{"COPY", "@a", "@out", "DB", "0", "REPLACE"}, strings),
+                new Case(new String[]{"BITOP", "XOR", "@out", "@a", "@b"}, strings),
+                new Case(new String[]{"SUNIONSTORE", "@out", "@a", "@b"}, sets),
+                new Case(new String[]{"SINTERSTORE", "@out", "@a", "@b"}, sets),
+                new Case(new String[]{"SDIFFSTORE", "@out", "@a", "@b"}, sets),
+                new Case(new String[]{"ZUNIONSTORE", "@out", "2", "@a", "@b", "WEIGHTS", "2", "3", "AGGREGATE", "MAX"},
+                        zsets),
+                new Case(new String[]{"ZINTERSTORE", "@out", "2", "@a", "@b"}, zsets),
+                new Case(new String[]{"ZDIFFSTORE", "@out", "2", "@a", "@b"}, zsets),
+                new Case(new String[]{"PFMERGE", "@out", "@a", "@b"},
+                        List.of(new String[]{"PFADD", "@a", "1", "2"}, new String[]{"PFADD", "@b", "2", "3"})));
+        var policy = new io.github.susongyan.redisops.sync.contract.SyncCommandPolicy(false, true, Set.of(), "v2");
+        boolean cluster = endpointVariable().equals("SYNC_BATCH_TEST_CLUSTER_SLOT0");
+        var planner = new CommandPlanner(new KeyFilter(List.of(), List.of()), cluster, null, policy);
+        try (var target = session()) {
+            target.requireMultiKeyVersion();
+            target.publishFence(fence, guard);
+            int offset = 0;
+            for (var fixture : cases) {
+                String caseId = fixture.command()[0];
+                for (var setup : fixture.setup()) {
+                    assertFalse(call(fixtureArgs(setup, caseId + ":native")).getClass().equals(RespValue.Error.class));
+                    assertFalse(call(fixtureArgs(setup, caseId + ":planned")).getClass().equals(RespValue.Error.class));
+                }
+                assertFalse(call(fixtureArgs(fixture.command(), caseId + ":native")) instanceof RespValue.Error,
+                        caseId);
+                var args = fixtureArgs(fixture.command(), caseId + ":planned");
+                var plan = planner.plan(new ReplicationCommand(args[0], Arrays.stream(args)
+                        .map(s -> s.getBytes(StandardCharsets.UTF_8)).toList(), offset, ++offset));
+                assertEquals(CommandPlan.Disposition.APPLY, plan.disposition(), caseId);
+                target.apply(plan.commands(), new TargetCheckpoint("epoch", 1, "repl", offset, 0, Instant.now()), fence,
+                        guard);
+                for (String suffix : List.of("a", "b", "out")) {
+                    var expected = call("DUMP", key(caseId + ":native:" + suffix));
+                    var actual = call("DUMP", key(caseId + ":planned:" + suffix));
+                    if (expected == RespValue.NullValue.INSTANCE)
+                        assertEquals(expected, actual, caseId);
+                    else
+                        assertArrayEquals(((RespValue.Bulk) expected).value(), ((RespValue.Bulk) actual).value(),
+                                caseId);
+                }
+            }
+        }
+    }
+    private String[] fixtureArgs(String[] args, String prefix) {
+        return Arrays.stream(args).map(arg -> arg.startsWith("@") ? key(prefix + ":" + arg.substring(1)) : arg)
+                .toArray(String[]::new);
+    }
+    @Test
     void queueTimeErrorClosesTransactionWithoutApplyingEarlierQueuedCommands() throws Exception {
         try (var target = session()) {
             target.publishFence(fence, guard);

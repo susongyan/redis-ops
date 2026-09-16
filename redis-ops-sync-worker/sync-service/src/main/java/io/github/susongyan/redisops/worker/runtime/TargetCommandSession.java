@@ -75,6 +75,33 @@ public final class TargetCommandSession implements AutoCloseable {
         return checkpoint(command(bytes("GET"), checkpointKey));
     }
 
+    void requireMultiKeyVersion() throws IOException {
+        int previousTimeout = socket.getSoTimeout();
+        socket.setSoTimeout(3000);
+        try {
+            RespValue response = command("INFO", "server");
+            if (response instanceof RespValue.Bulk bulk) {
+                for (String line : new String(bulk.value(), StandardCharsets.US_ASCII).split("\\r?\\n")) {
+                    if (line.startsWith("redis_version:")) {
+                        String[] components = line.substring("redis_version:".length()).split("\\.");
+                        try {
+                            int major = Integer.parseInt(components[0]);
+                            int minor = Integer.parseInt(components[1]);
+                            if (major == 7 || major == 6 && minor >= 2)
+                                return;
+                        } catch (RuntimeException invalid) {
+                            // Fail closed without returning raw server data.
+                        }
+                        break;
+                    }
+                }
+            }
+            throw new SyncBlockedException("BLOCKED_UNSUPPORTED_REDIS_VERSION", "v2 requires Redis 6.2 or 7.x");
+        } finally {
+            socket.setSoTimeout(previousTimeout);
+        }
+    }
+
     Optional<TargetCheckpoint> checkpoint(long taskId, String channel, int slot) throws IOException {
         return checkpoint(command(bytes("GET"), ClusterSlotKeyspace.checkpoint(taskId, channel, slot)));
     }

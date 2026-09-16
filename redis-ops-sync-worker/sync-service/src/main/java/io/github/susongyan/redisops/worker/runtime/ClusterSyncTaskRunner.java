@@ -431,7 +431,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                     : ("__redis_ops_sync_hb__:{" + task.id() + "}:" + spec.channel())
                             .getBytes(StandardCharsets.US_ASCII);
             this.planner = new CommandPlanner(filter, targetProfile.mode() == WorkerClusterMode.CLUSTER, heartbeatKey,
-                    commandPolicy());
+                    commandPolicy(), task.sourceDb());
             this.spool = new EncryptedSpool(dataDirectory, task.id(), spec.channel(),
                     spoolKeys.taskKey(task.id()), segmentBytes, spoolLimit);
             this.fullProgress = new FullSyncProgressTracker(task.id(), task.fullSyncEpoch(), spec.channel(),
@@ -696,7 +696,9 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                         plan = CommandPlan.skip();
                     }
                     if (plan.disposition() == CommandPlan.Disposition.BLOCK)
-                        throw new SyncBlockedException("BLOCKED_UNSUPPORTED_COMMAND",
+                        throw new SyncBlockedException(plan.reason() != null && plan.reason().startsWith("BLOCKED_")
+                                ? plan.reason()
+                                : "BLOCKED_UNSUPPORTED_COMMAND",
                                 command.name() + " at offset " + command.endOffset() + ": " + plan.reason());
                     throttle(command, plan.commands().size());
                     planned.addAll(plan.commands());

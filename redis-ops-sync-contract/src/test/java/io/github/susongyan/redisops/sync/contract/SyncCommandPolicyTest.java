@@ -43,7 +43,17 @@ class SyncCommandPolicyTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new SyncCommandPolicy(false, true, Set.of("DEL *"), "v1"));
         assertThrows(IllegalArgumentException.class,
-                () -> new SyncCommandPolicy(false, true, Set.of(), "v2"));
+                () -> new SyncCommandPolicy(false, true, Set.of(), "v999"));
+    }
+
+    @Test
+    void multiKeyIsOptInAndMissingVersionsStayLegacy() {
+        assertEquals("v1", new SyncCommandPolicy(false, true, Set.of(), null).policyVersion());
+        assertFalse(SyncCommandPolicy.strict().supportsMultiKey());
+        var newer = new SyncCommandPolicy(false, true, Set.of(), "v2");
+        assertTrue(newer.supportsMultiKey());
+        assertEquals("CONDITIONAL", SyncCommandCapabilities.classify("BITOP", true, newer).category());
+        assertTrue(SyncCommandCapabilities.classify("BITOP", true, SyncCommandPolicy.strict()).currentlyBlocked());
     }
 
     @Test

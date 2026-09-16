@@ -12,7 +12,7 @@ public final class SyncCapabilitiesInfoContributor implements InfoContributor {
     @Override
     public void contribute(Info.Builder builder) {
         builder.withDetail("syncCapabilities", Map.of(
-                "commandPolicyVersions", List.of("v1"),
+                "commandPolicyVersions", List.of("v1", "v2"),
                 "batchConfirmationVersion", 2,
                 "policyAwareClaims", true,
                 "sourceTransactions", false));

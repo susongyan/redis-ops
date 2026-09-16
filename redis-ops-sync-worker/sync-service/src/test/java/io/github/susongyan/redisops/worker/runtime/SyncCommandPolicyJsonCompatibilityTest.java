@@ -32,7 +32,7 @@ class SyncCommandPolicyJsonCompatibilityTest {
         assertThat(defaults.additionalBlockedCommands()).isEqualTo(Set.of());
         assertThat(defaults.policyVersion()).isEqualTo("v1");
         assertThatThrownBy(() -> json.readValue(
-                "{\"allowDestructiveCommands\":false,\"allowSafeSplit\":true,\"policyVersion\":\"v2\"}",
+                "{\"allowDestructiveCommands\":false,\"allowSafeSplit\":true,\"policyVersion\":\"v999\"}",
                 SyncCommandPolicy.class)).hasRootCauseInstanceOf(IllegalArgumentException.class);
     }
 }

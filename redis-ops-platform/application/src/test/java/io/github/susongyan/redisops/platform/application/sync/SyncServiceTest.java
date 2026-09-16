@@ -143,6 +143,24 @@ class SyncServiceTest {
     }
 
     @Test
+    void savesExplicitPolicyVersionWithoutUpgradingLegacyRequests() throws Exception {
+        for (String version : new String[]{null, "v1", "v2"}) {
+            Fixture fixture = new Fixture();
+            when(fixture.clusters.findById(11)).thenReturn(Optional.of(cluster(11, ClusterMode.STANDALONE)));
+            when(fixture.clusters.findById(22)).thenReturn(Optional.of(cluster(22, ClusterMode.STANDALONE)));
+            when(fixture.sync.saveTask(any(), anyString(), anyString()))
+                    .thenReturn(fixture.task(SyncTaskStatus.CREATED));
+            fixture.service.create(null, 11L, 22L, SyncPurpose.ADHOC,
+                    SyncMode.FULL_AND_INCREMENTAL, 0, 0, List.of("biz:*"), List.of(),
+                    null, null, null, null, null, false, true, java.util.Set.of(), version, "operator");
+            ArgumentCaptor<SyncTask> saved = ArgumentCaptor.forClass(SyncTask.class);
+            verify(fixture.sync).saveTask(saved.capture(), eq("operator"), anyString());
+            assertEquals(version == null ? "v1" : version,
+                    new ObjectMapper().readTree(saved.getValue().commandPolicyJson()).get("policyVersion").asText());
+        }
+    }
+
+    @Test
     void rejectsDbSelectionForCluster() {
         Fixture fixture = new Fixture();
         when(fixture.clusters.findById(11)).thenReturn(Optional.of(cluster(11, ClusterMode.CLUSTER)));

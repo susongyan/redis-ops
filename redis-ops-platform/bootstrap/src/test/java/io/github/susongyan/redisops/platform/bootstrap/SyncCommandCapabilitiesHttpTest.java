@@ -11,6 +11,26 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class SyncCommandCapabilitiesHttpTest {
     @Test
+    void capabilityQueryUsesExplicitPolicyWithoutUpgradingLegacyRequests() throws Exception {
+        var mvc = MockMvcBuilders.standaloneSetup(new SyncController(null, null)).build();
+        var json = new ObjectMapper();
+        for (String version : Set.of("v1", "v2")) {
+            var result = mvc.perform(get("/api/v1/sync-command-capabilities")
+                    .param("targetMode", "CLUSTER").param("policyVersion", version))
+                    .andExpect(status().isOk()).andReturn();
+            var data = json.readTree(result.getResponse().getContentAsString()).path("data");
+            assertEquals(version, data.path("policy").path("policyVersion").asText());
+            boolean found = false;
+            for (var command : data.path("commands"))
+                if (command.path("command").asText().equals("BITOP")) {
+                    assertEquals(version.equals("v2") ? "CONDITIONAL" : "HARD_BLOCKED",
+                            command.path("category").asText());
+                    found = true;
+                }
+            assertTrue(found);
+        }
+    }
+    @Test
     void httpCapabilitiesDoNotAdvertiseDestructiveAdmissionForLegacyAllowFlag() throws Exception {
         var mvc = MockMvcBuilders.standaloneSetup(new SyncController(null, null)).build();
         var json = new ObjectMapper();

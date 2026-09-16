@@ -66,7 +66,7 @@ class WorkerPolicyMysqlTest {
     }
     @Test
     void unknownVersionsAreExcludedFromJobsRecoveryAndRuntimeClaims() throws Exception {
-        List<String> incompatible = List.of("{\"policyVersion\":\"v2\"}", "{\"policyVersion\":\"V1\"}",
+        List<String> incompatible = List.of("{\"policyVersion\":\"v999\"}", "{\"policyVersion\":\"V1\"}",
                 "{\"policyVersion\":1}", "{\"policyVersion\":\"null\"}", "[]", "null");
         for (int i = 0; i < incompatible.size(); i++)
             insert(i + 1, incompatible.get(i));
@@ -88,7 +88,8 @@ class WorkerPolicyMysqlTest {
     @Test
     void missingNullAndEmptyVersionsKeepLegacyV1Admission() throws Exception {
         var jobs = session.getMapper(WorkerControlJobMapper.class);
-        List<String> legacy = List.of("{}", "{\"policyVersion\":null}", "{\"policyVersion\":\"\"}");
+        List<String> legacy = List.of("{}", "{\"policyVersion\":null}", "{\"policyVersion\":\"\"}",
+                "{\"policyVersion\":\"v2\"}");
         for (int i = 0; i < legacy.size(); i++) {
             insert(i + 1, legacy.get(i));
             assertEquals(1, jobs.claim("SYNC_START", "legacy-" + i, 30));

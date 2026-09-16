@@ -19,6 +19,9 @@ public final class SyncCommandCapabilities {
             "LMOVE", "RPOPLPUSH", "BRPOPLPUSH", "COPY", "SORT", "EVAL", "EVALSHA", "FCALL", "FCALL_RO",
             "MULTI", "EXEC", "DISCARD");
     private static final Set<String> DESTRUCTIVE = Set.of("FLUSHDB", "FLUSHALL");
+    private static final Set<String> CONDITIONAL_MULTI_KEY = Set.of("MSETNX", "RENAME", "RENAMENX", "BITOP",
+            "SUNIONSTORE", "SINTERSTORE", "SDIFFSTORE", "ZUNIONSTORE", "ZINTERSTORE", "ZDIFFSTORE", "SMOVE",
+            "LMOVE", "RPOPLPUSH", "COPY", "PFMERGE");
     private static final Set<String> SKIPPED = Set.of("SELECT", "PING", "REPLCONF");
 
     private SyncCommandCapabilities() {
@@ -35,6 +38,9 @@ public final class SyncCommandCapabilities {
     public static boolean hardBlocked(String command) {
         return HARD_BLOCKED.contains(command);
     }
+    public static boolean conditionalMultiKey(String command) {
+        return CONDITIONAL_MULTI_KEY.contains(command);
+    }
 
     public static boolean destructive(String command) {
         return DESTRUCTIVE.contains(command);
@@ -45,6 +51,12 @@ public final class SyncCommandCapabilities {
     }
 
     public static SyncCommandCapability classify(String command, boolean clusterTarget, SyncCommandPolicy policy) {
+        if (policy.supportsMultiKey() && conditionalMultiKey(command)) {
+            if (policy.additionallyBlocks(command))
+                return new SyncCommandCapability(command, "POLICY_BLOCKED", "任务策略显式屏蔽", true, true);
+            return new SyncCommandCapability(command, "CONDITIONAL",
+                    "Redis 6.2/7.x；读写范围完整；Cluster 必须同 Slot；COPY 不跨 DB；不拆分", false, false);
+        }
         if (hardBlocked(command))
             return new SyncCommandCapability(command, "HARD_BLOCKED", "无法保证等价转换或原子性", false, true);
         if (destructive(command))
@@ -68,6 +80,7 @@ public final class SyncCommandCapabilities {
         known.addAll(SINGLE_KEY);
         known.addAll(SAFE_SPLIT);
         known.addAll(HARD_BLOCKED);
+        known.addAll(CONDITIONAL_MULTI_KEY);
         known.addAll(DESTRUCTIVE);
         known.addAll(SKIPPED);
         known.addAll(policy.additionalBlockedCommands());

@@ -38,7 +38,8 @@ public class SyncController {
                         body.fullApplyConcurrency, body.fullApplyPipelineSize,
                         body.commandPolicy == null ? null : body.commandPolicy.allowDestructiveCommands,
                         body.commandPolicy == null ? null : body.commandPolicy.allowSafeSplit,
-                        body.commandPolicy == null ? null : body.commandPolicy.additionalBlockedCommands, operator),
+                        body.commandPolicy == null ? null : body.commandPolicy.additionalBlockedCommands,
+                        body.commandPolicy == null ? null : body.commandPolicy.policyVersion, operator),
                 x -> x.id().toString(), id -> service.get(Long.parseLong(id))), request);
     }
 
@@ -53,9 +54,10 @@ public class SyncController {
             @RequestParam(defaultValue = "false") boolean allowDestructiveCommands,
             @RequestParam(defaultValue = "true") boolean allowSafeSplit,
             @RequestParam(required = false) Set<String> additionalBlockedCommands,
+            @RequestParam(defaultValue = "v1") String policyVersion,
             HttpServletRequest request) {
         var policy = new SyncCommandPolicy(allowDestructiveCommands, allowSafeSplit,
-                additionalBlockedCommands, SyncCommandPolicy.CURRENT_VERSION);
+                additionalBlockedCommands, policyVersion);
         return wrap(new CommandCapabilityResponse(targetMode, policy, "BLOCK",
                 SyncCommandCapabilities.all(targetMode == ClusterMode.CLUSTER, policy)), request);
     }
@@ -205,7 +207,8 @@ public class SyncController {
     public record SyncCommandPolicyRequest(
             Boolean allowDestructiveCommands,
             Boolean allowSafeSplit,
-            @Size(max = 100) Set<@Pattern(regexp = "[A-Za-z][A-Za-z0-9_-]{0,63}") String> additionalBlockedCommands) {
+            @Size(max = 100) Set<@Pattern(regexp = "[A-Za-z][A-Za-z0-9_-]{0,63}") String> additionalBlockedCommands,
+            @Pattern(regexp = "v[12]") String policyVersion) {
     }
     public record CommandCapabilityResponse(
             ClusterMode targetMode,

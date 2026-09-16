@@ -58,6 +58,17 @@ public class SyncService {
             Long rateLimitOps, Long bandwidthLimit, Long spoolLimit, Integer fullApplyConcurrency,
             Integer fullApplyPipelineSize, Boolean allowDestructiveCommands, Boolean allowSafeSplit,
             Set<String> additionalBlockedCommands, String operator) {
+        return create(relationId, sourceId, targetId, purpose, mode, sourceDb, targetDb, includes, excludes,
+                rateLimitOps, bandwidthLimit, spoolLimit, fullApplyConcurrency, fullApplyPipelineSize,
+                allowDestructiveCommands, allowSafeSplit, additionalBlockedCommands, null, operator);
+    }
+
+    @Transactional
+    public SyncTask create(Long relationId, Long sourceId, Long targetId, SyncPurpose purpose, SyncMode mode,
+            Integer sourceDb, Integer targetDb, List<String> includes, List<String> excludes,
+            Long rateLimitOps, Long bandwidthLimit, Long spoolLimit, Integer fullApplyConcurrency,
+            Integer fullApplyPipelineSize, Boolean allowDestructiveCommands, Boolean allowSafeSplit,
+            Set<String> additionalBlockedCommands, String policyVersion, String operator) {
         long source, target;
         SyncPurpose actualPurpose;
         if (relationId != null) {
@@ -92,7 +103,7 @@ public class SyncService {
                 1, 10_000, "fullApplyPipelineSize");
         var commandPolicy = new SyncCommandPolicy(Boolean.TRUE.equals(allowDestructiveCommands),
                 allowSafeSplit == null || allowSafeSplit, additionalBlockedCommands,
-                SyncCommandPolicy.CURRENT_VERSION);
+                policyVersion);
         var task = newTask(relationId, source, target, actualPurpose, actualSourceDb, actualTargetDb,
                 toJson(actualIncludes), toJson(actualExcludes), toJson(commandPolicy), ops, bandwidth, spool,
                 concurrency, pipelineSize);

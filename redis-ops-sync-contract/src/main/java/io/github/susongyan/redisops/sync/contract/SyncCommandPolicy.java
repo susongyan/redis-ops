@@ -7,6 +7,8 @@ import java.util.Set;
 public record SyncCommandPolicy(boolean allowDestructiveCommands, boolean allowSafeSplit,
         Set<String> additionalBlockedCommands, String policyVersion) {
     public static final String CURRENT_VERSION = "v1";
+    public static final String MULTI_KEY_VERSION = "v2";
+    public static final Set<String> SUPPORTED_VERSIONS = Set.of(CURRENT_VERSION, MULTI_KEY_VERSION);
 
     public SyncCommandPolicy {
         LinkedHashSet<String> normalized = new LinkedHashSet<>();
@@ -21,7 +23,7 @@ public record SyncCommandPolicy(boolean allowDestructiveCommands, boolean allowS
         }
         additionalBlockedCommands = Set.copyOf(normalized);
         policyVersion = policyVersion == null || policyVersion.isBlank() ? CURRENT_VERSION : policyVersion;
-        if (!CURRENT_VERSION.equals(policyVersion))
+        if (!SUPPORTED_VERSIONS.contains(policyVersion))
             throw new IllegalArgumentException("unsupported sync command policy version: " + policyVersion);
     }
 
@@ -31,5 +33,8 @@ public record SyncCommandPolicy(boolean allowDestructiveCommands, boolean allowS
 
     public boolean additionallyBlocks(String command) {
         return additionalBlockedCommands.contains(command.toUpperCase(Locale.ROOT));
+    }
+    public boolean supportsMultiKey() {
+        return MULTI_KEY_VERSION.equals(policyVersion);
     }
 }

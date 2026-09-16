@@ -13,6 +13,7 @@ public final class CommandPlanner {
     private final boolean clusterTarget;
     private final byte[] allowedHeartbeat;
     private final SyncCommandPolicy policy;
+    private final int sourceDatabase;
 
     public CommandPlanner(KeyFilter filter, boolean clusterTarget) {
         this(filter, clusterTarget, null, SyncCommandPolicy.strict());
@@ -22,10 +23,15 @@ public final class CommandPlanner {
     }
     public CommandPlanner(
             KeyFilter filter, boolean clusterTarget, byte[] allowedHeartbeat, SyncCommandPolicy policy) {
+        this(filter, clusterTarget, allowedHeartbeat, policy, 0);
+    }
+    public CommandPlanner(KeyFilter filter, boolean clusterTarget, byte[] allowedHeartbeat,
+            SyncCommandPolicy policy, int sourceDatabase) {
         this.filter = filter;
         this.clusterTarget = clusterTarget;
         this.allowedHeartbeat = allowedHeartbeat == null ? null : allowedHeartbeat.clone();
         this.policy = Objects.requireNonNull(policy, "policy");
+        this.sourceDatabase = sourceDatabase;
     }
 
     public CommandPlan plan(ReplicationCommand command) {
@@ -35,6 +41,11 @@ public final class CommandPlanner {
         String name = command.name();
         if (SyncCommandCapabilities.skipped(name))
             return CommandPlan.skip();
+        if (policy.supportsMultiKey() && SyncCommandCapabilities.conditionalMultiKey(name)) {
+            if (policy.additionallyBlocks(name))
+                return CommandPlan.block("BLOCKED_COMMAND_POLICY");
+            return multiKey(name, args);
+        }
         if (SyncCommandCapabilities.hardBlocked(name))
             return CommandPlan.block("command cannot be safely transformed: " + name);
         if (SyncCommandCapabilities.destructive(name))
@@ -59,6 +70,56 @@ public final class CommandPlanner {
             }
         }
         return CommandPlan.block("unsupported replication command: " + name);
+    }
+
+    private CommandPlan multiKey(String name, List<byte[]> args) {
+        final CommandKeySemantics.Description description;
+        try {
+            description = CommandKeySemantics.describe(name, args).orElseThrow();
+        } catch (IllegalArgumentException invalid) {
+            return CommandPlan.block("BLOCKED_COMMAND_ARGUMENTS");
+        }
+        if (description.destinationDatabase() != null && description.destinationDatabase() != sourceDatabase)
+            return CommandPlan.block("BLOCKED_CROSS_DATABASE");
+        boolean anyWriteInside = false, anyWriteOutside = false, anyReadOutside = false;
+        int slot = -1;
+        boolean crossSlot = false;
+        for (var argument : description.keys()) {
+            byte[] key = args.get(argument.index());
+            if (internalKey(key))
+                return CommandPlan.block("BLOCKED_RESERVED_NAMESPACE");
+            boolean inside = filter.accepts(key);
+            if (argument.role() != CommandKeySemantics.Role.READ) {
+                anyWriteInside |= inside;
+                anyWriteOutside |= !inside;
+            }
+            if (argument.role() != CommandKeySemantics.Role.WRITE)
+                anyReadOutside |= !inside;
+            int keySlot = RedisSlot.of(key);
+            crossSlot |= slot >= 0 && slot != keySlot;
+            if (slot < 0)
+                slot = keySlot;
+        }
+        if (!anyWriteInside)
+            return CommandPlan.skip();
+        if (anyWriteOutside)
+            return CommandPlan.block("BLOCKED_CROSS_SCOPE_WRITE");
+        if (anyReadOutside)
+            return CommandPlan.block("BLOCKED_OUTSIDE_INPUT_DEPENDENCY");
+        if (clusterTarget && crossSlot)
+            return CommandPlan.block("BLOCKED_CROSS_SLOT");
+        if (name.equals("COPY") && description.destinationDatabase() != null) {
+            // Same source DB may map to a different target DB; never forward the source DB number.
+            var rewritten = new ArrayList<>(args.subList(0, 3));
+            for (int i = 3; i < args.size(); i++) {
+                if (new String(args.get(i), StandardCharsets.US_ASCII).equalsIgnoreCase("DB"))
+                    i++;
+                else
+                    rewritten.add(args.get(i));
+            }
+            return apply(rewritten, slot);
+        }
+        return apply(args, slot);
     }
 
     private CommandPlan single(List<byte[]> args, int keyIndex) {

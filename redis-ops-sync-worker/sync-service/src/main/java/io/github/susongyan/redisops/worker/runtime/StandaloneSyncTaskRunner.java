@@ -145,7 +145,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             targetEndpoint = endpoints.resolvePrimary(targetProfile);
             filter = new KeyFilter(patterns(originalTask.includePatternsJson()),
                     patterns(originalTask.excludePatternsJson()));
-            planner = new CommandPlanner(filter, false, heartbeatKey, commandPolicy());
+            planner = new CommandPlanner(filter, false, heartbeatKey, commandPolicy(), originalTask.sourceDb());
             prepareSpool();
             target = new TargetCommandSession(targetProfile, targetEndpoint, originalTask.targetDb(), originalTask.id(),
                     connectTimeout);
@@ -526,7 +526,9 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                 plan = CommandPlan.skip();
             }
             if (plan.disposition() == CommandPlan.Disposition.BLOCK)
-                throw new SyncBlockedException("BLOCKED_UNSUPPORTED_COMMAND",
+                throw new SyncBlockedException(plan.reason() != null && plan.reason().startsWith("BLOCKED_")
+                        ? plan.reason()
+                        : "BLOCKED_UNSUPPORTED_COMMAND",
                         "command " + command.name() + " at offset " + command.endOffset() + " cannot be applied");
             planned.addAll(plan.commands());
             appliedHeartbeat = Math.max(appliedHeartbeat, heartbeatTimestamp(command));

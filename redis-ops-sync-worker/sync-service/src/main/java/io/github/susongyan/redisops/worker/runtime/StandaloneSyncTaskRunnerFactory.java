@@ -70,6 +70,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
 
     @Override
     public SyncTaskRunner create(WorkerSyncTask task, boolean recovery) {
+        boolean multiKey = false;
         // Reject incompatible tasks before acquiring credentials, opening Redis or claiming a runtime.
         if (task.commandPolicyJson() != null && !task.commandPolicyJson().isBlank()) {
             try {
@@ -77,6 +78,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
                         io.github.susongyan.redisops.sync.contract.SyncCommandPolicy.class);
                 if (policy == null)
                     throw new IllegalArgumentException("missing policy");
+                multiKey = policy.supportsMultiKey();
             } catch (java.io.IOException | IllegalArgumentException invalid) {
                 throw new SyncBlockedException("BLOCKED_UNSUPPORTED_COMMAND_POLICY",
                         "worker cannot execute the saved command policy");
@@ -84,6 +86,10 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
         }
         try (WorkerRedisConnectionProfile source = profiles.get(task.sourceClusterId());
                 WorkerRedisConnectionProfile target = profiles.get(task.targetClusterId())) {
+            if (multiKey) {
+                requireMultiKeyVersion(source, task.sourceDb(), task.id());
+                requireMultiKeyVersion(target, task.targetDb(), task.id());
+            }
             if (source.mode() == WorkerClusterMode.CLUSTER || target.mode() == WorkerClusterMode.CLUSTER)
                 return new ClusterSyncTaskRunner(task, recovery, profiles, sync, reporter, spoolKeys, endpoints, json,
                         dataDirectory, segmentBytes, connectTimeout, fullApplyConcurrency, fullApplyQueueCapacity,
@@ -93,5 +99,25 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
                 dataDirectory, segmentBytes, connectTimeout, fullApplyConcurrency,
                 fullApplyQueueCapacity, fullApplyPipelineSize, fullApplyTransactionMaxBytes, leaseSafetyMargin,
                 metricInterval);
+    }
+    private void requireMultiKeyVersion(WorkerRedisConnectionProfile profile, int database, long taskId) {
+        try {
+            if (profile.mode() == WorkerClusterMode.CLUSTER) {
+                for (var master : endpoints.resolveClusterMasters(profile)) {
+                    try (var session = TargetCommandSession.clusterSlot(profile, master.endpoint(), taskId,
+                            connectTimeout, "version-check", master.slotStart())) {
+                        session.requireMultiKeyVersion();
+                    }
+                }
+            } else {
+                try (var session = new TargetCommandSession(profile, endpoints.resolvePrimary(profile), database,
+                        taskId, connectTimeout)) {
+                    session.requireMultiKeyVersion();
+                }
+            }
+        } catch (java.io.IOException unavailable) {
+            throw new SyncBlockedException("BLOCKED_VERSION_CHECK_UNAVAILABLE",
+                    "cannot verify Redis version before execution");
+        }
     }
 }
