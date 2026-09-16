@@ -26,7 +26,6 @@ import {
   PlusOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
-  WarningOutlined,
 } from '@ant-design/icons'
 import { api } from '../api.js'
 import { syncWorkerStatus } from '../syncWorkerStatus.js'
@@ -128,10 +127,6 @@ export default function SyncTasksPage() {
   const relationId = Form.useWatch('relationId', form)
   const selectedSourceClusterId = Form.useWatch('sourceClusterId', form)
   const selectedTargetClusterId = Form.useWatch('targetClusterId', form)
-  const allowDestructiveCommands = Form.useWatch(
-    ['commandPolicy', 'allowDestructiveCommands'],
-    form,
-  )
   const selectedRelation = relations.find((relation) => relation.id === relationId)
   const sourceCluster = clusters.find((cluster) => (
     cluster.id === (selectedRelation?.primaryClusterId || selectedSourceClusterId)
@@ -141,13 +136,6 @@ export default function SyncTasksPage() {
   ))
   const sourceDbRequired = ['STANDALONE', 'SENTINEL'].includes(sourceCluster?.mode)
   const targetDbRequired = ['STANDALONE', 'SENTINEL'].includes(targetCluster?.mode)
-  const clusterTarget = targetCluster?.mode === 'CLUSTER'
-
-  useEffect(() => {
-    if (clusterTarget && allowDestructiveCommands) {
-      form.setFieldValue(['commandPolicy', 'allowDestructiveCommands'], false)
-    }
-  }, [clusterTarget, allowDestructiveCommands, form])
 
   const commandPolicy = (task) => {
     if (!task?.commandPolicyJson) return {}
@@ -317,6 +305,7 @@ export default function SyncTasksPage() {
       const values = await form.validateFields()
       const payload = {
         ...values,
+        commandPolicy: { ...values.commandPolicy, allowDestructiveCommands: false },
         sourceDb: sourceDbRequired ? values.sourceDb : 0,
         targetDb: targetDbRequired ? values.targetDb : 0,
         bandwidthLimitBytesPerSecond: values.bandwidthLimitMiB * mib,
@@ -738,7 +727,7 @@ export default function SyncTasksPage() {
               type="info"
               showIcon
               message="未知命令和无法安全转换的命令始终阻塞任务"
-              description="配置只能收紧策略，或显式允许已知的安全拆分和危险命令；硬阻塞命令不能放开。"
+              description="可配置已知多 Key 命令的拆分策略；未知命令和增量清空命令不能放开。"
               style={{ marginBottom: 16 }}
             />
             <Row gutter={16}>
@@ -757,32 +746,14 @@ export default function SyncTasksPage() {
                 </div>
               </Col>
               <Col xs={24} md={12}>
-                <div className={`sync-policy-option ${clusterTarget ? 'sync-policy-option-disabled' : ''}`}>
-                  <Form.Item
-                    name={['commandPolicy', 'allowDestructiveCommands']}
-                    valuePropName="checked"
-                    noStyle
-                  >
-                    <Checkbox disabled={clusterTarget}>允许 FLUSHDB / FLUSHALL</Checkbox>
-                  </Form.Item>
+                <div className="sync-policy-option sync-policy-option-disabled">
+                  <Checkbox checked={false} disabled>增量清空：不支持</Checkbox>
                   <div className="sync-policy-option-help">
-                    {clusterTarget
-                      ? 'Cluster 目标始终禁止，无法在增量流中原子清空全部 Master。'
-                      : '默认禁止；仅在确认源端清空操作应同步到目标时启用。'}
+                    FLUSHDB / FLUSHALL 会删除同步恢复状态，所有目标模式均阻塞。
                   </div>
                 </div>
               </Col>
             </Row>
-            {allowDestructiveCommands && !clusterTarget && (
-              <Alert
-                type="warning"
-                showIcon
-                icon={<WarningOutlined />}
-                message="已允许危险清空命令"
-                description="同步流中的 FLUSHDB / FLUSHALL 会清空目标 DB，请确认这符合迁移或容灾语义。"
-                style={{ marginTop: 12 }}
-              />
-            )}
             <Form.Item
               name={['commandPolicy', 'additionalBlockedCommands']}
               label="额外屏蔽命令"
@@ -977,9 +948,10 @@ export default function SyncTasksPage() {
                         <Tag color={policy.allowSafeSplit === false ? 'default' : 'blue'}>
                           安全拆分：{policy.allowSafeSplit === false ? '关闭' : '开启'}
                         </Tag>
-                        <Tag color={policy.allowDestructiveCommands ? 'warning' : 'success'}>
-                          清空命令：{policy.allowDestructiveCommands ? '允许' : '禁止'}
-                        </Tag>
+                        <Tag>增量清空：不支持</Tag>
+                        {policy.allowDestructiveCommands && (
+                          <Tag color="warning">历史允许标记已失效，仍会阻塞</Tag>
+                        )}
                         <Tag>额外屏蔽：{(policy.additionalBlockedCommands || []).length}</Tag>
                         <Button
                           type="link"

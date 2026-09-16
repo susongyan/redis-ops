@@ -22,7 +22,7 @@
     </modules>
     <properties>
         <java.version>17</java.version>
-        <redis-ops.sync-contract.version>0.1.0</redis-ops.sync-contract.version>
+        <redis-ops.sync-contract.version>0.1.1</redis-ops.sync-contract.version>
         <mybatis-spring-boot.version>3.0.4</mybatis-spring-boot.version>
         <flyway.version>10.20.1</flyway.version>
         <spotless-maven-plugin.version>2.46.1</spotless-maven-plugin.version>

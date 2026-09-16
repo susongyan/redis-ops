@@ -35,15 +35,16 @@ class CommandPlannerTest {
     }
 
     @Test
-    void mapsSourceFlushAllToSelectedStandaloneTargetDatabaseOnly() {
+    void legacyAllowFlagCannotEraseBatchConfirmationState() {
         CommandPlanner planner = new CommandPlanner(new KeyFilter(List.of("*"), List.of()), false, null,
                 new SyncCommandPolicy(true, true, Set.of(), "v1"));
 
-        CommandPlan plan = planner.plan(command("FLUSHALL"));
-
-        assertEquals(CommandPlan.Disposition.APPLY, plan.disposition());
-        assertEquals("FLUSHDB", new String(plan.commands().get(0).arguments().get(0),
-                java.nio.charset.StandardCharsets.US_ASCII));
+        for (String name : List.of("FLUSHALL", "FLUSHDB")) {
+            CommandPlan plan = planner.plan(command(name));
+            assertEquals(CommandPlan.Disposition.BLOCK, plan.disposition());
+            assertEquals("BLOCKED_DESTRUCTIVE_BATCH_CONFIRMATION", plan.reason());
+            assertTrue(plan.commands().isEmpty());
+        }
     }
 
     @Test

@@ -26,6 +26,19 @@ class SyncCommandPolicyTest {
     }
 
     @Test
+    void destructiveCapabilitiesRemainBlockedRegardlessOfTopologyOrLegacyFlag() {
+        for (boolean cluster : new boolean[]{false, true})
+            for (boolean allowed : new boolean[]{false, true})
+                for (String command : Set.of("FLUSHDB", "FLUSHALL")) {
+                    var capability = SyncCommandCapabilities.classify(command, cluster,
+                            new SyncCommandPolicy(allowed, true, Set.of(), "v1"));
+                    assertEquals("HARD_BLOCKED", capability.category());
+                    assertTrue(capability.currentlyBlocked());
+                    assertFalse(capability.configurable());
+                }
+    }
+
+    @Test
     void rejectsInvalidCommandNamesAndPolicyVersions() {
         assertThrows(IllegalArgumentException.class,
                 () -> new SyncCommandPolicy(false, true, Set.of("DEL *"), "v1"));

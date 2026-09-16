@@ -37,23 +37,10 @@ public final class CommandPlanner {
             return CommandPlan.skip();
         if (SyncCommandCapabilities.hardBlocked(name))
             return CommandPlan.block("command cannot be safely transformed: " + name);
-        if (SyncCommandCapabilities.destructive(name) && clusterTarget)
-            return CommandPlan.block(name + " requires an explicit all-master target operation");
+        if (SyncCommandCapabilities.destructive(name))
+            return CommandPlan.block("BLOCKED_DESTRUCTIVE_BATCH_CONFIRMATION");
         if (policy.additionallyBlocks(name))
             return CommandPlan.block("command blocked by task policy: " + name);
-        if (SyncCommandCapabilities.destructive(name) && !policy.allowDestructiveCommands())
-            return CommandPlan.block("destructive command is disabled by task policy: " + name);
-        if (name.equals("FLUSHDB"))
-            return new CommandPlan(CommandPlan.Disposition.APPLY, List.of(new CommandPlan.PlannedCommand(-1, args)),
-                    null);
-        if (name.equals("FLUSHALL")) {
-            if (clusterTarget)
-                return CommandPlan.block("FLUSHALL requires an explicit all-master target operation");
-            return new CommandPlan(CommandPlan.Disposition.APPLY,
-                    List.of(new CommandPlan.PlannedCommand(-1,
-                            List.of("FLUSHDB".getBytes(StandardCharsets.US_ASCII)))),
-                    null);
-        }
         if (name.equals("MSET")) {
             if (!policy.allowSafeSplit())
                 return CommandPlan.block("safe command splitting is disabled by task policy: MSET");

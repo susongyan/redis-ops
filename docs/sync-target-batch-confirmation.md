@@ -1,6 +1,6 @@
 # 同步目标批次确认：阶段一实现记录
 
-状态：第一阶段首批实现，尚未发布到运行中的 Worker。多 Key 扩展和源端事务组装尚未启用。
+状态：第一阶段开发验收完成，尚未发布到运行中的 Worker。多 Key 扩展和源端事务组装尚未启用。
 
 ## 为什么需要三阶段
 
@@ -36,8 +36,9 @@ checkpoint/fence 键；已验证真实三主节点 Cluster 的同 Slot 批次故
   不自动清空目标，也不自动回滚已经发生的业务写入。
 - 数据库级 FLUSH 会抹去 pending/fence，执行器现阶段提前阻止并返回
   `BLOCKED_DESTRUCTIVE_BATCH_CONFIRMATION`，即使旧任务策略允许危险命令也不执行。
-  现有能力展示需在后续契约联调时对齐；在对齐前不部署此 Worker 到业务任务。
-- 本机制增加两个事务往返；吞吐、延迟及 Cluster 部分分片成功后的恢复需要后续压测。
+  能力查询、命令规划器及页面现已统一为不可配置的阻塞；历史允许字段保留但不生效。
+  Platform 和 Worker 需要同时使用 sync-contract 0.1.1，不能只升级页面。
+- 本机制增加准备和确认事务及其 WATCH/GET 往返；本地开销对比见下文，生产吞吐需单独验收。
 - 业务命令保持有界批量发送，再逐条检查 QUEUED 和 EXEC 回复；不为每条业务命令增加独立网络往返。
   排队期参数错误会关闭事务连接、保留 pending，不执行已排队的其他命令，也不自动重放。
 - 本批修复覆盖增量 apply；全量 restore、FUNCTION LOAD 等既有路径不应据此宣称获得新确认协议。
@@ -72,8 +73,8 @@ COPY 的目标 DB 只被解析记录，后续准入必须检查跨 DB 边界，�
 [LMOVE](https://redis.io/docs/latest/commands/lmove/)、
 [ZUNIONSTORE](https://redis.io/docs/latest/commands/zunionstore/)。首批限制在 6.2/7.x 参数范围。
 
-阶段一仍需补齐：吞吐对比、危险命令能力展示与执行器对齐和部署门禁；拓扑变更故障矩阵仍需扩展。
-通过这些门槛后才冻结最终协议并开放阶段二命令。
+以上确认协议作为后续阶段的开发基线冻结。MOVED/ASK、主从切换、持续高负载和生产网络
+验收仍属于集成发布门槛，不能因本阶段完成而宣称整个迁移扩展已可生产发布。
 
 ## 策略版本领取基线
 
@@ -103,3 +104,34 @@ Worker 的 `/actuator/info` 新增只读 `syncCapabilities`：
 `WorkerPolicyMysqlTest` 使用 `SYNC_POLICY_TEST_MYSQL` 指定的一次性本地 MySQL，
 每个案例创建随机 `sync_policy_test_*` 库并只删除自身创建的库，验证实际 MyBatis SQL，
 不依赖生产/项目数据库，也不修改现有 schema。普通构建未提供环境变量时跳过。
+
+## 有界吞吐对比
+
+`TargetBatchThroughputRedisTest` 通过 `SYNC_BATCH_BENCHMARK_REDIS=127.0.0.1:<port>` 显式启用。
+每组预热 20 批，再测量 100 批；批量大小为 1、100，各 3 轮交替新旧路径顺序。
+只使用随机测试计数器，逐组校验最终计数和 checkpoint，不清空数据库。
+旧路径仅在测试内复现成功场景的 WATCH/GET/MULTI/EXEC 及 checkpoint 写入，不进入应用代码。
+
+2026-09-16，本机 Colima Redis 7.4、JDK 21（编译目标 17）、未开启 Redis 持久化：
+
+| 每批命令数 | 旧成功路径 100 批耗时（ms，3 轮） | 新确认路径 100 批耗时（ms，3 轮） |
+| --- | --- | --- |
+| 1 | 2707 / 2124 / 2654 | 8745 / 7113 / 6702 |
+| 100 | 2859 / 3551 / 2762 | 7910 / 8135 / 7230 |
+
+100 条批次耗时中位数约为旧路径的 **2.77 倍**。这是额外确认往返的实测代价，不可描述为
+“无性能影响”。本测试不含 PSYNC/RDB、MySQL、spool、真实 Key/value 分布、跨机房延迟或
+完整生产资源约束，不可用来承诺生产容量；不为提高数值而移除 pending、fence 或租约检查。
+
+## 部署门禁与验收范围
+
+1. 当前开发验证：contract `clean install`（含 verify）、Worker `clean verify`、Platform `verify`、
+   前端 `npm ci && npm run build`；能力 HTTP 回归和桌面／390px 页面检查。隔离 Redis 故障及
+   MySQL 版本领取证据见上文。未提供环境变量的可选集成测试仍会跳过，不等于全矩阵通过。
+2. 本阶段不自动发布、推送或重启业务 Worker；首次全量经确认的目标清空流程没有改变。
+3. 上线前停止相关任务与所有旧 Worker；按上文核对兼容基线、已确认 checkpoint 和租约释放。
+   有 pending 的目标先核实，禁止删除 pending、修改 offset 或直接降级来绕过。
+4. Platform/Worker 使用同一 `sync-contract:0.1.1`，同时交付新版前端；历史清空允许标记不再生效，
+   提前告知运维：源端出现 FLUSH 会阻塞任务，不会跳过后继续同步。
+5. 新命令及事务功能仍需阶段二至四的独立测试；正式发布前补齐拓扑变化、慢网／故障、持续负载
+   与资源边界验收，并以实际环境吞吐决定发布规模。不满足门槛时不开放业务迁移。

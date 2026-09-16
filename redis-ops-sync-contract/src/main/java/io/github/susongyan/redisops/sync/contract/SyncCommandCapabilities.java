@@ -47,17 +47,12 @@ public final class SyncCommandCapabilities {
     public static SyncCommandCapability classify(String command, boolean clusterTarget, SyncCommandPolicy policy) {
         if (hardBlocked(command))
             return new SyncCommandCapability(command, "HARD_BLOCKED", "无法保证等价转换或原子性", false, true);
-        if (destructive(command) && clusterTarget)
-            return new SyncCommandCapability(command, "HARD_BLOCKED", "Cluster 目标不支持在增量流中执行全节点清空", false, true);
+        if (destructive(command))
+            return new SyncCommandCapability(command, "HARD_BLOCKED", "增量清空会删除同步恢复状态，始终阻塞", false, true);
         if (skipped(command))
             return new SyncCommandCapability(command, "IGNORED", "复制协议控制命令，不写入目标", false, false);
         if (policy.additionallyBlocks(command))
             return new SyncCommandCapability(command, "POLICY_BLOCKED", "任务策略显式屏蔽", true, true);
-        if (destructive(command)) {
-            boolean blocked = !policy.allowDestructiveCommands();
-            return new SyncCommandCapability(command, blocked ? "POLICY_BLOCKED" : "SUPPORTED",
-                    "危险命令，必须在任务策略中显式允许", true, blocked);
-        }
         if (safeSplit(command)) {
             boolean blocked = !policy.allowSafeSplit();
             return new SyncCommandCapability(command, blocked ? "POLICY_BLOCKED" : "TRANSFORMABLE",

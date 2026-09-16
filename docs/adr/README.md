@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-- [ADR-025 业务 Key 过滤与同步命令语义扩展（Proposed，待实施）](ADR-025-sync-command-semantics.md)
+- [ADR-025 业务 Key 过滤与同步命令语义扩展（Accepted，分阶段实施）](ADR-025-sync-command-semantics.md)
 
 - [ADR-024 审计变更详情](ADR-024-audit-change-details.md)
 

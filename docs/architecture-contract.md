@@ -50,7 +50,7 @@ Sync Worker ── PSYNC / RDB / RESP ──► Source Redis / Target Redis
 | 资产、关系、审批、审计、任务期望状态 | MySQL | Platform 拥有写入权；核心资源用乐观锁。 |
 | Worker 运行资格 | MySQL runtime lease | 领取时递增 fencing generation；过期可安全接管。 |
 | 同步数据已应用 offset | 目标 Redis checkpoint | MySQL 只保存摘要；崩溃恢复必须以 checkpoint 为准。 |
-| 当前目标写资格 | 目标 Redis fence | 业务命令、checkpoint 与 fence 校验在同一原子边界内提交。 |
+| 当前目标写资格 | 目标 Redis fence | 增量准备、业务执行和确认各自受同一 fence/pending 校验保护；只有核对全部成功回复后才写成功 checkpoint（ADR-025）。 |
 | 全量进度 | `sync_full_progress` | 仅观测，按 task/epoch/channel/lane 单调累积；写入故障不得降低同步安全。 |
 | 高频指标 | Prometheus/TSDB（规划） | MySQL 仅保存低频摘要，禁止把高频采集点持续写入事务库。 |
 | 告警状态 | MySQL `alert_event` | 规则按资源去重收敛；Webhook 投递失败不得改变告警本身状态。 |
@@ -71,6 +71,8 @@ migration 是不可变历史；任何 schema 演进均新增版本化 migration�
 6. 保留命名空间 `__redis_ops_sync_*` 不得同步为业务数据；发现业务冲突时预检查失败。
 7. 全量 `RESTORE ... REPLACE ABSTTL` 可以重放，但每个并发 lane 仍必须经过 fence，避免旧快照
    覆盖接管后的数据。
+8. 按 ADR-025，增量执行结果不确定时保留目标 pending 并阻塞，不自动重放或推进成功 checkpoint。
+   增量 FLUSHDB/FLUSHALL 禁止执行，历史允许标记不再生效；首次全量经确认的初始化清空不受影响。
 
 ## 5. API、事件和并发契约
 

@@ -35,8 +35,9 @@
 
 - `allowSafeSplit`：是否允许 `MSET`、`DEL`、`UNLINK` 按 Key/Slot 拆分。拆分后数据能够收敛，
   但不承诺原命令的跨 Key 原子性。
-- `allowDestructiveCommands`：是否允许 Standalone/Sentinel 目标执行 `FLUSHDB`、`FLUSHALL`。
-  Cluster 目标始终禁止，因为增量通道不能原子地完成全 master 清空。
+- `allowDestructiveCommands`：仅保留历史 JSON 读取兼容，已不再授予执行权限。
+  所有目标模式的增量 `FLUSHDB`、`FLUSHALL` 均阻塞，避免清除 fence/checkpoint 和待确认状态。
+  这不改变首次全量启动前经确认的目标初始化清空流程。
 - `additionalBlockedCommands`：任务级额外屏蔽命令，只能收紧能力，不能放开硬阻塞命令。
 - `policyVersion`：策略语义版本，当前为 `v1`。
 
