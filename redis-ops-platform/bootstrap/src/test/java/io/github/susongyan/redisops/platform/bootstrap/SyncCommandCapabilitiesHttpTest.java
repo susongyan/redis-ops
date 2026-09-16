@@ -14,7 +14,7 @@ class SyncCommandCapabilitiesHttpTest {
     void capabilityQueryUsesExplicitPolicyWithoutUpgradingLegacyRequests() throws Exception {
         var mvc = MockMvcBuilders.standaloneSetup(new SyncController(null, null)).build();
         var json = new ObjectMapper();
-        for (String version : Set.of("v1", "v2")) {
+        for (String version : Set.of("v1", "v2", "v3")) {
             var result = mvc.perform(get("/api/v1/sync-command-capabilities")
                     .param("targetMode", "CLUSTER").param("policyVersion", version))
                     .andExpect(status().isOk()).andReturn();
@@ -23,11 +23,14 @@ class SyncCommandCapabilitiesHttpTest {
             boolean found = false;
             for (var command : data.path("commands"))
                 if (command.path("command").asText().equals("BITOP")) {
-                    assertEquals(version.equals("v2") ? "CONDITIONAL" : "HARD_BLOCKED",
+                    assertEquals(version.equals("v1") ? "HARD_BLOCKED" : "CONDITIONAL",
                             command.path("category").asText());
                     found = true;
                 }
             assertTrue(found);
+            for (var command : data.path("commands"))
+                if (command.path("command").asText().equals("MULTI"))
+                    assertEquals(!version.equals("v3"), command.path("currentlyBlocked").asBoolean());
         }
     }
     @Test

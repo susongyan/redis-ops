@@ -29,6 +29,25 @@ public final class ReplicationCommandReader {
     }
 
     public ReplicationCommand read() throws IOException {
+        return read(maxFrameBytes, maxArguments);
+    }
+
+    public ReplicationCommand readBounded() throws IOException {
+        return read((int) SourceTransactionAssembler.MAX_BYTES, 65_536);
+    }
+
+    private ReplicationCommand read(int maxFrameBytes, int maxArguments) throws IOException {
+        long before = input.count();
+        try {
+            return readFrame(maxFrameBytes, maxArguments);
+        } catch (java.net.SocketTimeoutException timeout) {
+            if (input.count() != before)
+                throw new java.io.EOFException("incomplete replication frame; reconnect from last complete offset");
+            throw timeout;
+        }
+    }
+
+    private ReplicationCommand readFrame(int maxFrameBytes, int maxArguments) throws IOException {
         long before = input.count();
         int marker;
         long separators = 0;

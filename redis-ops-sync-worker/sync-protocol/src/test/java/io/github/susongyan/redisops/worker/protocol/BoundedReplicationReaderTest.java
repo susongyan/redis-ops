@@ -7,6 +7,30 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class BoundedReplicationReaderTest {
     @Test
+    void timeoutInsideFrameRequiresReconnectButIdleTimeoutDoesNotAdvanceOffset() {
+        for (boolean partial : new boolean[]{false, true}) {
+            InputStream source = new InputStream() {
+                final byte[] prefix = (partial ? "*2\r\n$3\r\nSET\r\n$5\r\nab" : "")
+                        .getBytes(StandardCharsets.US_ASCII);
+                int position;
+                public int read() throws IOException {
+                    if (position < prefix.length)
+                        return prefix[position++];
+                    throw new java.net.SocketTimeoutException();
+                }
+            };
+            var counting = new CountingInputStream(source);
+            var reader = new ReplicationCommandReader(new RespCodec(counting, OutputStream.nullOutputStream()),
+                    counting, 10, 1024, 100);
+            if (partial)
+                assertThrows(EOFException.class, reader::read);
+            else
+                assertThrows(java.net.SocketTimeoutException.class, reader::read);
+            assertEquals(10, reader.offset());
+        }
+    }
+
+    @Test
     void rejectsHugeDeclaredBulkArrayNestedAndMalformedLengthsWithoutReadingPayload() {
         for (String frame : new String[]{"*2\r\n$3\r\nSET\r\n$2147483647\r\n", "*65537\r\n",
                 "*1\r\n*1\r\n", "*1\r\n$-1\r\n", "*999999999999999999\r\n", "*-1\r\n"}) {

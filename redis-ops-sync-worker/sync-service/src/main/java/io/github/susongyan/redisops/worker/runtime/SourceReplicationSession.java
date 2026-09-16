@@ -55,9 +55,12 @@ public final class SourceReplicationSession implements AutoCloseable {
     }
 
     public ReplicationCommand readCommand() throws IOException {
+        return readCommand(false);
+    }
+    public ReplicationCommand readCommand(boolean bounded) throws IOException {
         if (commands == null)
             throw new IllegalStateException("replication command stream has not started");
-        return commands.read();
+        return bounded ? commands.readBounded() : commands.read();
     }
 
     public void acknowledge(long offset) throws IOException {

@@ -23,6 +23,8 @@ public final class SourceTransactionPlanner {
     }
 
     public Result plan(SourceTransactionAssembler.Unit unit, int initialDatabase) {
+        if (policy.additionallyBlocks("MULTI") || policy.additionallyBlocks("EXEC"))
+            return blocked("BLOCKED_COMMAND_POLICY", initialDatabase);
         if (!unit.transaction())
             return blocked("BLOCKED_TRANSACTION_STRUCTURE", initialDatabase);
         int database = initialDatabase;

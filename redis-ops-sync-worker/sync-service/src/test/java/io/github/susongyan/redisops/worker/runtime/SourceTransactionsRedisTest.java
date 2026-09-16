@@ -4,6 +4,8 @@ import io.github.susongyan.redisops.worker.protocol.*;
 import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
@@ -63,7 +65,7 @@ class SourceTransactionsRedisTest {
             assertEquals(List.of("INCR", "INCR"),
                     transactions.get(1).commands().stream().map(ReplicationCommand::name)
                             .filter(n -> !n.equals("SELECT")).toList());
-            var policy = new io.github.susongyan.redisops.sync.contract.SyncCommandPolicy(false, true, Set.of(), "v2");
+            var policy = new io.github.susongyan.redisops.sync.contract.SyncCommandPolicy(false, true, Set.of(), "v3");
             var planner = new SourceTransactionPlanner(new KeyFilter(List.of(), List.of()), true, policy, 0);
             for (var transaction : transactions) {
                 var plan = planner.plan(transaction, 0);
@@ -73,6 +75,35 @@ class SourceTransactionsRedisTest {
             }
             assertFalse(assembler.hasOpenTransaction());
             assertTrue(transactions.get(0).endOffset() < transactions.get(1).startOffset());
+            // Rebuild only these isolated fixture keys from captured effects and verify confirmed replay is a no-op.
+            call(commands, "DEL", a, b);
+            boolean cluster = variable.equals("SYNC_BATCH_TEST_CLUSTER_SLOT0");
+            long taskId = UUID.randomUUID().getMostSignificantBits() & Long.MAX_VALUE;
+            var profile = new WorkerRedisConnectionProfile(1,
+                    cluster ? WorkerClusterMode.CLUSTER : WorkerClusterMode.STANDALONE,
+                    List.of(endpoint), null, null, "NONE", null);
+            var guard = new LeaseGuard(Duration.ZERO);
+            guard.grant(Duration.ofMinutes(1));
+            var fence = new TargetFence("effects", 1, "runtime", "fixture", Instant.now());
+            try (var target = cluster
+                    ? TargetCommandSession.clusterSlot(profile, RedisEndpoint.parse(endpoint), taskId,
+                            Duration.ofSeconds(2), "effects", 0)
+                    : new TargetCommandSession(profile, 0, taskId, Duration.ofSeconds(2))) {
+                target.publishFence(fence, guard);
+                for (var unit : transactions) {
+                    var plan = new SourceTransactionPlanner(new KeyFilter(List.of(), List.of()), cluster, policy, 0)
+                            .plan(unit, 0);
+                    var checkpoint = new TargetCheckpoint("effects", 1, "source", unit.endOffset(),
+                            plan.sourceDatabase(), Instant.now());
+                    target.apply(plan.plan().commands(), checkpoint, fence, guard);
+                    target.apply(plan.plan().commands(), checkpoint, fence, guard);
+                    assertEquals(unit.endOffset(), target.checkpoint().orElseThrow().appliedOffset());
+                }
+                commands.writeCommand("GET", a);
+                assertArrayEquals("2".getBytes(StandardCharsets.US_ASCII), ((RespValue.Bulk) commands.read()).value());
+                commands.writeCommand("GET", b);
+                assertArrayEquals("3".getBytes(StandardCharsets.US_ASCII), ((RespValue.Bulk) commands.read()).value());
+            }
             call(commands, "DEL", a, b);
         }
     }

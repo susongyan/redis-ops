@@ -19,7 +19,7 @@ redis-ops-frontend
 ```
 
 导出时会为 Platform 和 Worker 生成不同的 Maven Parent。两者不包含 contract 源码，而是固定依赖
-`io.github.susongyan.redisops:redis-ops-sync-contract:0.2.0`。Frontend 仅包含 Node/Vite 文件。
+`io.github.susongyan.redisops:redis-ops-sync-contract:0.3.0`。Frontend 仅包含 Node/Vite 文件。
 
 ## 隔离验证
 

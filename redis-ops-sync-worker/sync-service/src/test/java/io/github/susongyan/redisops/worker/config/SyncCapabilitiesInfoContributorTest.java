@@ -12,9 +12,9 @@ class SyncCapabilitiesInfoContributorTest {
         var builder = new Info.Builder();
         new SyncCapabilitiesInfoContributor().contribute(builder);
         Map<?, ?> capabilities = (Map<?, ?>) builder.build().getDetails().get("syncCapabilities");
-        assertEquals(List.of("v1", "v2"), capabilities.get("commandPolicyVersions"));
+        assertEquals(List.of("v1", "v2", "v3"), capabilities.get("commandPolicyVersions"));
         assertEquals(2, capabilities.get("batchConfirmationVersion"));
         assertEquals(true, capabilities.get("policyAwareClaims"));
-        assertEquals(false, capabilities.get("sourceTransactions"));
+        assertEquals(true, capabilities.get("sourceTransactions"));
     }
 }

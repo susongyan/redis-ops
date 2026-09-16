@@ -57,6 +57,20 @@ class SyncCommandPolicyTest {
     }
 
     @Test
+    void transactionsRequireExplicitV3AndNeverEnableOriginalScripts() {
+        for (String version : Set.of("v1", "v2")) {
+            var legacy = new SyncCommandPolicy(false, true, Set.of(), version);
+            assertFalse(legacy.supportsTransactions());
+            assertTrue(SyncCommandCapabilities.classify("MULTI", false, legacy).currentlyBlocked());
+        }
+        var policy = new SyncCommandPolicy(false, true, Set.of(), "v3");
+        assertTrue(policy.supportsTransactions());
+        assertTrue(policy.supportsMultiKey());
+        assertFalse(SyncCommandCapabilities.classify("MULTI", true, policy).currentlyBlocked());
+        assertTrue(SyncCommandCapabilities.classify("EVAL", false, policy).currentlyBlocked());
+    }
+
+    @Test
     void unknownCommandsFailClosed() {
         var capability = SyncCommandCapabilities.classify("FUTURECMD", false, SyncCommandPolicy.strict());
         assertTrue(capability.currentlyBlocked());

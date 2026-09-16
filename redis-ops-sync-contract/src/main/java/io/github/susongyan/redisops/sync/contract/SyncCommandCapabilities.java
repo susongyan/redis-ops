@@ -51,6 +51,11 @@ public final class SyncCommandCapabilities {
     }
 
     public static SyncCommandCapability classify(String command, boolean clusterTarget, SyncCommandPolicy policy) {
+        if (policy.supportsTransactions() && Set.of("MULTI", "EXEC").contains(command)) {
+            boolean blocked = policy.additionallyBlocks("MULTI") || policy.additionallyBlocks("EXEC");
+            return new SyncCommandCapability(command, blocked ? "POLICY_BLOCKED" : "CONDITIONAL",
+                    "仅复制流完整事务；整组同范围、Cluster 同 Slot；最多 10000 条 / 16 MiB", true, blocked);
+        }
         if (policy.supportsMultiKey() && conditionalMultiKey(command)) {
             if (policy.additionallyBlocks(command))
                 return new SyncCommandCapability(command, "POLICY_BLOCKED", "任务策略显式屏蔽", true, true);

@@ -144,7 +144,7 @@ class SyncServiceTest {
 
     @Test
     void savesExplicitPolicyVersionWithoutUpgradingLegacyRequests() throws Exception {
-        for (String version : new String[]{null, "v1", "v2"}) {
+        for (String version : new String[]{null, "v1", "v2", "v3"}) {
             Fixture fixture = new Fixture();
             when(fixture.clusters.findById(11)).thenReturn(Optional.of(cluster(11, ClusterMode.STANDALONE)));
             when(fixture.clusters.findById(22)).thenReturn(Optional.of(cluster(22, ClusterMode.STANDALONE)));

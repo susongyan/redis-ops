@@ -96,7 +96,8 @@ public final class TargetCommandSession implements AutoCloseable {
                     }
                 }
             }
-            throw new SyncBlockedException("BLOCKED_UNSUPPORTED_REDIS_VERSION", "v2 requires Redis 6.2 or 7.x");
+            throw new SyncBlockedException("BLOCKED_UNSUPPORTED_REDIS_VERSION",
+                    "multi-key policies require Redis 6.2 or 7.x");
         } finally {
             socket.setSoTimeout(previousTimeout);
         }

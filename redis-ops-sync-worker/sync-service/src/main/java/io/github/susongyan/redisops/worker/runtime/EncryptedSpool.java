@@ -30,6 +30,7 @@ public final class EncryptedSpool implements AutoCloseable {
     private final byte[] key;
     private final long segmentBytes;
     private final long limitBytes;
+    private long commandRecordReadLimit = Long.MAX_VALUE;
     private DataOutputStream commandOutput;
     private FileOutputStream commandFile;
     private int segment;
@@ -205,6 +206,12 @@ public final class EncryptedSpool implements AutoCloseable {
         return result;
     }
 
+    public void limitCommandRecordReads(long maxBytes) {
+        if (maxBytes < 1)
+            throw new IllegalArgumentException("invalid spool record read limit");
+        commandRecordReadLimit = maxBytes;
+    }
+
     @FunctionalInterface
     public interface CommandConsumer {
         void accept(ReplicationCommand command) throws IOException;
@@ -212,6 +219,11 @@ public final class EncryptedSpool implements AutoCloseable {
 
     /** Capture complete record boundaries under the append lock, then stream without retaining backlog. */
     public void forEachCommandAfter(long appliedOffset, CommandConsumer consumer) throws IOException {
+        forEachCommandAfter(appliedOffset, limitBytes, consumer);
+    }
+
+    public void forEachCommandAfter(long appliedOffset, long maxRecordBytes, CommandConsumer consumer)
+            throws IOException {
         record Segment(Path path, long size) {
         }
         List<Segment> snapshot = new ArrayList<>();
@@ -220,7 +232,7 @@ public final class EncryptedSpool implements AutoCloseable {
                 snapshot.add(new Segment(path, Files.size(path)));
         }
         for (Segment segment : snapshot)
-            readSegment(segment.path(), segment.size(), command -> {
+            readSegment(segment.path(), segment.size(), maxRecordBytes, command -> {
                 if (command.endOffset() > appliedOffset)
                     consumer.accept(command);
             });
@@ -237,7 +249,7 @@ public final class EncryptedSpool implements AutoCloseable {
             if (segmentNumber(path) == activeSegment)
                 continue;
             long[] lastOffset = {-1};
-            readSegment(path, Files.size(path), command -> lastOffset[0] = command.endOffset());
+            readSegment(path, Files.size(path), limitBytes, command -> lastOffset[0] = command.endOffset());
             if (lastOffset[0] <= appliedOffset)
                 Files.deleteIfExists(path);
         }
@@ -304,7 +316,8 @@ public final class EncryptedSpool implements AutoCloseable {
         segmentSize = Files.size(path);
     }
 
-    private void readSegment(Path path, long remaining, CommandConsumer consumer) throws IOException {
+    private void readSegment(Path path, long remaining, long maxRecordBytes, CommandConsumer consumer)
+            throws IOException {
         int fileSegment = segmentNumber(path);
         try (DataInputStream input = new DataInputStream(Files.newInputStream(path))) {
             while (remaining > 0) {
@@ -312,7 +325,8 @@ public final class EncryptedSpool implements AutoCloseable {
                     throw new EOFException("truncated encrypted spool record header");
                 int length = input.readInt();
                 remaining -= Integer.BYTES;
-                if (length < IV_BYTES + 16 || length > limitBytes || length > remaining)
+                if (length < IV_BYTES + 16 || length > limitBytes || length > maxRecordBytes
+                        || length > commandRecordReadLimit || length > remaining)
                     throw new RespProtocolException("invalid encrypted spool record length");
                 byte[] iv = input.readNBytes(IV_BYTES);
                 byte[] encrypted = input.readNBytes(length - IV_BYTES);

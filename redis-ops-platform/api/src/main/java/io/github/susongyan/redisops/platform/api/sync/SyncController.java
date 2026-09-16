@@ -208,7 +208,7 @@ public class SyncController {
             Boolean allowDestructiveCommands,
             Boolean allowSafeSplit,
             @Size(max = 100) Set<@Pattern(regexp = "[A-Za-z][A-Za-z0-9_-]{0,63}") String> additionalBlockedCommands,
-            @Pattern(regexp = "v[12]") String policyVersion) {
+            @Pattern(regexp = "v[123]") String policyVersion) {
     }
     public record CommandCapabilityResponse(
             ClusterMode targetMode,

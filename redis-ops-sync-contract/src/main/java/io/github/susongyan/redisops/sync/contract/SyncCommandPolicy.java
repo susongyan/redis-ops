@@ -8,7 +8,9 @@ public record SyncCommandPolicy(boolean allowDestructiveCommands, boolean allowS
         Set<String> additionalBlockedCommands, String policyVersion) {
     public static final String CURRENT_VERSION = "v1";
     public static final String MULTI_KEY_VERSION = "v2";
-    public static final Set<String> SUPPORTED_VERSIONS = Set.of(CURRENT_VERSION, MULTI_KEY_VERSION);
+    public static final String TRANSACTION_VERSION = "v3";
+    public static final Set<String> SUPPORTED_VERSIONS = Set.of(CURRENT_VERSION, MULTI_KEY_VERSION,
+            TRANSACTION_VERSION);
 
     public SyncCommandPolicy {
         LinkedHashSet<String> normalized = new LinkedHashSet<>();
@@ -35,6 +37,9 @@ public record SyncCommandPolicy(boolean allowDestructiveCommands, boolean allowS
         return additionalBlockedCommands.contains(command.toUpperCase(Locale.ROOT));
     }
     public boolean supportsMultiKey() {
-        return MULTI_KEY_VERSION.equals(policyVersion);
+        return MULTI_KEY_VERSION.equals(policyVersion) || supportsTransactions();
+    }
+    public boolean supportsTransactions() {
+        return TRANSACTION_VERSION.equals(policyVersion);
     }
 }

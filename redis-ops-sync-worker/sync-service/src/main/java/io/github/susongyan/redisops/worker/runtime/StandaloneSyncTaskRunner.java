@@ -79,6 +79,9 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private TargetCommandSession heartbeatSource;
     private EncryptedSpool spool;
     private CommandPlanner planner;
+    private SourceExecutionBatcher transactionBatcher;
+    private SourceTransactionPlanner transactionPlanner;
+    private final ReplicationQueueBudget queueBudget = new ReplicationQueueBudget();
     private KeyFilter filter;
     private long lastSummaryNanos;
     private long lastMetricNanos;
@@ -146,6 +149,11 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             filter = new KeyFilter(patterns(originalTask.includePatternsJson()),
                     patterns(originalTask.excludePatternsJson()));
             planner = new CommandPlanner(filter, false, heartbeatKey, commandPolicy(), originalTask.sourceDb());
+            if (commandPolicy().supportsTransactions()) {
+                transactionBatcher = new SourceExecutionBatcher();
+                transactionPlanner = new SourceTransactionPlanner(filter, false, commandPolicy(),
+                        originalTask.sourceDb());
+            }
             prepareSpool();
             target = new TargetCommandSession(targetProfile, targetEndpoint, originalTask.targetDb(), originalTask.id(),
                     connectTimeout);
@@ -431,13 +439,21 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                 if (currentSource == null)
                     return;
                 leaseGuard.assertValid();
-                ReplicationCommand command = currentSource.readCommand();
+                ReplicationCommand command = currentSource.readCommand(transactionBatcher != null);
                 leaseGuard.assertValid();
-                spool.append(command);
-                receivedOffset.set(command.endOffset());
-                leaseGuard.assertValid();
+                if (transactionBatcher != null)
+                    queueBudget.acquire(command);
+                try {
+                    spool.append(command);
+                    receivedOffset.set(command.endOffset());
+                    leaseGuard.assertValid();
+                    applyQueue.put(command);
+                } catch (Exception | Error failure) {
+                    if (transactionBatcher != null)
+                        queueBudget.release(command);
+                    throw failure;
+                }
                 currentSource.acknowledge(command.endOffset());
-                applyQueue.put(command);
                 maybeWriteHeartbeat();
                 refreshSourceMasterIfNeeded();
                 while (!cancelled.get() && spool.bytes() >= limits.spoolLimitBytes() * 9 / 10)
@@ -453,6 +469,9 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                     fail(heartbeatFailure);
                     return;
                 }
+            } catch (RespProtocolException | SyncBlockedException unsafe) {
+                fail(unsafe);
+                return;
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 return;
@@ -475,13 +494,22 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private void replaySpool() throws IOException {
         leaseGuard.assertValid();
         var batch = new java.util.ArrayList<ReplicationCommand>(100);
-        spool.forEachCommandAfter(appliedOffset.get(), command -> {
-            batch.add(command);
-            if (batch.size() == 100) {
-                applyBatchWhenAllowed(batch);
-                batch.clear();
-            }
-        });
+        long[] batchBytes = {0};
+        spool.forEachCommandAfter(appliedOffset.get(), transactionBatcher == null ? Long.MAX_VALUE : 32L * 1024 * 1024,
+                command -> {
+                    if (!batch.isEmpty() && batchBytes[0] + command.encodedBytes() > 1024 * 1024) {
+                        applyBatchWhenAllowed(batch);
+                        batch.clear();
+                        batchBytes[0] = 0;
+                    }
+                    batch.add(command);
+                    batchBytes[0] += command.encodedBytes();
+                    if (batch.size() == 100) {
+                        applyBatchWhenAllowed(batch);
+                        batch.clear();
+                        batchBytes[0] = 0;
+                    }
+                });
         if (!batch.isEmpty())
             applyBatchWhenAllowed(batch);
     }
@@ -493,15 +521,22 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                 continue;
             }
             ReplicationCommand command = applyQueue.poll(250, TimeUnit.MILLISECONDS);
+            if (command != null && transactionBatcher != null)
+                queueBudget.release(command);
             if (command != null && command.endOffset() > appliedOffset.get()) {
                 var batch = new java.util.ArrayList<ReplicationCommand>(100);
                 batch.add(command);
                 applyQueue.drainTo(batch, 99);
+                if (transactionBatcher != null)
+                    for (int i = 1; i < batch.size(); i++)
+                        queueBudget.release(batch.get(i));
                 applyBatchWhenAllowed(batch);
             }
-            if (finishing && (reader == null || reader.isDone()) && applyQueue.isEmpty()
-                    && appliedOffset.get() >= receivedOffset.get())
-                return;
+            if (finishing && (reader == null || reader.isDone()) && applyQueue.isEmpty()) {
+                assertCompleteTransactionInput();
+                if (appliedOffset.get() >= receivedOffset.get())
+                    return;
+            }
             markCaughtUpIfNeeded();
             saveMetricThrottled();
         }
@@ -517,6 +552,42 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     }
 
     private void applyBatch(List<ReplicationCommand> commands) throws IOException {
+        if (transactionBatcher == null) {
+            applyOrdinaryBatch(commands);
+            return;
+        }
+        final List<SourceTransactionAssembler.Unit> units;
+        try {
+            units = transactionBatcher.accept(commands, appliedOffset.get());
+        } catch (IllegalStateException invalid) {
+            throw new SyncBlockedException(invalid.getMessage(), "source transaction cannot be assembled");
+        }
+        for (var unit : units) {
+            if (!unit.transaction()) {
+                applyOrdinaryBatch(unit.commands());
+                continue;
+            }
+            var result = transactionPlanner.plan(unit, sourceDatabase);
+            if (result.plan().disposition() == CommandPlan.Disposition.BLOCK)
+                throw new SyncBlockedException(result.plan().reason(), "source transaction cannot be applied");
+            for (var command : unit.commands())
+                throttle(command);
+            sourceDatabase = result.sourceDatabase();
+            commitPlanned(result.plan().commands(), unit.endOffset(), 0);
+        }
+    }
+
+    private void assertCompleteTransactionInput() {
+        if (transactionBatcher == null)
+            return;
+        try {
+            transactionBatcher.endOfInput();
+        } catch (IllegalStateException incomplete) {
+            throw new SyncBlockedException(incomplete.getMessage(), "source ended inside transaction");
+        }
+    }
+
+    private void applyOrdinaryBatch(List<ReplicationCommand> commands) throws IOException {
         var planned = new java.util.ArrayList<CommandPlan.PlannedCommand>();
         ReplicationCommand last = null;
         long appliedHeartbeat = 0;
@@ -544,8 +615,13 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         }
         if (last == null)
             return;
+        commitPlanned(planned, last.endOffset(), appliedHeartbeat);
+    }
+
+    private void commitPlanned(List<CommandPlan.PlannedCommand> planned, long endOffset, long appliedHeartbeat)
+            throws IOException {
         TargetCheckpoint checkpoint = new TargetCheckpoint(originalTask.fullSyncEpoch(), generation,
-                replicationId, last.endOffset(), sourceDatabase, Instant.now());
+                replicationId, endOffset, sourceDatabase, Instant.now());
         TargetCheckpoint committed = applyTarget(planned, checkpoint);
         appliedOffset.set(committed.appliedOffset());
         if (appliedHeartbeat > 0)
@@ -964,6 +1040,8 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private void prepareSpool() throws IOException {
         EncryptedSpool primary = new EncryptedSpool(dataDirectory, originalTask.id(),
                 spoolKeys.taskKey(originalTask.id()), segmentBytes, originalTask.spoolLimitBytes());
+        if (transactionBatcher != null)
+            primary.limitCommandRecordReads(32L * 1024 * 1024);
         try {
             primary.prepare();
             spool = primary;
@@ -975,6 +1053,8 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             Path takeoverDirectory = dataDirectory.resolve("takeover-" + java.util.UUID.randomUUID());
             spool = new EncryptedSpool(takeoverDirectory, originalTask.id(),
                     spoolKeys.taskKey(originalTask.id()), segmentBytes, originalTask.spoolLimitBytes());
+            if (transactionBatcher != null)
+                spool.limitCommandRecordReads(32L * 1024 * 1024);
             spool.prepare();
         }
     }

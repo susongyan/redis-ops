@@ -89,7 +89,7 @@ class WorkerPolicyMysqlTest {
     void missingNullAndEmptyVersionsKeepLegacyV1Admission() throws Exception {
         var jobs = session.getMapper(WorkerControlJobMapper.class);
         List<String> legacy = List.of("{}", "{\"policyVersion\":null}", "{\"policyVersion\":\"\"}",
-                "{\"policyVersion\":\"v2\"}");
+                "{\"policyVersion\":\"v2\"}", "{\"policyVersion\":\"v3\"}");
         for (int i = 0; i < legacy.size(); i++) {
             insert(i + 1, legacy.get(i));
             assertEquals(1, jobs.claim("SYNC_START", "legacy-" + i, 30));

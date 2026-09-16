@@ -16,6 +16,20 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class EncryptedSpoolTest {
     @Test
+    void recordReadBudgetAppliesToReplayAndPruning(@TempDir Path path) throws Exception {
+        try (var spool = new EncryptedSpool(path, 78, new byte[32], 1024, 1024 * 1024)) {
+            spool.prepare();
+            for (int i = 1; i <= 30; i++)
+                spool.append(command("INCR", "counter", i, i));
+            spool.limitCommandRecordReads(32);
+            assertThrows(io.github.susongyan.redisops.worker.protocol.RespProtocolException.class,
+                    () -> spool.forEachCommandAfter(0, command -> fail("must reject before delivery")));
+            assertThrows(io.github.susongyan.redisops.worker.protocol.RespProtocolException.class,
+                    () -> spool.pruneCommandsThrough(30));
+        }
+    }
+
+    @Test
     void streamingReplayHasStableAppendBoundaryAndPropagatesConsumerFailure(@TempDir Path path) throws Exception {
         try (var spool = new EncryptedSpool(path, 77, new byte[32], 1024, 1024 * 1024)) {
             spool.prepare();

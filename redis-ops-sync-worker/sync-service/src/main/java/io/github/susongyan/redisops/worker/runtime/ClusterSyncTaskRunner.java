@@ -387,6 +387,9 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         private final SourceSpec spec;
         private final KeyFilter filter;
         private final CommandPlanner planner;
+        private final SourceExecutionBatcher transactionBatcher;
+        private final SourceTransactionPlanner transactionPlanner;
+        private final ReplicationQueueBudget queueBudget = new ReplicationQueueBudget();
         private final int restoreConcurrency;
         private final int restoreQueueCapacity;
         private final byte[] heartbeatKey;
@@ -432,8 +435,14 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                             .getBytes(StandardCharsets.US_ASCII);
             this.planner = new CommandPlanner(filter, targetProfile.mode() == WorkerClusterMode.CLUSTER, heartbeatKey,
                     commandPolicy(), task.sourceDb());
+            this.transactionBatcher = commandPolicy().supportsTransactions() ? new SourceExecutionBatcher() : null;
+            this.transactionPlanner = new SourceTransactionPlanner(filter,
+                    targetProfile.mode() == WorkerClusterMode.CLUSTER,
+                    commandPolicy(), task.sourceDb());
             this.spool = new EncryptedSpool(dataDirectory, task.id(), spec.channel(),
                     spoolKeys.taskKey(task.id()), segmentBytes, spoolLimit);
+            if (transactionBatcher != null)
+                this.spool.limitCommandRecordReads(32L * 1024 * 1024);
             this.fullProgress = new FullSyncProgressTracker(task.id(), task.fullSyncEpoch(), spec.channel(),
                     restoreConcurrency, sync);
             this.executor = Executors.newFixedThreadPool(2, runnable -> {
@@ -613,11 +622,19 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
             while (!cancelled.get() && !stopped.get()) {
                 try {
                     leaseGuard.assertValid();
-                    ReplicationCommand command = source.readCommand();
-                    spool.append(command);
-                    received.set(command.endOffset());
+                    ReplicationCommand command = source.readCommand(transactionBatcher != null);
+                    if (transactionBatcher != null)
+                        queueBudget.acquire(command);
+                    try {
+                        spool.append(command);
+                        received.set(command.endOffset());
+                        queue.put(command);
+                    } catch (Exception | Error failure) {
+                        if (transactionBatcher != null)
+                            queueBudget.release(command);
+                        throw failure;
+                    }
                     source.acknowledge(command.endOffset());
-                    queue.put(command);
                     writeHeartbeat();
                     updateChannelThrottled();
                     while (!cancelled.get() && spool.bytes() >= limits.spoolLimitBytes() * 9 / 10)
@@ -630,6 +647,10 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                     } catch (IOException error) {
                         throw new UncheckedIOException(error);
                     }
+                } catch (RespProtocolException | SyncBlockedException unsafe) {
+                    stopped.set(true);
+                    channelFailed(this, unsafe);
+                    return;
                 } catch (InterruptedException error) {
                     Thread.currentThread().interrupt();
                     return;
@@ -658,11 +679,22 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                     List<ReplicationCommand> batch = new ArrayList<>(100);
                     batch.add(first);
                     queue.drainTo(batch, 99);
+                    if (transactionBatcher != null)
+                        for (var command : batch)
+                            queueBudget.release(command);
                     applyBatch(batch);
                 }
-                if (finishing && (reader == null || reader.isDone()) && queue.isEmpty()
-                        && applied.get() >= received.get())
-                    return;
+                if (finishing && (reader == null || reader.isDone()) && queue.isEmpty()) {
+                    if (transactionBatcher != null) {
+                        try {
+                            transactionBatcher.endOfInput();
+                        } catch (IllegalStateException incomplete) {
+                            throw new SyncBlockedException(incomplete.getMessage(), "source ended inside transaction");
+                        }
+                    }
+                    if (applied.get() >= received.get())
+                        return;
+                }
                 if (!caughtUp && applied.get() == received.get() && queue.isEmpty()) {
                     caughtUp = true;
                     channelCaughtUp();
@@ -673,18 +705,66 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
 
         private void replaySpool() throws IOException {
             var batch = new ArrayList<ReplicationCommand>(100);
-            spool.forEachCommandAfter(applied.get(), command -> {
-                batch.add(command);
-                if (batch.size() == 100) {
-                    applyBatch(batch);
-                    batch.clear();
-                }
-            });
+            long[] batchBytes = {0};
+            spool.forEachCommandAfter(applied.get(), transactionBatcher == null ? Long.MAX_VALUE : 32L * 1024 * 1024,
+                    command -> {
+                        if (!batch.isEmpty() && batchBytes[0] + command.encodedBytes() > 1024 * 1024) {
+                            applyBatch(batch);
+                            batch.clear();
+                            batchBytes[0] = 0;
+                        }
+                        batch.add(command);
+                        batchBytes[0] += command.encodedBytes();
+                        if (batch.size() == 100) {
+                            applyBatch(batch);
+                            batch.clear();
+                            batchBytes[0] = 0;
+                        }
+                    });
             if (!batch.isEmpty())
                 applyBatch(batch);
         }
 
         private void applyBatch(List<ReplicationCommand> commands) throws IOException {
+            if (transactionBatcher == null) {
+                applyOrdinaryBatch(commands);
+                return;
+            }
+            final List<SourceTransactionAssembler.Unit> units;
+            try {
+                units = transactionBatcher.accept(commands, applied.get());
+            } catch (IllegalStateException invalid) {
+                throw new SyncBlockedException(invalid.getMessage(), "source transaction cannot be assembled");
+            }
+            for (var unit : units) {
+                if (!unit.transaction()) {
+                    applyOrdinaryBatch(unit.commands());
+                    continue;
+                }
+                beforeApply();
+                try {
+                    var result = transactionPlanner.plan(unit, sourceDatabase);
+                    if (result.plan().disposition() == CommandPlan.Disposition.BLOCK)
+                        throw new SyncBlockedException(result.plan().reason(), "source transaction cannot be applied");
+                    for (var command : unit.commands())
+                        throttle(command, 1);
+                    sourceDatabase = result.sourceDatabase();
+                    TargetCheckpoint checkpoint = checkpoint(unit.endOffset());
+                    if (routedTarget != null)
+                        routedTarget.apply(result.plan().commands(), checkpoint, channelFence, leaseGuard);
+                    else
+                        singleTarget.apply(result.plan().commands(), checkpoint, channelFence, leaseGuard);
+                    applied.set(unit.endOffset());
+                    caughtUp = false;
+                    updateChannelThrottled();
+                    spool.pruneCommandsThrough(applied.get());
+                } finally {
+                    afterApply();
+                }
+            }
+        }
+
+        private void applyOrdinaryBatch(List<ReplicationCommand> commands) throws IOException {
             beforeApply();
             try {
                 List<CommandPlan.PlannedCommand> planned = new ArrayList<>();
