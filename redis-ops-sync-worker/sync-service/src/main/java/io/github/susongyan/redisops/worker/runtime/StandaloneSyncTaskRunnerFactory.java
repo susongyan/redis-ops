@@ -70,6 +70,18 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
 
     @Override
     public SyncTaskRunner create(WorkerSyncTask task, boolean recovery) {
+        // Reject incompatible tasks before acquiring credentials, opening Redis or claiming a runtime.
+        if (task.commandPolicyJson() != null && !task.commandPolicyJson().isBlank()) {
+            try {
+                var policy = json.readValue(task.commandPolicyJson(),
+                        io.github.susongyan.redisops.sync.contract.SyncCommandPolicy.class);
+                if (policy == null)
+                    throw new IllegalArgumentException("missing policy");
+            } catch (java.io.IOException | IllegalArgumentException invalid) {
+                throw new SyncBlockedException("BLOCKED_UNSUPPORTED_COMMAND_POLICY",
+                        "worker cannot execute the saved command policy");
+            }
+        }
         try (WorkerRedisConnectionProfile source = profiles.get(task.sourceClusterId());
                 WorkerRedisConnectionProfile target = profiles.get(task.targetClusterId())) {
             if (source.mode() == WorkerClusterMode.CLUSTER || target.mode() == WorkerClusterMode.CLUSTER)

@@ -25,10 +25,11 @@ public interface WorkerSyncMapper {
     @Select("SELECT " + TASK_COLUMNS + " FROM sync_task WHERE id=#{taskId}")
     WorkerSyncTask findTask(@Param("taskId") long taskId);
 
-    @Select("SELECT " + TASK_COLUMNS + " FROM sync_task WHERE id IN (SELECT task_id FROM sync_runtime "
+    @Select("SELECT " + TASK_COLUMNS + " FROM sync_task capability_task WHERE id IN (SELECT task_id FROM sync_runtime "
             + "WHERE lease_owner IS NOT NULL AND lease_until<CURRENT_TIMESTAMP(3)) "
             + "AND status IN ('STARTING','FULL_SYNCING','INCR_SYNCING','CAUGHT_UP','RESUMING') "
-            + "ORDER BY (SELECT lease_until FROM sync_runtime WHERE task_id=sync_task.id),id LIMIT #{limit}")
+            + "AND " + WorkerPolicySql.SUPPORTED
+            + " ORDER BY (SELECT lease_until FROM sync_runtime WHERE task_id=capability_task.id),id LIMIT #{limit}")
     List<WorkerSyncTask> findExpiredRecoverableTasks(@Param("limit") int limit);
 
     @Select("""
@@ -50,7 +51,9 @@ public interface WorkerSyncMapper {
               fencing_generation=fencing_generation+1,heartbeat_at=CURRENT_TIMESTAMP(3),
               started_at=COALESCE(started_at,CURRENT_TIMESTAMP(3))
             WHERE task_id=#{taskId} AND (lease_owner=#{owner} OR lease_until IS NULL OR lease_until<CURRENT_TIMESTAMP(3))
-            """)
+              AND EXISTS (SELECT 1 FROM sync_task capability_task WHERE capability_task.id=sync_runtime.task_id AND
+            """
+            + WorkerPolicySql.SUPPORTED + ")")
     int claimRuntime(@Param("taskId") long taskId, @Param("runtimeId") String runtimeId,
             @Param("owner") String owner, @Param("leaseSeconds") long leaseSeconds,
             @Param("workerIp") String workerIp);

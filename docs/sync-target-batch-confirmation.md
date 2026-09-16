@@ -72,5 +72,34 @@ COPY 的目标 DB 只被解析记录，后续准入必须检查跨 DB 边界，�
 [LMOVE](https://redis.io/docs/latest/commands/lmove/)、
 [ZUNIONSTORE](https://redis.io/docs/latest/commands/zunionstore/)。首批限制在 6.2/7.x 参数范围。
 
-阶段一仍需补齐：能力协议/领取兼容性、吞吐对比和部署门禁；拓扑变更故障矩阵仍需扩展。
+阶段一仍需补齐：吞吐对比、危险命令能力展示与执行器对齐和部署门禁；拓扑变更故障矩阵仍需扩展。
 通过这些门槛后才冻结最终协议并开放阶段二命令。
+
+## 策略版本领取基线
+
+本次基线 Worker 只声明并领取 `v1`。任务控制 Job、按运行实例路由的 Job、过期租约发现和
+运行租约更新均在 MySQL 条件中检查策略版本。缺少版本、JSON null 和空字符串继续按旧版 v1
+处理；未知版本、大小写不同版本、非字符串版本和非对象策略不领取。执行器创建入口还会解析
+整个策略，在读取 Redis 凭据、连接目标或领取 runtime 前失败关闭；异常不包含原始策略文本。
+
+Worker 的 `/actuator/info` 新增只读 `syncCapabilities`：
+
+```json
+{
+  "commandPolicyVersions": ["v1"],
+  "batchConfirmationVersion": 2,
+  "policyAwareClaims": true,
+  "sourceTransactions": false
+}
+```
+
+它是部署核对信息，不是已实现的 Worker 自动注册／能力调度中心；新多 Key 策略和源事务仍未启用。
+
+升级必须分两步：先停止相关任务并把**所有旧 Worker**升级到带 `policyAwareClaims` 的基线，
+核对每个进程能力；再部署未来支持新策略的 Worker 和 Platform，并开始创建新策略任务。
+更早版本没有策略领取条件，无法通过只升级一部分进程使其自动具备此能力，禁止跨越基线混部。
+旧任务保持 v1；不能直接修改其保存策略来扩大同步范围。
+
+`WorkerPolicyMysqlTest` 使用 `SYNC_POLICY_TEST_MYSQL` 指定的一次性本地 MySQL，
+每个案例创建随机 `sync_policy_test_*` 库并只删除自身创建的库，验证实际 MyBatis SQL，
+不依赖生产/项目数据库，也不修改现有 schema。普通构建未提供环境变量时跳过。

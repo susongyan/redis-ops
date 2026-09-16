@@ -40,7 +40,8 @@ class WorkerMyBatisSyncRepositoryTest {
         configuration.addMapper(WorkerSyncMapper.class);
         String sql = configuration.getMappedStatement(WorkerSyncMapper.class.getName() + ".findExpiredRecoverableTasks")
                 .getBoundSql(java.util.Map.of("limit", 10)).getSql();
-        assertThat(sql).startsWith("SELECT id,").contains("finished_at FROM sync_task WHERE id IN (")
+        assertThat(sql).startsWith("SELECT id,").contains("finished_at FROM sync_task capability_task WHERE id IN (")
+                .contains(WorkerPolicySql.SUPPORTED)
                 .contains("lease_until<CURRENT_TIMESTAMP(3)").contains("LIMIT ?");
     }
 

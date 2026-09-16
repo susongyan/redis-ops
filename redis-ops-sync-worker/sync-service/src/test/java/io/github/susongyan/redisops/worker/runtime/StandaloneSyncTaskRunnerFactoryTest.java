@@ -12,6 +12,14 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class StandaloneSyncTaskRunnerFactoryTest {
+    @Test
+    void rejectsUnknownPolicyBeforeReadingCredentials() {
+        var task = task("{\"policyVersion\":\"v999\"}");
+        var profiles = org.mockito.Mockito.mock(WorkerRedisConnectionProfilePort.class);
+        var error = assertThrows(SyncBlockedException.class, () -> factory(profiles, 4, 10, 1).create(task, false));
+        org.junit.jupiter.api.Assertions.assertEquals("BLOCKED_UNSUPPORTED_COMMAND_POLICY", error.reason());
+        org.mockito.Mockito.verifyNoInteractions(profiles);
+    }
 
     @Test
     void rejectsInvalidFullApplyConcurrency() {
@@ -51,7 +59,7 @@ class StandaloneSyncTaskRunnerFactoryTest {
     private static StandaloneSyncTaskRunnerFactory factory(WorkerRedisConnectionProfilePort profiles,
             int concurrency, int queueCapacity, int pipelineSize) {
         return new StandaloneSyncTaskRunnerFactory(profiles, null, null, null,
-                new RedisDataEndpointResolver(1000), null,
+                new RedisDataEndpointResolver(1000), new com.fasterxml.jackson.databind.ObjectMapper(),
                 Path.of("data"), 1024, 1000, concurrency, queueCapacity, pipelineSize,
                 4 * 1024 * 1024L, 2000, 1000);
     }
@@ -62,10 +70,13 @@ class StandaloneSyncTaskRunnerFactoryTest {
     }
 
     private static WorkerSyncTask task() {
+        return task("{}");
+    }
+    private static WorkerSyncTask task(String policy) {
         Instant now = Instant.now();
         return new WorkerSyncTask(1L, "SYNC-1", null, 1, 2, "MIGRATION", "FULL_AND_INCREMENTAL",
                 SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0,
-                "[\"*\"]", "[]", "{}", 50_000, 100_000_000, 1024 * 1024, 4, 8, "START", true, "test",
+                "[\"*\"]", "[]", policy, 50_000, 100_000_000, 1024 * 1024, 4, 8, "START", true, "test",
                 null, "epoch", null, null, 0, now, now, null);
     }
 }

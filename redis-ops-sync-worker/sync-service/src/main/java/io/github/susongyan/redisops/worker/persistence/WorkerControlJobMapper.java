@@ -9,20 +9,23 @@ interface WorkerControlJobMapper {
             UPDATE async_job SET status='RUNNING',lease_owner=#{owner},
               lease_until=DATE_ADD(CURRENT_TIMESTAMP(3),INTERVAL #{leaseSeconds} SECOND),attempts=attempts+1
             WHERE job_type=#{type} AND status IN ('PENDING','RETRY','RUNNING') AND next_run_at<=CURRENT_TIMESTAMP(3)
-              AND (lease_until IS NULL OR lease_until<CURRENT_TIMESTAMP(3)) ORDER BY id LIMIT 1
-            """)
+              AND (lease_until IS NULL OR lease_until<CURRENT_TIMESTAMP(3))
+              AND EXISTS (SELECT 1 FROM sync_task capability_task WHERE capability_task.id=async_job.biz_id AND
+            """ + WorkerPolicySql.SUPPORTED + ") ORDER BY id LIMIT 1")
     int claim(@Param("type") String type, @Param("owner") String owner, @Param("leaseSeconds") long leaseSeconds);
 
     @Update("""
             UPDATE async_job SET status='RUNNING',lease_owner=#{owner},
               lease_until=DATE_ADD(CURRENT_TIMESTAMP(3),INTERVAL #{leaseSeconds} SECOND),attempts=attempts+1
             WHERE id=(SELECT candidate.id FROM (SELECT j.id FROM async_job j LEFT JOIN sync_runtime r ON r.task_id=j.biz_id
+              JOIN sync_task capability_task ON capability_task.id=j.biz_id
               WHERE j.job_type=#{type} AND j.status IN ('PENDING','RETRY') AND j.next_run_at<=CURRENT_TIMESTAMP(3)
                 AND (j.lease_until IS NULL OR j.lease_until<CURRENT_TIMESTAMP(3))
                 AND (r.lease_owner=#{runtimeOwner} OR (#{allowExpiredRuntime}=TRUE AND
                   (r.task_id IS NULL OR r.lease_owner IS NULL OR r.lease_until<CURRENT_TIMESTAMP(3))))
-              ORDER BY j.id LIMIT 1) candidate)
-            """)
+              AND
+            """
+            + WorkerPolicySql.SUPPORTED + " ORDER BY j.id LIMIT 1) candidate)")
     int claimRouted(@Param("type") String type, @Param("owner") String owner,
             @Param("runtimeOwner") String runtimeOwner, @Param("leaseSeconds") long leaseSeconds,
             @Param("allowExpiredRuntime") boolean allowExpiredRuntime);
