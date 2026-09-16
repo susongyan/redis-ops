@@ -19,6 +19,8 @@ public record TargetCheckpoint(String epoch, long generation, String replication
     }
 
     static TargetCheckpoint decode(byte[] value) {
+        if (PendingTargetBatch.isPending(value))
+            throw PendingTargetBatch.unresolved();
         try {
             String[] parts = new String(value, StandardCharsets.US_ASCII).split("\\t", -1);
             if (parts.length != 5 && parts.length != 6)

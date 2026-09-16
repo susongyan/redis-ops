@@ -297,6 +297,12 @@ public final class TargetCommandSession implements AutoCloseable {
     private TargetCheckpoint apply(List<CommandPlan.PlannedCommand> commands, TargetCheckpoint next,
             TargetFence expectedFence, LeaseGuard leaseGuard, byte[] operationFenceKey,
             byte[] operationCheckpointKey) throws IOException {
+        for (var planned : commands) {
+            String name = new String(planned.arguments().get(0), StandardCharsets.US_ASCII).toUpperCase(Locale.ROOT);
+            if (io.github.susongyan.redisops.sync.contract.SyncCommandCapabilities.destructive(name))
+                throw new SyncBlockedException("BLOCKED_DESTRUCTIVE_BATCH_CONFIRMATION",
+                        "database-wide deletion would erase the batch confirmation state");
+        }
         for (int attempt = 0; attempt < 20; attempt++) {
             leaseGuard.assertValid();
             expectOk(command(bytes("WATCH"), operationFenceKey, operationCheckpointKey), "WATCH");
@@ -329,17 +335,52 @@ public final class TargetCommandSession implements AutoCloseable {
                     commands = List.of();
                 }
             }
+            if (commands.isEmpty()) {
+                leaseGuard.assertValid();
+                expectOk(command("MULTI"), "MULTI");
+                expectQueued(command(bytes("SET"), operationCheckpointKey, valueToWrite.encode()));
+                leaseGuard.assertValid();
+                RespValue result = command("EXEC");
+                if (result == RespValue.NullValue.INSTANCE)
+                    continue;
+                assertTransaction(result, "target cursor transaction");
+                return valueToWrite;
+            }
+            // Persist ambiguity BEFORE sending effects. Old workers cannot decode this format either.
+            byte[] pending = PendingTargetBatch.encode(current.orElse(null), valueToWrite);
             leaseGuard.assertValid();
             expectOk(command("MULTI"), "MULTI");
-            for (CommandPlan.PlannedCommand planned : commands)
-                expectQueued(command(planned.arguments().toArray(byte[][]::new)));
-            expectQueued(command(bytes("SET"), operationCheckpointKey, valueToWrite.encode()));
+            expectQueued(command(bytes("SET"), operationCheckpointKey, pending));
             leaseGuard.assertValid();
-            RespValue result = command("EXEC");
-            if (result == RespValue.NullValue.INSTANCE)
+            RespValue prepared = command("EXEC");
+            if (prepared == RespValue.NullValue.INSTANCE)
                 continue;
-            assertTransaction(result, "target transaction");
-            return valueToWrite;
+            assertTransaction(prepared, "target prepare transaction");
+            try {
+                watchPending(operationFenceKey, operationCheckpointKey, pending, expectedFence, leaseGuard);
+                expectOk(command("MULTI"), "MULTI");
+                for (CommandPlan.PlannedCommand planned : commands)
+                    expectQueued(command(planned.arguments().toArray(byte[][]::new)));
+                leaseGuard.assertValid();
+                RespValue applied = command("EXEC");
+                if (!(applied instanceof RespValue.Array array) || array.values().size() != commands.size())
+                    throw PendingTargetBatch.unresolved();
+                assertTransaction(applied, "target transaction");
+                // Only this live caller has inspected every reply. A restarted caller must not guess.
+                watchPending(operationFenceKey, operationCheckpointKey, pending, expectedFence, leaseGuard);
+                expectOk(command("MULTI"), "MULTI");
+                expectQueued(command(bytes("SET"), operationCheckpointKey, valueToWrite.encode()));
+                leaseGuard.assertValid();
+                RespValue confirmed = command("EXEC");
+                if (confirmed == RespValue.NullValue.INSTANCE)
+                    throw PendingTargetBatch.unresolved();
+                assertTransaction(confirmed, "target confirm transaction");
+                return valueToWrite;
+            } catch (IOException | RuntimeException error) {
+                // Never reuse a connection which may still be inside MULTI, or expose raw Redis errors.
+                close();
+                throw PendingTargetBatch.unresolved();
+            }
         }
         throw new IllegalStateException("target checkpoint transaction remained contended");
     }
@@ -351,6 +392,16 @@ public final class TargetCommandSession implements AutoCloseable {
         } catch (IOException ignored) {
             // Best effort during shutdown.
         }
+    }
+
+    private void watchPending(byte[] operationFenceKey, byte[] operationCheckpointKey, byte[] pending,
+            TargetFence expectedFence, LeaseGuard leaseGuard) throws IOException {
+        leaseGuard.assertValid();
+        expectOk(command(bytes("WATCH"), operationFenceKey, operationCheckpointKey), "WATCH");
+        assertFenceValue(command(bytes("GET"), operationFenceKey), expectedFence);
+        RespValue stored = command(bytes("GET"), operationCheckpointKey);
+        if (!(stored instanceof RespValue.Bulk bulk) || !java.util.Arrays.equals(pending, bulk.value()))
+            throw PendingTargetBatch.unresolved();
     }
 
     private void authenticate(WorkerRedisConnectionProfile profile) throws IOException {

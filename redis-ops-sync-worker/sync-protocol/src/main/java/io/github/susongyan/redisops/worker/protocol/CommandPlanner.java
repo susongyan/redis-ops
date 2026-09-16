@@ -63,15 +63,21 @@ public final class CommandPlanner {
             return CommandPlan.block("safe command splitting is disabled by task policy: " + name);
         if (name.equals("DEL") || name.equals("UNLINK"))
             return splitKeys(args);
-        if (SyncCommandCapabilities.singleKey(name))
-            return single(args);
+        if (SyncCommandCapabilities.singleKey(name)) {
+            try {
+                var description = CommandKeySemantics.describe(name, args).orElseThrow();
+                return single(args, description.keys().get(0).index());
+            } catch (IllegalArgumentException invalid) {
+                return CommandPlan.block("invalid command key arguments: " + name);
+            }
+        }
         return CommandPlan.block("unsupported replication command: " + name);
     }
 
-    private CommandPlan single(List<byte[]> args) {
-        if (args.size() < 2)
+    private CommandPlan single(List<byte[]> args, int keyIndex) {
+        if (args.size() <= keyIndex)
             return CommandPlan.block("command has no key");
-        byte[] key = args.get(1);
+        byte[] key = args.get(keyIndex);
         if (internalKey(key) && (!internalHeartbeat(key) || !java.util.Arrays.equals(key, allowedHeartbeat)))
             return CommandPlan.skip();
         if (!internalHeartbeat(key) && !filter.accepts(key))

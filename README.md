@@ -154,6 +154,7 @@ npm run build
 | 应用与集群关系 | [关联管理](docs/application-bindings.md) |
 | Key 分布及导出 | [分布分析](docs/key-distribution.md) |
 | 同步恢复与安全 | [生命周期](docs/sync-worker-lifecycle.md)、[运行手册](docs/sync-operations-runbook.md) |
+| 业务 Key 拆分与多 Key 同步（规划中） | [背景、设计与实施计划](docs/sync-business-key-migration-plan.md) |
 | 架构与约束 | [架构契约](docs/architecture-contract.md)、[ADR](docs/adr/README.md) |
 
 README 维护当前能力和入口，不重复固化最高数据库版本或完整配置清单。功能、认证、依赖和部署方式变化时同步检查本文。历史 Phase 计划仅用于追溯，不作为当前交付状态或操作指南。

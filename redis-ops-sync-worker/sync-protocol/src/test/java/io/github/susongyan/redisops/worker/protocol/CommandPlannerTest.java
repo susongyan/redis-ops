@@ -9,6 +9,15 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class CommandPlannerTest {
     @Test
+    void xgroupUsesStreamKeyRatherThanSubcommandForFilteringAndSlot() {
+        CommandPlanner planner = new CommandPlanner(new KeyFilter(List.of("order:*"), List.of()), true);
+        CommandPlan plan = planner.plan(command("XGROUP", "CREATE", "order:events", "workers", "$"));
+        assertEquals(CommandPlan.Disposition.APPLY, plan.disposition());
+        assertEquals(RedisSlot.of("order:events".getBytes(StandardCharsets.UTF_8)), plan.commands().get(0).slot());
+        assertEquals(CommandPlan.Disposition.SKIP,
+                planner.plan(command("XGROUP", "CREATE", "other:events", "workers", "$")).disposition());
+    }
+    @Test
     void blocksUnknownCommands() {
         CommandPlanner planner = new CommandPlanner(new KeyFilter(List.of("*"), List.of()), false);
         assertEquals(CommandPlan.Disposition.BLOCK, planner.plan(command("FUTURECMD", "key")).disposition());
