@@ -5,8 +5,10 @@
 
 ## 首次部署
 
-数据库升级到 V31，空库使用 sql/latest/redis-governance-init.sql。所有 Platform 连接同一
+本地身份功能从 V31 引入；部署时执行全部待应用 migration（当前到 V32），空库使用 sql/latest/redis-governance-init.sql。所有 Platform 连接同一
 MySQL，使用相同 Cookie 配置；不需要 Redis 或粘性会话。
+
+操作记录保留用户 ID，并保存动作发生时的账号、显示名快照，见[操作身份记录](operator-identity.md)。
 
 通过受保护的 Spring 外部配置提供 identity.bootstrap.username（默认 admin）、
 identity.bootstrap.password（无默认值），identity.cookie-secure 生产保持 true。

@@ -4,5 +4,7 @@ import java.util.List;
 
 public interface AuditRepository {
     void append(String operator, String action, String resourceType, String resourceId, String result);
+    void append(String operator, String action, String resourceType, String resourceId, String result,
+            String detailsJson);
     List<AuditLog> find(String operator, String resourceType, String resourceId, int limit);
 }

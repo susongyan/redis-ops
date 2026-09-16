@@ -7,8 +7,10 @@ import java.util.*;
 @Repository
 public class MyBatisSyncRepository implements SyncRepository {
     private final SyncMapper mapper;
-    public MyBatisSyncRepository(SyncMapper mapper) {
+    private final ActorSnapshots actors;
+    public MyBatisSyncRepository(SyncMapper mapper, ActorSnapshots actors) {
         this.mapper = mapper;
+        this.actors = actors;
     }
     public SyncTask saveTask(SyncTask x, String op, String message) {
         var r = SyncMapper.TaskRow.from(x);
@@ -43,6 +45,7 @@ public class MyBatisSyncRepository implements SyncRepository {
     }
     public Switchover saveSwitchover(Switchover x) {
         var r = SyncMapper.SwitchoverRow.from(x);
+        r.operatorSnapshot = actors.capture(x.operator());
         mapper.insertSwitchover(r);
         return mapper.findSwitchover(r.id);
     }
@@ -123,6 +126,7 @@ public class MyBatisSyncRepository implements SyncRepository {
         r.fromStatus = from == null ? null : from.name();
         r.toStatus = to.name();
         r.operator = op;
+        r.operatorSnapshot = actors.capture(op);
         r.message = message;
         mapper.insertEvent(r);
     }

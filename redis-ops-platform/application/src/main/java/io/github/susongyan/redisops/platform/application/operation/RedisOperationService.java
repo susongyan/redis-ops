@@ -1,4 +1,5 @@
 package io.github.susongyan.redisops.platform.application.operation;
+import io.github.susongyan.redisops.platform.application.audit.AuditDetails;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -52,7 +53,8 @@ public class RedisOperationService {
                 blockedByDefault, changeReason, operator, version, current.createdAt(), Instant.now());
         if (!repo.updateCommand(updated, version))
             throw new IllegalArgumentException("VERSION_CONFLICT");
-        audits.append(operator, "OPERATION_COMMAND_UPDATE", "OPERATION_COMMAND", Long.toString(id), "SUCCESS");
+        audits.append(operator, "OPERATION_COMMAND_UPDATE", "OPERATION_COMMAND", Long.toString(id), "SUCCESS",
+                AuditDetails.commandChange(current, updated));
         return repo.commands(true, true).stream().filter(x -> x.id().equals(id)).findFirst().orElseThrow();
     }
     public Preview preview(long clusterId, int db, String command, List<String> args) {
@@ -60,21 +62,23 @@ public class RedisOperationService {
         if (c.mode().name().equals("CLUSTER") && db != 0)
             throw new IllegalArgumentException("CLUSTER_DB_MUST_BE_ZERO");
         var d = definition(command);
+        if (c.mode().name().equals("CLUSTER") && d.keyPosition() == 0)
+            throw new IllegalArgumentException("CLUSTER_NODE_TARGET_REQUIRED");
         validate(d, args);
         validateType(clusterId, db, d, args);
         String action = d.approvalPolicy();
         return new Preview(d.commandName(), d.riskLevel(), action,
-                args.isEmpty() ? null : args.get(d.keyPosition() - 1), "READY");
+                d.keyPosition() == 0 ? null : args.get(d.keyPosition() - 1), "READY", d.id(), d.version());
     }
     @Transactional
     public RedisOperation request(long clusterId, int db, String command, List<String> args, String operator) {
         var p = preview(clusterId, db, command, args);
         var d = definition(command);
         String a = toJson(args), digest = digest(a);
-        String status = "READ".equals(d.accessMode())
+        String status = "DIRECT".equals(d.approvalPolicy())
                 ? "EXECUTING"
                 : ("APPROVAL".equals(d.approvalPolicy()) ? "PENDING_APPROVAL" : "PENDING_CONFIRMATION");
-        var x = new RedisOperation(null, "OP-" + UUID.randomUUID(), clusterId, db, d.commandName(), a, digest,
+        var x = new RedisOperation(null, "OP-" + UUID.randomUUID(), clusterId, db, d.commandName(), "[]", digest,
                 d.accessMode(), d.riskLevel(), status, json.valueToTree(p).toString(), null, operator, null, null, 0,
                 Instant.now(), Instant.now());
         x = repo.save(x);
@@ -99,8 +103,10 @@ public class RedisOperationService {
     @Transactional
     public RedisOperation execute(long id, long version, String operator, List<String> args) {
         var x = get(id);
-        if (!Set.of("APPROVED", "PENDING_CONFIRMATION", "CONFIRMED").contains(x.status()))
+        if (!Set.of("APPROVED", "CONFIRMED").contains(x.status()))
             throw new IllegalArgumentException("OPERATION_NOT_APPROVED");
+        if (x.version() != version)
+            throw new IllegalArgumentException("VERSION_CONFLICT");
         if (!digest(toJson(args)).equals(x.argumentsDigest()))
             throw new IllegalArgumentException("ARGUMENT_DIGEST_MISMATCH");
         return execute(x, operator, args);
@@ -115,7 +121,19 @@ public class RedisOperationService {
         return repo.list(page, size);
     }
     private RedisOperation execute(RedisOperation x, String operator, List<String> args) {
-        var r = redis.execute(x.clusterId(), x.databaseNo(), x.commandName(), args);
+        var d = definition(x.commandName());
+        try {
+            var saved = json.readTree(x.previewJson());
+            if (saved == null || !saved.has("definitionVersion")
+                    || saved.path("definitionVersion").asLong() != d.version()
+                    || saved.path("definitionId").asLong() != d.id())
+                throw new IllegalArgumentException("COMMAND_CHANGED_RECREATE_OPERATION");
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalArgumentException("COMMAND_CHANGED_RECREATE_OPERATION");
+        }
+        preview(x.clusterId(), x.databaseNo(), x.commandName(), args);
+        x = update(x, "EXECUTING", operator, null, null, x.version());
+        var r = redis.execute(x.clusterId(), x.databaseNo(), x.commandName(), args, d.keyPosition());
         String result;
         try {
             result = json.writeValueAsString(r);
@@ -130,43 +148,69 @@ public class RedisOperationService {
                 x.argumentsJson(), x.argumentsDigest(), x.accessMode(), x.riskLevel(), status, x.previewJson(),
                 note == null ? x.approvalNote() : note, x.operatorName(),
                 "APPROVED".equals(status) ? operator : x.approverName(), result == null ? x.resultJson() : result,
-                version, x.createdAt(), Instant.now());
+                version, x.createdAt(), Instant.now(), x.operatorSnapshot(), x.approverSnapshot(),
+                result != null ? operator : null, null);
         if (!repo.update(y, version))
             throw new IllegalArgumentException("VERSION_CONFLICT");
         return get(x.id());
     }
     private OperationCommand definition(String name) {
         return repo.command(name.toUpperCase(Locale.ROOT))
+                .filter(OperationCommand::enabled)
                 .orElseThrow(() -> new IllegalArgumentException("COMMAND_NOT_ALLOWED"));
     }
     private void validate(OperationCommand d, List<String> a) {
-        if (!"SINGLE_KEY".equals(d.routingPolicy()))
+        if (!Set.of("SINGLE_KEY", "NO_KEY").contains(d.routingPolicy()))
             throw new IllegalArgumentException("ROUTING_NOT_SUPPORTED");
-        try {
-            var fields = json.readValue(d.parameterSchemaJson(), new TypeReference<List<Map<String, Object>>>() {
-            });
-            if (a.size() != fields.size())
+        var fields = CommandCatalogService.parameters(json, d.parameterSchemaJson());
+        if (a == null || a.size() > 128 || fields.size() > 32)
+            throw new IllegalArgumentException("INVALID_ARGUMENTS");
+        boolean variadic = !fields.isEmpty() && Boolean.TRUE.equals(fields.get(fields.size() - 1).get("variadic"));
+        long required = fields.stream().filter(f -> Boolean.TRUE.equals(f.get("required"))).count();
+        if (a.size() < required || (!variadic && a.size() > fields.size()) || (fields.isEmpty() && !a.isEmpty()))
+            throw new IllegalArgumentException("INVALID_ARGUMENTS");
+        int bytes = 0;
+        for (int i = 0; i < a.size(); i++) {
+            var f = fields.get(Math.min(i, fields.size() - 1));
+            String value = a.get(i);
+            if (value == null)
                 throw new IllegalArgumentException("INVALID_ARGUMENTS");
-            for (int i = 0; i < fields.size(); i++) {
-                if (Boolean.TRUE.equals(fields.get(i).get("required")) && a.get(i).isBlank())
-                    throw new IllegalArgumentException("INVALID_ARGUMENTS");
-                if ("VALUE".equals(fields.get(i).get("type"))
-                        && a.get(i).getBytes(StandardCharsets.UTF_8).length > d.maxValueBytes())
-                    throw new IllegalArgumentException("VALUE_TOO_LARGE");
+            int length = value.getBytes(StandardCharsets.UTF_8).length;
+            bytes += length;
+            if (bytes > 1048576 || length > 1048576)
+                throw new IllegalArgumentException("ARGUMENTS_TOO_LARGE");
+            if ("VALUE".equals(f.get("type")) && length > d.maxValueBytes())
+                throw new IllegalArgumentException("VALUE_TOO_LARGE");
+            if (f.containsKey("literal") && !Objects.equals(f.get("literal"), value))
+                throw new IllegalArgumentException("ARGUMENT_LITERAL_MISMATCH");
+            try {
+                if ("INTEGER".equals(f.get("type")))
+                    Long.parseLong(value);
+                if ("DECIMAL".equals(f.get("type")) && !Double.isFinite(Double.parseDouble(value)))
+                    throw new NumberFormatException();
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("INVALID_NUMERIC_ARGUMENT");
             }
-        } catch (Exception e) {
-            if (e instanceof IllegalArgumentException x)
-                throw x;
-            throw new IllegalArgumentException("INVALID_ARGUMENT_SCHEMA");
         }
+        if (d.keyPosition() < 0 || d.keyPosition() > a.size()
+                || ("SINGLE_KEY".equals(d.routingPolicy()) && d.keyPosition() == 0))
+            throw new IllegalArgumentException("INVALID_KEY_POSITION");
     }
     private void validateType(long clusterId, int db, OperationCommand d, List<String> args) {
+        if (d.keyPosition() == 0)
+            return;
         try {
-            String observed = redis.execute(clusterId, db, "TYPE", List.of(args.get(d.keyPosition() - 1))).value();
-            if (observed == null || observed.isBlank())
-                observed = "none";
             var allowed = json.readValue(d.allowedDataTypesJson(), new TypeReference<List<String>>() {
             });
+            if (allowed.contains("key"))
+                return;
+            var typeResult = redis.execute(clusterId, db, "TYPE", List.of(args.get(d.keyPosition() - 1)));
+            if (!typeResult.success())
+                throw new IllegalArgumentException("TYPE_CHECK_FAILED");
+            String observed = typeResult.value();
+            if (observed == null || observed.isBlank())
+                observed = "none";
+
             // Missing keys follow Redis command semantics (nil/0 or create); they are
             // not a policy error. A generic KEY constraint accepts every existing type.
             if ("none".equals(observed))
@@ -194,6 +238,7 @@ public class RedisOperationService {
             throw new IllegalStateException(e);
         }
     }
-    public record Preview(String command, String riskLevel, String action, String key, String status) {
+    public record Preview(String command, String riskLevel, String action, String key, String status, Long definitionId,
+            long definitionVersion) {
     }
 }

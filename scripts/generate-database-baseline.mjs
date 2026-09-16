@@ -8,7 +8,7 @@ import {randomBytes, createHash} from 'node:crypto';
 const root=process.cwd();
 const run=mkdtempSync(join(tmpdir(),'redis-ops-ddl-'));
 const output=resolve('redis-ops-platform/sql/latest');
-const jar=resolve('redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0-SNAPSHOT.jar');
+const jar=resolve(process.env.BASELINE_PLATFORM_JAR || 'redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0-SNAPSHOT.jar');
 const password=randomBytes(24).toString('hex');
 const command=(bin,args,options={})=>{
  try{return execFileSync(bin,args,{encoding:'utf8',stdio:['pipe','pipe','pipe'],maxBuffer:32*1024*1024,...options});}
@@ -78,6 +78,9 @@ try {
   if(expected!==actual)throw Error(`Data roundtrip mismatch: ${t}`);
  }
  mkdirSync(output,{recursive:true});
+ // Check actor writes/reads on the disposable restored schema, never on the snapshot source.
+ command('javac',['-cp',classpath,'-d',run,resolve('scripts/fixtures/ActorSnapshotDatabase.java')]);
+ command('java',['-cp',`${run}:${classpath}`,'ActorSnapshotDatabase'],{env:{...process.env,BASELINE_DB_PASSWORD:password,BASELINE_JDBC_URL:`jdbc:mysql://127.0.0.1:${port}/restored?serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false`}});
  for(const p of migrations)if(!readFileSync(p).equals(migrationSources.get(p)))throw Error(`Migration changed during generation: ${p}`);
  writeFileSync(join(output,'redis-governance-init.sql'),combined);
  writeFileSync(join(output,'schema.sql'),ddl);

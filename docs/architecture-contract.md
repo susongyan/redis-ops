@@ -75,11 +75,13 @@ migration 是不可变历史；任何 schema 演进均新增版本化 migration�
 ## 5. API、事件和并发契约
 
 - 所有可重试写 API 必须要求 `Idempotency-Key`；资源更新/控制动作必须要求 `If-Match`。
-- `X-Operator` 只记录审计身份，不能替代 RBAC。RBAC 尚未实现时，不得在 API 文案中暗示权限
-  已被强制执行。
+- 操作身份来自服务端认证会话，不信任 `X-Operator`。ADMIN/OPERATOR 平台角色已实现，资源级
+  RBAC 尚未实现。按 ADR-022 保存动作发生时的账号及显示名快照；稳定主体仍用于认证与幂等。
 - API 响应有稳定 envelope 和 requestId；新增字段向后兼容，删除/语义改变必须版本化或经 ADR。
+- Console 按 ADR-023 由数据库命令目录决定名称准入，运维维护参数和审批策略；通用执行器仅保留协议、容量、超时及路由能力约束，不影响 Sync Worker 的同步命令安全策略。
 - 异步命令 payload 至少包含任务 ID、命令 ID 与非秘密参数；命令领取和执行必须幂等。
 - 事件至少可关联 taskId、clusterId、runtimeId、generation、操作人和发生时间；审计为追加写。
+- 按 ADR-024，审计详情采用显式允许字段的操作时快照，只保存配置差异；禁止自动序列化完整业务请求，历史空详情不回填。
 
 ## 6. 秘密、隐私与风险动作契约
 

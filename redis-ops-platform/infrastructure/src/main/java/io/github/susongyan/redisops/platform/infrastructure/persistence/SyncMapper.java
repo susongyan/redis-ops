@@ -15,7 +15,7 @@ public interface SyncMapper {
             "spool_limit_bytes,full_apply_concurrency,full_apply_pipeline_size,desired_action,write_fenced,"
             + "write_fence_note,blocked_reason,full_sync_epoch," +
             "last_rpo_seconds,last_error,version,created_at,updated_at,finished_at";
-    String SWITCH_COLUMNS = "id,relation_id,old_primary_cluster_id,old_standby_cluster_id,stopped_task_id,reverse_task_id,status,operator_id AS operator,source_write_fenced,source_fence_note,last_error,version,created_at,updated_at,confirmed_at";
+    String SWITCH_COLUMNS = "id,relation_id,old_primary_cluster_id,old_standby_cluster_id,stopped_task_id,reverse_task_id,status,operator_id AS operator,source_write_fenced,source_fence_note,last_error,version,created_at,updated_at,confirmed_at,CAST(operator_snapshot AS CHAR) operatorSnapshot";
     @Insert("""
             INSERT INTO sync_task(task_no,relation_id,source_cluster_id,target_cluster_id,purpose,sync_mode,status,
               tool_type,source_db,target_db,include_patterns_json,exclude_patterns_json,command_policy_json,rate_limit_ops,
@@ -49,10 +49,10 @@ public interface SyncMapper {
             WHERE id=#{row.id} AND version=#{version}
             """)
     int updateTask(@Param("row") TaskRow row, @Param("version") long version);
-    @Insert("INSERT INTO sync_task_event(task_id,from_status,to_status,operator_id,message) VALUES(#{taskId},#{fromStatus},#{toStatus},#{operator},#{message})")
+    @Insert("INSERT INTO sync_task_event(task_id,from_status,to_status,operator_id,message,operator_snapshot) VALUES(#{taskId},#{fromStatus},#{toStatus},#{operator},#{message},#{operatorSnapshot})")
     void insertEvent(EventRow row);
     @Select("""
-            SELECT id,task_id,from_status,to_status,operator_id AS operator,message,created_at
+            SELECT id,task_id,from_status,to_status,operator_id AS operator,message,created_at,CAST(operator_snapshot AS CHAR) operatorSnapshot
             FROM sync_task_event WHERE task_id=#{taskId}
             ORDER BY created_at DESC,id DESC LIMIT #{limit} OFFSET #{offset}
             """)
@@ -62,7 +62,7 @@ public interface SyncMapper {
     long countEvents(long taskId);
     @Select("SELECT COUNT(*) FROM sync_task WHERE relation_id=#{relationId} AND status NOT IN ('FINISHED','CANCELLED','FAILED')")
     long countActiveTasks(long relationId);
-    @Insert("INSERT INTO switchover(relation_id,old_primary_cluster_id,old_standby_cluster_id,stopped_task_id,reverse_task_id,status,operator_id,source_write_fenced,source_fence_note,last_error,confirmed_at) VALUES(#{relationId},#{oldPrimaryClusterId},#{oldStandbyClusterId},#{stoppedTaskId},#{reverseTaskId},#{status},#{operator},#{sourceWriteFenced},#{sourceFenceNote},#{lastError},#{confirmedAt})")
+    @Insert("INSERT INTO switchover(relation_id,old_primary_cluster_id,old_standby_cluster_id,stopped_task_id,reverse_task_id,status,operator_id,source_write_fenced,source_fence_note,last_error,confirmed_at,operator_snapshot) VALUES(#{relationId},#{oldPrimaryClusterId},#{oldStandbyClusterId},#{stoppedTaskId},#{reverseTaskId},#{status},#{operator},#{sourceWriteFenced},#{sourceFenceNote},#{lastError},#{confirmedAt},#{operatorSnapshot})")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     void insertSwitchover(SwitchoverRow row);
     @Select("SELECT " + SWITCH_COLUMNS + " FROM switchover WHERE id=#{id}")
@@ -267,13 +267,13 @@ public interface SyncMapper {
     }
     class EventRow {
         public long taskId;
-        public String fromStatus, toStatus, operator, message;
+        public String fromStatus, toStatus, operator, message, operatorSnapshot;
     }
     class SwitchoverRow {
         public Long id, reverseTaskId;
         public long relationId, oldPrimaryClusterId, oldStandbyClusterId, stoppedTaskId;
         public boolean sourceWriteFenced;
-        public String status, operator, sourceFenceNote, lastError;
+        public String status, operator, operatorSnapshot, sourceFenceNote, lastError;
         public java.time.Instant confirmedAt;
         static SwitchoverRow from(Switchover x) {
             var r = new SwitchoverRow();

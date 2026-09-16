@@ -57,16 +57,21 @@ public interface AssetMapper {
     @Update("UPDATE discovery_run SET status='RUNNING',finished_at=NULL,node_count=NULL,error_message=NULL WHERE id=#{id}")
     void restartDiscovery(long id);
 
-    @Insert("INSERT INTO audit_log(operator_id,action,resource_type,resource_id,result) VALUES(#{operator},#{action},#{resourceType},#{resourceId},#{result})")
+    @Insert("INSERT INTO audit_log(operator_id,action,resource_type,resource_id,result,operator_snapshot) VALUES(#{operator},#{action},#{resourceType},#{resourceId},#{result},#{operatorSnapshot})")
     void appendAudit(@Param("operator") String operator, @Param("action") String action,
             @Param("resourceType") String resourceType, @Param("resourceId") String resourceId,
-            @Param("result") String result);
+            @Param("result") String result, @Param("operatorSnapshot") String operatorSnapshot);
+    @Insert("INSERT INTO audit_log(operator_id,action,resource_type,resource_id,result,operator_snapshot,details_json) VALUES(#{operator},#{action},#{resourceType},#{resourceId},#{result},#{operatorSnapshot},#{detailsJson})")
+    void appendAuditDetails(@Param("operator") String operator, @Param("action") String action,
+            @Param("resourceType") String resourceType, @Param("resourceId") String resourceId,
+            @Param("result") String result, @Param("operatorSnapshot") String operatorSnapshot,
+            @Param("detailsJson") String detailsJson);
     @Select("""
             <script>
-            SELECT id,operator_id AS operator,action,resource_type,resource_id,result,request_id,request_digest,created_at
+            SELECT id,operator_id AS operator,action,resource_type,resource_id,result,request_id,request_digest,created_at,CAST(operator_snapshot AS CHAR) operatorSnapshot,CAST(details_json AS CHAR) detailsJson
             FROM audit_log
             WHERE 1=1
-            <if test='operator != null'> AND operator_id=#{operator}</if>
+            <if test='operator != null'> AND (operator_id=#{operator} OR JSON_UNQUOTE(JSON_EXTRACT(operator_snapshot, '$.login'))=#{operator} OR JSON_UNQUOTE(JSON_EXTRACT(operator_snapshot, '$.displayName'))=#{operator})</if>
             <if test='resourceType != null'> AND resource_type=#{resourceType}</if>
             <if test='resourceId != null'> AND resource_id=#{resourceId}</if>
             ORDER BY id DESC LIMIT #{limit}

@@ -1,3 +1,4 @@
+import { actorLabel } from '../actor.js'
 import { useEffect, useRef, useState } from 'react'
 import {
   Alert,
@@ -1324,7 +1325,7 @@ export default function SyncTasksPage() {
             { title: '时间', dataIndex: 'createdAt' },
             { title: '原状态', dataIndex: 'fromStatus' },
             { title: '新状态', dataIndex: 'toStatus' },
-            { title: '操作人', dataIndex: 'operator' },
+            { title: '操作人', dataIndex:'operator',render:(value,row)=>actorLabel(value,row.operatorSnapshot) },
             { title: '说明', dataIndex: 'message' },
           ]}
         />

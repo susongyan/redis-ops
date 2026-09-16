@@ -1,4 +1,6 @@
 package io.github.susongyan.redisops.platform.application.asset;
+import io.github.susongyan.redisops.platform.application.audit.AuditDetails;
+import java.util.Map;
 
 import io.github.susongyan.redisops.platform.common.BusinessException;
 import io.github.susongyan.redisops.platform.common.PageResult;
@@ -37,7 +39,8 @@ public class ClusterService {
         validateAuthentication(command, Optional.empty(), true);
         RedisCluster saved = clusters.save(command.toEntity(null, 0));
         applyAuthentication(saved.id(), command, Optional.empty(), operator);
-        audits.append(operator, "CLUSTER_CREATE", "REDIS_CLUSTER", saved.id().toString(), "SUCCESS");
+        audits.append(operator, "CLUSTER_CREATE", "REDIS_CLUSTER", saved.id().toString(), "SUCCESS",
+                AuditDetails.change("新增集群：" + saved.name(), Map.of(), AuditDetails.cluster(saved), null));
         return saved;
     }
 
@@ -56,7 +59,7 @@ public class ClusterService {
 
     @Transactional
     public RedisCluster update(long id, long expectedVersion, UpsertCluster command, String operator) {
-        get(id);
+        var previous = get(id);
         validateEndpoint(command);
         validateIdc(command.idcId());
         Optional<RedisClusterSecret> currentSecret = secrets.findByClusterId(id);
@@ -65,17 +68,22 @@ public class ClusterService {
         if (!clusters.update(replacement, expectedVersion))
             throw new BusinessException("CONCURRENT_MODIFICATION", "cluster was modified, reload and retry");
         applyAuthentication(id, command, currentSecret, operator);
-        audits.append(operator, "CLUSTER_UPDATE", "REDIS_CLUSTER", Long.toString(id), "SUCCESS");
+        var details = AuditDetails.cluster(replacement);
+        if (!java.util.Objects.equals(previous.endpoint(), replacement.endpoint()))
+            details.put("连接地址", "已变更（内容不记录）");
+        audits.append(operator, "CLUSTER_UPDATE", "REDIS_CLUSTER", Long.toString(id), "SUCCESS",
+                AuditDetails.change("修改集群：" + replacement.name(), AuditDetails.cluster(previous), details, null));
         return get(id);
     }
 
     @Transactional
     public void delete(long id, long expectedVersion, String operator) {
-        get(id);
+        var previous = get(id);
         if (!clusters.softDelete(id, expectedVersion))
             throw new BusinessException("CONCURRENT_MODIFICATION", "cluster was modified, reload and retry");
         secrets.deleteByClusterId(id);
-        audits.append(operator, "CLUSTER_DELETE", "REDIS_CLUSTER", Long.toString(id), "SUCCESS");
+        audits.append(operator, "CLUSTER_DELETE", "REDIS_CLUSTER", Long.toString(id), "SUCCESS",
+                AuditDetails.change("删除集群：" + previous.name(), AuditDetails.cluster(previous), Map.of(), null));
     }
 
     private void validateIdc(Long idcId) {

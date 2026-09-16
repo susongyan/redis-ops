@@ -22,7 +22,8 @@ class SyncWorkerAssignmentTest {
     @Test
     void emptyBatchDoesNotIssueInvalidSql() {
         SyncMapper mapper = mock(SyncMapper.class);
-        assertTrue(new MyBatisSyncRepository(mapper).findWorkerAssignments(List.of()).isEmpty());
+        assertTrue(new MyBatisSyncRepository(mapper, org.mockito.Mockito.mock(ActorSnapshots.class))
+                .findWorkerAssignments(List.of()).isEmpty());
         verifyNoInteractions(mapper);
     }
 }

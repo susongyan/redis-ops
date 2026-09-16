@@ -127,6 +127,8 @@ export const api={
   ,pauseCleanupGovernance:(id,version)=>request(`/api/v1/cleanup-governance-tasks/${id}/pause`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
   ,cancelCleanupGovernance:(id,version)=>request(`/api/v1/cleanup-governance-tasks/${id}/cancel`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
   ,operationCommands:(writes=false,includeDisabled=false)=>request(`/api/v1/operation-commands?writes=${writes}&includeDisabled=${includeDisabled}`)
+  ,createOperationCommand:data=>request('/api/v1/operation-commands',{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:JSON.stringify(data)})
+  ,defineOperationCommand:(id,version,data)=>request(`/api/v1/operation-commands/${id}/definition`,{method:'PUT',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:JSON.stringify(data)})
   ,updateOperationCommand:(id,version,data)=>request(`/api/v1/operation-commands/${id}`,{method:'PUT',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:JSON.stringify(data)})
   ,analysisAgents:(includeDisabled=false)=>request(`/api/v1/analysis-agents?includeDisabled=${includeDisabled}`)
   ,createAnalysisAgent:data=>request('/api/v1/analysis-agents',{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:JSON.stringify(data)})

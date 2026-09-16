@@ -1,5 +1,11 @@
 # Architecture Decision Records
 
+- [ADR-024 审计变更详情](ADR-024-audit-change-details.md)
+
+- [ADR-023 数据库命令准入与通用执行](ADR-023-database-command-admission.md)
+
+- [ADR-022 操作身份快照](022-actor-snapshots.md)
+
 ADR 记录会长期影响代码结构、运行方式、安全边界或迁移成本的决策。每个 ADR 一经接受不修改
 历史结论；若需要改变，新增一个 superseding ADR，并在旧记录中链接。
 

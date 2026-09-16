@@ -16,16 +16,17 @@ public interface AlertMapper {
     @Insert("INSERT INTO alert_event(rule_id,resource_type,resource_id,status,severity,title,evidence_json) VALUES(#{ruleId},#{resourceType},#{resourceId},'OPEN',#{severity},#{title},CAST(#{evidenceJson} AS JSON)) ON DUPLICATE KEY UPDATE status='OPEN',severity=VALUES(severity),title=VALUES(title),evidence_json=VALUES(evidence_json),last_seen_at=CURRENT_TIMESTAMP(3),resolved_at=NULL,version=version+1")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     void upsert(EventRow r);
-    @Select("SELECT id,rule_id ruleId,resource_type resourceType,resource_id resourceId,status,severity,title,CAST(evidence_json AS CHAR) evidenceJson,first_seen_at firstSeenAt,last_seen_at lastSeenAt,acknowledged_at acknowledgedAt,acknowledged_by acknowledgedBy,resolved_at resolvedAt,silence_until silenceUntil,version FROM alert_event WHERE rule_id=#{ruleId} AND resource_type=#{resourceType} AND resource_id=#{resourceId}")
+    @Select("SELECT id,rule_id ruleId,resource_type resourceType,resource_id resourceId,status,severity,title,CAST(evidence_json AS CHAR) evidenceJson,first_seen_at firstSeenAt,last_seen_at lastSeenAt,acknowledged_at acknowledgedAt,acknowledged_by acknowledgedBy,resolved_at resolvedAt,silence_until silenceUntil,version,CAST(acknowledged_by_snapshot AS CHAR) acknowledgedBySnapshot FROM alert_event WHERE rule_id=#{ruleId} AND resource_type=#{resourceType} AND resource_id=#{resourceId}")
     AlertEvent eventByKey(EventRow r);
-    @Select("SELECT id,rule_id ruleId,resource_type resourceType,resource_id resourceId,status,severity,title,CAST(evidence_json AS CHAR) evidenceJson,first_seen_at firstSeenAt,last_seen_at lastSeenAt,acknowledged_at acknowledgedAt,acknowledged_by acknowledgedBy,resolved_at resolvedAt,silence_until silenceUntil,version FROM alert_event WHERE id=#{id}")
+    @Select("SELECT id,rule_id ruleId,resource_type resourceType,resource_id resourceId,status,severity,title,CAST(evidence_json AS CHAR) evidenceJson,first_seen_at firstSeenAt,last_seen_at lastSeenAt,acknowledged_at acknowledgedAt,acknowledged_by acknowledgedBy,resolved_at resolvedAt,silence_until silenceUntil,version,CAST(acknowledged_by_snapshot AS CHAR) acknowledgedBySnapshot FROM alert_event WHERE id=#{id}")
     AlertEvent event(long id);
-    @Select("SELECT id,rule_id ruleId,resource_type resourceType,resource_id resourceId,status,severity,title,CAST(evidence_json AS CHAR) evidenceJson,first_seen_at firstSeenAt,last_seen_at lastSeenAt,acknowledged_at acknowledgedAt,acknowledged_by acknowledgedBy,resolved_at resolvedAt,silence_until silenceUntil,version FROM alert_event WHERE (#{status} IS NULL OR status=#{status}) ORDER BY last_seen_at DESC LIMIT #{size} OFFSET #{offset}")
+    @Select("SELECT id,rule_id ruleId,resource_type resourceType,resource_id resourceId,status,severity,title,CAST(evidence_json AS CHAR) evidenceJson,first_seen_at firstSeenAt,last_seen_at lastSeenAt,acknowledged_at acknowledgedAt,acknowledged_by acknowledgedBy,resolved_at resolvedAt,silence_until silenceUntil,version,CAST(acknowledged_by_snapshot AS CHAR) acknowledgedBySnapshot FROM alert_event WHERE (#{status} IS NULL OR status=#{status}) ORDER BY last_seen_at DESC LIMIT #{size} OFFSET #{offset}")
     List<AlertEvent> events(@Param("status") String status, @Param("offset") int offset, @Param("size") int size);
     @Select("SELECT COUNT(*) FROM alert_event WHERE (#{status} IS NULL OR status=#{status})")
     long count(@Param("status") String status);
-    @Update("UPDATE alert_event SET status='ACKNOWLEDGED',acknowledged_at=CURRENT_TIMESTAMP(3),acknowledged_by=#{operator},version=version+1 WHERE id=#{id} AND version=#{version} AND status='OPEN'")
-    int acknowledge(@Param("id") long id, @Param("operator") String operator, @Param("version") long version);
+    @Update("UPDATE alert_event SET status='ACKNOWLEDGED',acknowledged_at=CURRENT_TIMESTAMP(3),acknowledged_by=#{operator},acknowledged_by_snapshot=#{snapshot},version=version+1 WHERE id=#{id} AND version=#{version} AND status='OPEN'")
+    int acknowledge(@Param("id") long id, @Param("operator") String operator, @Param("version") long version,
+            @Param("snapshot") String snapshot);
     @Update("UPDATE alert_event SET status='RESOLVED',resolved_at=CURRENT_TIMESTAMP(3),version=version+1 WHERE id=#{id} AND version=#{version} AND status!='RESOLVED'")
     int resolve(@Param("id") long id, @Param("version") long version);
     @Update("UPDATE alert_event SET silence_until=#{until},version=version+1 WHERE id=#{id} AND version=#{version}")

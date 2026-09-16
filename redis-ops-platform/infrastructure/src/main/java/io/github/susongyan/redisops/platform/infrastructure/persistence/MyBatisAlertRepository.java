@@ -6,8 +6,10 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class MyBatisAlertRepository implements AlertRepository {
     private final AlertMapper m;
-    public MyBatisAlertRepository(AlertMapper m) {
+    private final ActorSnapshots actors;
+    public MyBatisAlertRepository(AlertMapper m, ActorSnapshots actors) {
         this.m = m;
+        this.actors = actors;
     }
     public AlertRule saveRule(AlertRule r) {
         AlertMapper.RuleRow x = new AlertMapper.RuleRow();
@@ -49,7 +51,7 @@ public class MyBatisAlertRepository implements AlertRepository {
         return new PageResult<>(m.events(x, (p - 1) * z, z), m.count(x), p, z);
     }
     public boolean acknowledge(long id, String o, long v) {
-        return m.acknowledge(id, o, v) == 1;
+        return m.acknowledge(id, o, v, actors.capture(o)) == 1;
     }
     public boolean resolve(long id, long v) {
         return m.resolve(id, v) == 1;

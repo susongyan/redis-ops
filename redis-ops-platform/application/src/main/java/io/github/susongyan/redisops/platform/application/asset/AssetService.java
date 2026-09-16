@@ -1,4 +1,6 @@
 package io.github.susongyan.redisops.platform.application.asset;
+import io.github.susongyan.redisops.platform.application.audit.AuditDetails;
+import java.util.Map;
 
 import io.github.susongyan.redisops.platform.common.BusinessException;
 import io.github.susongyan.redisops.platform.domain.asset.*;
@@ -35,7 +37,8 @@ public class AssetService {
             throw new BusinessException("INVALID_ARGUMENT", "code and name are required");
         ManagedApplication saved = assets.saveApplication(
                 new ManagedApplication(null, code, name, owner, businessLine, "ACTIVE", 0));
-        audits.append(operator, "APPLICATION_CREATE", "APPLICATION", saved.id().toString(), "SUCCESS");
+        audits.append(operator, "APPLICATION_CREATE", "APPLICATION", saved.id().toString(), "SUCCESS",
+                AuditDetails.change("新增应用：" + saved.name(), Map.of(), AuditDetails.application(saved), null));
         return saved;
     }
 
@@ -48,20 +51,23 @@ public class AssetService {
     @Transactional
     public ManagedApplication updateApplication(long id, long version, String code, String name, String owner,
             String businessLine, String status, String operator) {
-        getApplication(id);
+        var previous = getApplication(id);
         ManagedApplication replacement = new ManagedApplication(id, code, name, owner, businessLine,
                 status == null ? "ACTIVE" : status, version);
         if (!assets.updateApplication(replacement, version))
             throw concurrent("application");
-        audits.append(operator, "APPLICATION_UPDATE", "APPLICATION", Long.toString(id), "SUCCESS");
+        audits.append(operator, "APPLICATION_UPDATE", "APPLICATION", Long.toString(id), "SUCCESS",
+                AuditDetails.change("修改应用：" + replacement.name(), AuditDetails.application(previous),
+                        AuditDetails.application(replacement), null));
         return getApplication(id);
     }
     @Transactional
     public void deleteApplication(long id, long version, String operator) {
-        getApplication(id);
+        var previous = getApplication(id);
         if (!assets.deleteApplication(id, version))
             throw concurrent("application");
-        audits.append(operator, "APPLICATION_DELETE", "APPLICATION", Long.toString(id), "SUCCESS");
+        audits.append(operator, "APPLICATION_DELETE", "APPLICATION", Long.toString(id), "SUCCESS",
+                AuditDetails.change("删除应用：" + previous.name(), AuditDetails.application(previous), Map.of(), null));
     }
     public List<ApplicationBinding> applicationBindings(long id) {
         getApplication(id);
@@ -70,6 +76,8 @@ public class AssetService {
 
     @Transactional
     public void bind(long applicationId, ApplicationBinding binding, String operator) {
+        var previous = assets.findBindingsByApplication(applicationId).stream()
+                .filter(x -> x.clusterId() == binding.clusterId()).findFirst().orElse(null);
         assets.findApplication(applicationId)
                 .orElseThrow(() -> BusinessException.notFound("application", applicationId));
         clusters.findById(binding.clusterId())
@@ -85,13 +93,29 @@ public class AssetService {
         }
         assets.bind(new ApplicationBinding(applicationId, binding.clusterId(), binding.clientType(),
                 binding.clientVersion(), poolConfig));
-        audits.append(operator, "APPLICATION_BIND", "REDIS_CLUSTER", Long.toString(binding.clusterId()), "SUCCESS");
+        var next = bindingDetails(binding);
+        if (previous == null || !java.util.Objects.equals(previous.poolConfig(), poolConfig))
+            next.put("连接池配置", "已配置或变更（内容不记录）");
+        audits.append(operator, "APPLICATION_BIND", "REDIS_CLUSTER", Long.toString(binding.clusterId()), "SUCCESS",
+                AuditDetails.change("应用关联集群：应用 " + applicationId + " / 集群 " + binding.clusterId(),
+                        bindingDetails(previous), next, null));
     }
 
     @Transactional
     public void unbind(long applicationId, long clusterId, String operator) {
+        var previous = assets.findBindingsByApplication(applicationId).stream()
+                .filter(x -> x.clusterId() == clusterId).findFirst().orElse(null);
         assets.unbind(applicationId, clusterId);
-        audits.append(operator, "APPLICATION_UNBIND", "REDIS_CLUSTER", Long.toString(clusterId), "SUCCESS");
+        audits.append(operator, "APPLICATION_UNBIND", "REDIS_CLUSTER", Long.toString(clusterId), "SUCCESS",
+                AuditDetails.change("解除关联：应用 " + applicationId + " / 集群 " + clusterId,
+                        bindingDetails(previous), Map.of(), null));
+    }
+
+    private static Map<String, Object> bindingDetails(ApplicationBinding b) {
+        return b == null
+                ? Map.of()
+                : AuditDetails.fields("应用 ID", b.applicationId(), "集群 ID", b.clusterId(),
+                        "客户端类型", b.clientType(), "客户端版本", b.clientVersion());
     }
 
     public List<ApplicationBinding> bindings(long clusterId) {

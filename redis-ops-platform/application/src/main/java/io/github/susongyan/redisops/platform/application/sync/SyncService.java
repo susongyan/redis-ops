@@ -1,4 +1,5 @@
 package io.github.susongyan.redisops.platform.application.sync;
+import io.github.susongyan.redisops.platform.application.audit.AuditDetails;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -96,7 +97,8 @@ public class SyncService {
                 toJson(actualIncludes), toJson(actualExcludes), toJson(commandPolicy), ops, bandwidth, spool,
                 concurrency, pipelineSize);
         var saved = sync.saveTask(task, operator, "native Java sync task created");
-        audit(operator, "SYNC_TASK_CREATE", "SYNC_TASK", saved.id());
+        audits.append(operator, "SYNC_TASK_CREATE", "SYNC_TASK", saved.id().toString(), "SUCCESS",
+                AuditDetails.change("创建同步任务：" + saved.taskNo(), Map.of(), AuditDetails.sync(saved), null));
         return saved;
     }
 
@@ -454,9 +456,12 @@ public class SyncService {
     }
 
     private void update(SyncTask task, long version, String operator, String message) {
+        var previous = get(task.id());
         if (!sync.updateTask(task, version, operator, message))
             concurrent();
-        audit(operator, "SYNC_TASK_" + task.status().name(), "SYNC_TASK", task.id());
+        audits.append(operator, "SYNC_TASK_" + task.status().name(), "SYNC_TASK", task.id().toString(), "SUCCESS",
+                AuditDetails.change("同步任务：" + task.taskNo(), AuditDetails.sync(previous), AuditDetails.sync(task),
+                        null));
     }
 
     private void enqueue(SyncAction action, long taskId, String requestKey, Object payload) {

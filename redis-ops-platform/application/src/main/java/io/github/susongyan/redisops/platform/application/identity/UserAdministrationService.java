@@ -1,4 +1,6 @@
 package io.github.susongyan.redisops.platform.application.identity;
+import io.github.susongyan.redisops.platform.application.audit.AuditDetails;
+import java.util.Map;
 
 import io.github.susongyan.redisops.platform.domain.identity.*;
 import io.github.susongyan.redisops.platform.domain.audit.AuditRepository;
@@ -48,7 +50,8 @@ public class UserAdministrationService {
         return idem.execute("user:" + actor, key, "USER_CREATE", java.util.List.of(normalized, displayName, role),
                 () -> {
                     var created = users.createLocal(normalized, displayName, passwords.hash(password), role);
-                    audit.append("user:" + actor, "USER_CREATED", "USER", Long.toString(created.id()), "SUCCESS");
+                    audit.append("user:" + actor, "USER_CREATED", "USER", Long.toString(created.id()), "SUCCESS",
+                            AuditDetails.change("新增用户：" + normalized, Map.of(), userDetails(created), null));
                     return created;
                 }, u -> Long.toString(u.id()), id -> users.get(Long.parseLong(id)));
     }
@@ -62,8 +65,11 @@ public class UserAdministrationService {
             throw new IllegalArgumentException("INVALID_USER_STATE");
         return idem.execute("user:" + actor, key, "USER_UPDATE",
                 java.util.List.of(id, version, displayName, status, role), () -> {
+                    var previous = users.get(id);
                     users.update(id, displayName, status, role, version);
-                    audit.append("user:" + actor, "USER_UPDATED", "USER", Long.toString(id), "SUCCESS");
+                    audit.append("user:" + actor, "USER_UPDATED", "USER", Long.toString(id), "SUCCESS",
+                            AuditDetails.change("修改用户：" + displayName, userDetails(previous),
+                                    userDetails(users.get(id)), null));
                     return users.get(id);
                 }, u -> Long.toString(u.id()), value -> users.get(Long.parseLong(value)));
     }
@@ -77,5 +83,8 @@ public class UserAdministrationService {
             audit.append("user:" + actor, "PASSWORD_RESET", "USER", Long.toString(id), "SUCCESS");
             return users.get(id);
         }, u -> Long.toString(u.id()), value -> users.get(Long.parseLong(value)));
+    }
+    private static Map<String, Object> userDetails(PlatformUser user) {
+        return AuditDetails.fields("显示名称", user.displayName(), "角色", user.role(), "状态", user.status());
     }
 }

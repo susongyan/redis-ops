@@ -1,6 +1,7 @@
 import {useCallback,useEffect,useState} from 'react'
 import {Button,Card,Form,Input,InputNumber,Modal,Select,Space,Table,Tag,message,Switch} from 'antd'
 import {api} from '../api.js'
+import {actorLabel} from '../actor.js'
 
 const statusColor={OPEN:'red',ACKNOWLEDGED:'gold',RESOLVED:'green'}
 export default function AlertsPage(){
@@ -16,6 +17,7 @@ export default function AlertsPage(){
         {title:'告警',dataIndex:'title'}, {title:'级别',dataIndex:'severity',render:v=><Tag color={v==='P1'?'red':v==='P2'?'orange':'blue'}>{v}</Tag>},
         {title:'状态',dataIndex:'status',render:v=><Tag color={statusColor[v]}>{v}</Tag>},{title:'资源',render:(_,r)=>`${r.resourceType} #${r.resourceId}`},
         {title:'最近触发',dataIndex:'lastSeenAt',render:v=>v&&new Date(v).toLocaleString()},
+        {title:'确认人',dataIndex:'acknowledgedBy',render:(value,row)=>actorLabel(value,row.acknowledgedBySnapshot)},
         {title:'操作',render:(_,r)=><Space onClick={e=>e.stopPropagation()}><Button size="small" onClick={()=>analyze(r)}>辅助分析</Button>{r.status==='OPEN'&&<Button size="small" onClick={()=>action(()=>api.acknowledgeAlert(r.id,r.version))}>确认</Button>}{r.status!=='RESOLVED'&&<Button size="small" onClick={()=>action(()=>api.resolveAlert(r.id,r.version))}>恢复</Button>}</Space>}
       ]}/>
     </Card>

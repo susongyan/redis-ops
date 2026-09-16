@@ -1,11 +1,11 @@
 # 最新完整数据库初始化包
 
-当前版本 **V31**，验证环境 MySQL 8.4.11：53 张业务表、1 张 Flyway 历史表、15 条命令种子数据。
+当前版本 **V33**，验证环境 MySQL 8.4.11：53 张业务表、1 张 Flyway 历史表、15 条命令种子数据。
 包含 Key 分布任务、运行槽和分组表，以及已有 Worker IP 字段。当前版本与 SHA256 以 manifest.json 为准。
 
 ## DBA 直接使用
 
-执行 [redis-governance-init.sql](redis-governance-init.sql)，包含建库、完整表结构、必需种子数据和真实 V31 BASELINE。
+执行 [redis-governance-init.sql](redis-governance-init.sql)，包含建库、完整表结构、必需种子数据和真实 V33 BASELINE。
 仅用于目标数据库尚不存在的全新环境。已有数据库升级不得导入本文件，也不要使用 mysql --force。
 
 ```bash
@@ -22,8 +22,8 @@ SELECT version, type, success FROM redis_governance.flyway_schema_history;
 SELECT COUNT(*) FROM redis_governance.operation_command_definition;
 ```
 
-预期 history 为一条 version=31、type=BASELINE、success=1，命令数为15。
-Platform 启动后 validate 通过，V1–V31 不再执行；未来 V32 起由 Flyway 增量升级。Worker 不执行 Flyway。
+预期 history 为一条 version=33、type=BASELINE、success=1，命令数为15。
+Platform 启动后 validate 通过，V1–V33 不再执行；未来 V34 起由 Flyway 增量升级。Worker 不执行 Flyway。
 其他 MySQL 8.x 小版本应先在 UAT 验证。
 
 ## 文件分工

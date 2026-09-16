@@ -149,6 +149,8 @@ npm run build
 | 功能截图与演示 | [图册](docs/demo/README.md) |
 | 机器、数据库、配置、上线 | [部署交付](docs/deployment-delivery.md) |
 | 登录、角色、共享会话 | [用户接入](docs/user-access.md) |
+| 操作账号、显示名及历史快照 | [操作身份记录](docs/operator-identity.md) |
+| 审计操作内容与字段变更 | [审计变更详情](docs/audit-change-details.md) |
 | 应用与集群关系 | [关联管理](docs/application-bindings.md) |
 | Key 分布及导出 | [分布分析](docs/key-distribution.md) |
 | 同步恢复与安全 | [生命周期](docs/sync-worker-lifecycle.md)、[运行手册](docs/sync-operations-runbook.md) |

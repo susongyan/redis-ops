@@ -11,4 +11,5 @@ public interface OperationRepository {
     List<RedisOperation> list(int page, int size);
     boolean update(RedisOperation operation, long version);
     boolean updateCommand(OperationCommand command, long version);
+    OperationCommand createCommand(OperationCommand command);
 }

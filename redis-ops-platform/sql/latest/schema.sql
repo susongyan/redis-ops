@@ -53,6 +53,7 @@ CREATE TABLE `alert_event` (
   `resolved_at` timestamp(3) NULL DEFAULT NULL,
   `silence_until` timestamp(3) NULL DEFAULT NULL,
   `version` bigint NOT NULL DEFAULT '0',
+  `acknowledged_by_snapshot` json DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_alert_event_dedup` (`rule_id`,`resource_type`,`resource_id`),
   KEY `idx_alert_event_status` (`status`,`severity`,`last_seen_at` DESC)
@@ -184,6 +185,8 @@ CREATE TABLE `audit_log` (
   `request_id` varchar(64) DEFAULT NULL,
   `request_digest` varchar(128) DEFAULT NULL,
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `operator_snapshot` json DEFAULT NULL,
+  `details_json` json DEFAULT NULL COMMENT 'Allowlisted immutable operation details',
   PRIMARY KEY (`id`),
   KEY `idx_audit_resource` (`resource_type`,`resource_id`,`created_at`),
   KEY `idx_audit_operator` (`operator_id`,`created_at`)
@@ -451,6 +454,7 @@ CREATE TABLE `operation_command_definition` (
   `blocked_by_default` tinyint(1) NOT NULL DEFAULT '0',
   `change_reason` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `updated_by` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `updated_by_snapshot` json DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_operation_command` (`command_name`,`command_version`)
 ) ENGINE=InnoDB AUTO_INCREMENT=16 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -602,6 +606,10 @@ CREATE TABLE `redis_operation` (
   `version` bigint NOT NULL DEFAULT '0',
   `created_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  `operator_snapshot` json DEFAULT NULL,
+  `approver_snapshot` json DEFAULT NULL,
+  `executor_name` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `executor_snapshot` json DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_redis_operation_no` (`operation_no`),
   KEY `idx_redis_operation_history` (`cluster_id`,`created_at` DESC)
@@ -717,6 +725,7 @@ CREATE TABLE `switchover` (
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   `confirmed_at` datetime(3) DEFAULT NULL,
+  `operator_snapshot` json DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_switchover_relation` (`relation_id`,`created_at`),
   KEY `fk_switchover_old_primary` (`old_primary_cluster_id`),
@@ -891,6 +900,7 @@ CREATE TABLE `sync_task_event` (
   `operator_id` varchar(128) NOT NULL,
   `message` varchar(1024) DEFAULT NULL,
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `operator_snapshot` json DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_sync_event_task` (`task_id`,`created_at`),
   CONSTRAINT `fk_sync_event_task` FOREIGN KEY (`task_id`) REFERENCES `sync_task` (`id`)
