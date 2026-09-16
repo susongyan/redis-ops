@@ -16,6 +16,30 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class EncryptedSpoolTest {
     @Test
+    void streamingReplayHasStableAppendBoundaryAndPropagatesConsumerFailure(@TempDir Path path) throws Exception {
+        try (var spool = new EncryptedSpool(path, 77, new byte[32], 1024, 1024 * 1024)) {
+            spool.prepare();
+            for (int i = 1; i <= 50; i++)
+                spool.append(command("INCR", "counter", i, i));
+            List<Long> offsets = new ArrayList<>();
+            spool.forEachCommandAfter(10, value -> {
+                offsets.add(value.endOffset());
+                if (offsets.size() == 1)
+                    spool.append(command("INCR", "counter", 51, 51));
+            });
+            assertEquals(40, offsets.size());
+            assertEquals(11L, offsets.get(0));
+            assertEquals(50L, offsets.get(39));
+            assertEquals(1, spool.commandsAfter(50).size());
+            var expected = new java.io.IOException("consumer stopped");
+            assertSame(expected, assertThrows(java.io.IOException.class,
+                    () -> spool.forEachCommandAfter(0, value -> {
+                        throw expected;
+                    })));
+        }
+    }
+
+    @Test
     void preventsTwoProcessesFromOwningTheSameTaskSpool(@TempDir Path directory) throws Exception {
         byte[] key = new byte[32];
         EncryptedSpool first = new EncryptedSpool(directory, 7, key, 1024, 1024 * 1024);

@@ -201,11 +201,29 @@ public final class EncryptedSpool implements AutoCloseable {
 
     public List<ReplicationCommand> commandsAfter(long appliedOffset) throws IOException {
         List<ReplicationCommand> result = new ArrayList<>();
-        for (Path path : existingSegments())
-            for (ReplicationCommand command : readSegment(path))
-                if (command.endOffset() > appliedOffset)
-                    result.add(command);
+        forEachCommandAfter(appliedOffset, result::add);
         return result;
+    }
+
+    @FunctionalInterface
+    public interface CommandConsumer {
+        void accept(ReplicationCommand command) throws IOException;
+    }
+
+    /** Capture complete record boundaries under the append lock, then stream without retaining backlog. */
+    public void forEachCommandAfter(long appliedOffset, CommandConsumer consumer) throws IOException {
+        record Segment(Path path, long size) {
+        }
+        List<Segment> snapshot = new ArrayList<>();
+        synchronized (this) {
+            for (Path path : existingSegments())
+                snapshot.add(new Segment(path, Files.size(path)));
+        }
+        for (Segment segment : snapshot)
+            readSegment(segment.path(), segment.size(), command -> {
+                if (command.endOffset() > appliedOffset)
+                    consumer.accept(command);
+            });
     }
 
     public synchronized void discardFullRdb() throws IOException {
@@ -218,8 +236,9 @@ public final class EncryptedSpool implements AutoCloseable {
         for (Path path : existingSegments()) {
             if (segmentNumber(path) == activeSegment)
                 continue;
-            List<ReplicationCommand> commands = readSegment(path);
-            if (commands.isEmpty() || commands.get(commands.size() - 1).endOffset() <= appliedOffset)
+            long[] lastOffset = {-1};
+            readSegment(path, Files.size(path), command -> lastOffset[0] = command.endOffset());
+            if (lastOffset[0] <= appliedOffset)
                 Files.deleteIfExists(path);
         }
         bytes = directoryBytes();
@@ -285,18 +304,15 @@ public final class EncryptedSpool implements AutoCloseable {
         segmentSize = Files.size(path);
     }
 
-    private List<ReplicationCommand> readSegment(Path path) throws IOException {
+    private void readSegment(Path path, long remaining, CommandConsumer consumer) throws IOException {
         int fileSegment = segmentNumber(path);
-        List<ReplicationCommand> result = new ArrayList<>();
         try (DataInputStream input = new DataInputStream(Files.newInputStream(path))) {
-            while (true) {
-                int length;
-                try {
-                    length = input.readInt();
-                } catch (EOFException end) {
-                    break;
-                }
-                if (length < IV_BYTES + 16 || length > limitBytes)
+            while (remaining > 0) {
+                if (remaining < Integer.BYTES)
+                    throw new EOFException("truncated encrypted spool record header");
+                int length = input.readInt();
+                remaining -= Integer.BYTES;
+                if (length < IV_BYTES + 16 || length > limitBytes || length > remaining)
                     throw new RespProtocolException("invalid encrypted spool record length");
                 byte[] iv = input.readNBytes(IV_BYTES);
                 byte[] encrypted = input.readNBytes(length - IV_BYTES);
@@ -309,10 +325,10 @@ public final class EncryptedSpool implements AutoCloseable {
                 } catch (Exception error) {
                     throw new IOException("sync spool authentication failed", error);
                 }
-                result.add(decodeCommand(plain));
+                consumer.accept(decodeCommand(plain));
+                remaining -= length;
             }
         }
-        return result;
     }
 
     private List<Path> existingSegments() throws IOException {

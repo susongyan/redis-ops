@@ -33,6 +33,65 @@ public final class RespCodec {
         };
     }
 
+    /** Replication-only bounded flat RESP2 command decoding; check lengths before allocation. */
+    RespValue readCommandWithMarker(int marker, int maxBytes, int maxArguments) throws IOException {
+        if (maxBytes < 1 || maxArguments < 1)
+            throw new IllegalArgumentException("INVALID_RESP_COMMAND_LIMIT");
+        if (marker != '*')
+            throw new RespProtocolException("INVALID_REPLICATION_FRAME");
+        var frame = new CommandFrame(maxBytes - 1);
+        int count = frame.length();
+        if (count < 1 || count > maxArguments)
+            throw new RespProtocolException("REPLICATION_ARGUMENT_LIMIT");
+        List<RespValue> arguments = new ArrayList<>(Math.min(count, 16));
+        for (int i = 0; i < count; i++) {
+            if (frame.read() != '$')
+                throw new RespProtocolException("INVALID_REPLICATION_ARGUMENT");
+            int length = frame.length();
+            if (length > frame.remaining - 2 || i == 0 && (length == 0 || length > 64))
+                throw new RespProtocolException("REPLICATION_FRAME_LIMIT");
+            byte[] value = readExactly(length);
+            frame.remaining -= length;
+            if (frame.read() != '\r' || frame.read() != '\n')
+                throw new RespProtocolException("INVALID_REPLICATION_ARGUMENT");
+            arguments.add(new RespValue.Bulk(value));
+        }
+        return new RespValue.Array(arguments);
+    }
+
+    private final class CommandFrame {
+        private int remaining;
+        private CommandFrame(int remaining) {
+            this.remaining = remaining;
+        }
+        private int read() throws IOException {
+            if (remaining <= 0)
+                throw new RespProtocolException("REPLICATION_FRAME_LIMIT");
+            int value = input.read();
+            if (value < 0)
+                throw new EOFException("replication frame ended");
+            remaining--;
+            return value;
+        }
+        private int length() throws IOException {
+            long value = 0;
+            int digits = 0;
+            while (true) {
+                int next = read();
+                if (next == '\r') {
+                    if (digits == 0 || read() != '\n')
+                        throw new RespProtocolException("INVALID_REPLICATION_LENGTH");
+                    return (int) value;
+                }
+                if (next < '0' || next > '9' || ++digits > 10)
+                    throw new RespProtocolException("INVALID_REPLICATION_LENGTH");
+                value = value * 10 + next - '0';
+                if (value > Integer.MAX_VALUE)
+                    throw new RespProtocolException("REPLICATION_FRAME_LIMIT");
+            }
+        }
+    }
+
     public void writeCommand(byte[]... arguments) throws IOException {
         writeCommandBuffered(arguments);
         output.flush();

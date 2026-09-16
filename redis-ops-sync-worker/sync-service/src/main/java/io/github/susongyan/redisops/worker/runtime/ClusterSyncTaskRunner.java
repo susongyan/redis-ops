@@ -672,9 +672,16 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         }
 
         private void replaySpool() throws IOException {
-            List<ReplicationCommand> commands = spool.commandsAfter(applied.get());
-            for (int index = 0; index < commands.size(); index += 100)
-                applyBatch(commands.subList(index, Math.min(index + 100, commands.size())));
+            var batch = new ArrayList<ReplicationCommand>(100);
+            spool.forEachCommandAfter(applied.get(), command -> {
+                batch.add(command);
+                if (batch.size() == 100) {
+                    applyBatch(batch);
+                    batch.clear();
+                }
+            });
+            if (!batch.isEmpty())
+                applyBatch(batch);
         }
 
         private void applyBatch(List<ReplicationCommand> commands) throws IOException {

@@ -9,11 +9,23 @@ public final class ReplicationCommandReader {
     private final RespCodec codec;
     private final CountingInputStream input;
     private long offset;
+    private final int maxFrameBytes;
+    private final int maxArguments;
 
     public ReplicationCommandReader(RespCodec codec, CountingInputStream input, long initialOffset) {
+        this(codec, input, initialOffset, 0, 0);
+    }
+
+    public ReplicationCommandReader(RespCodec codec, CountingInputStream input, long initialOffset,
+            int maxFrameBytes, int maxArguments) {
+        if (maxFrameBytes < 0 || maxFrameBytes > SourceTransactionAssembler.MAX_BYTES
+                || maxFrameBytes > 0 && (maxArguments < 1 || maxArguments > 65_536))
+            throw new IllegalArgumentException("INVALID_REPLICATION_READ_LIMIT");
         this.codec = codec;
         this.input = input;
         this.offset = initialOffset;
+        this.maxFrameBytes = maxFrameBytes;
+        this.maxArguments = maxArguments;
     }
 
     public ReplicationCommand read() throws IOException {
@@ -27,7 +39,9 @@ public final class ReplicationCommandReader {
             if (marker == '\r' || marker == '\n')
                 separators++;
         } while (marker == '\r' || marker == '\n');
-        RespValue value = codec.readWithMarker(marker);
+        RespValue value = maxFrameBytes == 0
+                ? codec.readWithMarker(marker)
+                : codec.readCommandWithMarker(marker, maxFrameBytes, maxArguments);
         long bytes = input.count() - before - separators;
         long start = offset + 1;
         offset += bytes;

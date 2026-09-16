@@ -474,9 +474,16 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
 
     private void replaySpool() throws IOException {
         leaseGuard.assertValid();
-        List<ReplicationCommand> commands = spool.commandsAfter(appliedOffset.get());
-        for (int start = 0; start < commands.size(); start += 100)
-            applyBatchWhenAllowed(commands.subList(start, Math.min(start + 100, commands.size())));
+        var batch = new java.util.ArrayList<ReplicationCommand>(100);
+        spool.forEachCommandAfter(appliedOffset.get(), command -> {
+            batch.add(command);
+            if (batch.size() == 100) {
+                applyBatchWhenAllowed(batch);
+                batch.clear();
+            }
+        });
+        if (!batch.isEmpty())
+            applyBatchWhenAllowed(batch);
     }
 
     private void applyLive() throws Exception {
