@@ -23,12 +23,13 @@ Redis EXEC 的运行期错误不回滚已执行命令。旧逻辑在同一个事
 
 空命令游标推进保持原有 WATCH/MULTI/EXEC 单阶段路径，但读到 pending 也必须阻塞。
 每次写入前校验本地租约；pending token 防止不同调用互相确认。Cluster 继续使用同 Slot 的
-checkpoint/fence 键；此首批尚未完成真实 Cluster 故障验收，不宣称阶段一已全部完成。
+checkpoint/fence 键；已验证真实三主节点 Cluster 的同 Slot 批次故障及跨分片部分成功恢复行为。
 
 ## 恢复与兼容性
 
-- 新 Worker 读取 pending（包括 fence 发布、checkpoint、去重入口）统一抛出
-  `BLOCKED_TARGET_BATCH_UNCONFIRMED`。新 generation 不得忽略它。
+- 新 Worker 读取 pending（checkpoint、去重入口）统一抛出
+  `BLOCKED_TARGET_BATCH_UNCONFIRMED`。接管先在 WATCH 保护下发布新 generation fence，
+  随后同样阻塞并保留 pending，确保旧 Worker 不能继续执行或确认。新 generation 不得忽略它。
 - 旧 Worker 无法解析 pending 格式，会失败关闭；不承诺混合版本协同运行，升级应先停相关任务。
 - 崩溃在准备后、业务执行前也会保守阻塞。这是选择避免重复执行的代价，不表示业务一定已经写入。
 - 不提供自动清除 pending 或仅修改 offset 的恢复操作。必须核实或显式重新建立迁移基线；
@@ -48,5 +49,18 @@ checkpoint/fence 键；此首批尚未完成真实 Cluster 故障验收，不宣
 业务 EXEC 发送前断线、预置 pending 的崩溃恢复，以及危险清空在发送前被拒绝。
 故障代理读取真实 Redis 回复后丢弃，未用模拟成功响应替代真实命令效果。
 
-阶段一仍需补齐：真实 Cluster 与 Redis 6.2 故障矩阵、能力协议/领取兼容性、吞吐对比和部署门禁。
+2026-09-16 补充验证：Redis 6.2.14 Standalone 与 Redis 7.4 三主节点 Cluster（slot 0）
+分别执行同一组 11 个案例，均通过。除上述回复丢失矩阵外，覆盖准备／执行／确认三个
+WATCH–EXEC 窗口中的新 generation 接管：旧写者不能越过 fence，成功位置不能越过未确认效果。
+Cluster 使用 `SYNC_BATCH_TEST_CLUSTER_SLOT0=127.0.0.1:<slot0节点端口>`；
+另通过 `SYNC_BATCH_TEST_CLUSTER_MASTERS=127.0.0.1:<节点1>,127.0.0.1:<节点2>,127.0.0.1:<节点3>`
+运行 `ClusterBatchRecoveryRedisTest` 两个案例（按 slot 范围升序传入三个节点）。测试使用真实
+Cluster 发现结果，只转换 Docker NAT 地址，不模拟目标回复：
+
+- 第一分片成功、第二分片局部失败时，全局游标保持旧位置；接管后第一分片 INCR 不重复，第二分片继续阻塞。
+- 三分片全部确认成功后，接管重放同一 offset 不重复执行，各分片计数保持为 1。
+
+这些案例不替代 MOVED/ASK 或主从切换的完整验收。
+
+阶段一仍需补齐：能力协议/领取兼容性、吞吐对比和部署门禁；拓扑变更故障矩阵仍需扩展。
 通过这些门槛后才冻结最终协议并开放阶段二命令。

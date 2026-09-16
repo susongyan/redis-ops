@@ -1,6 +1,7 @@
 package io.github.susongyan.redisops.worker.runtime;
 
 import io.github.susongyan.redisops.worker.protocol.*;
+import io.github.susongyan.redisops.worker.runtime.TargetCommandSession.FencingException;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.time.*;
@@ -10,6 +11,48 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Opt-in: requires a disposable Redis. Uses unique keys; never FLUSHes any database. */
 class TargetBatchRedisTest {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2, 3})
+    void takeoverBetweenWatchAndExecRevokesStaleWriter(int selectedExec) throws Exception {
+        try (var direct = session(); var takeover = session()) {
+            direct.publishFence(fence, guard);
+            String actualEndpoint = endpoint;
+            var newer = new TargetFence("epoch", 2, "new-runtime", "worker", Instant.now());
+            try (var proxy = new DropExecReplyProxy(Integer.parseInt(endpoint.split(":")[1]), selectedExec, () -> {
+                try {
+                    takeover.publishFence(newer, guard);
+                    assertEquals(1, selectedExec);
+                } catch (SyncBlockedException pending) {
+                    assertTrue(selectedExec > 1);
+                    assertEquals("BLOCKED_TARGET_BATCH_UNCONFIRMED", pending.reason());
+                } catch (java.io.IOException error) {
+                    throw new java.io.UncheckedIOException(error);
+                }
+            })) {
+                endpoint = "127.0.0.1:" + proxy.port();
+                try (var stale = session()) {
+                    if (selectedExec == 1)
+                        assertThrows(FencingException.class,
+                                () -> stale.apply(List.of(planned("INCR", key("counter"))), next(), fence, guard));
+                    else
+                        assertThrows(SyncBlockedException.class,
+                                () -> stale.apply(List.of(planned("INCR", key("counter"))), next(), fence, guard));
+                }
+            } finally {
+                endpoint = actualEndpoint;
+            }
+            assertEquals(2, takeover.currentFence().orElseThrow().generation());
+            if (selectedExec == 1)
+                assertTrue(direct.checkpoint().isEmpty());
+            else
+                assertThrows(SyncBlockedException.class, () -> direct.checkpoint());
+        }
+        var value = call("GET", key("counter"));
+        if (selectedExec < 3)
+            assertEquals(RespValue.NullValue.INSTANCE, value);
+        else
+            assertEquals("1", new String(((RespValue.Bulk) value).value(), StandardCharsets.UTF_8));
+    }
     @Test
     void destructiveCommandCannotEraseRecoveryState() throws Exception {
         try (var session = session()) {
@@ -70,19 +113,25 @@ class TargetBatchRedisTest {
         }
         assertEquals(RespValue.NullValue.INSTANCE, call("GET", key("counter")));
     }
-    private String endpoint;
-    private long taskId;
+    String endpoint;
+    long taskId;
     private TargetFence fence;
     private LeaseGuard guard;
 
     @BeforeEach
     void setup() {
-        endpoint = System.getenv("SYNC_BATCH_TEST_REDIS");
+        endpoint = System.getenv(endpointVariable());
         Assumptions.assumeTrue(endpoint != null && endpoint.startsWith("127.0.0.1:"));
         taskId = Math.abs(UUID.randomUUID().getMostSignificantBits());
         fence = new TargetFence("epoch", 1, "runtime", "worker", Instant.now());
         guard = new LeaseGuard(Duration.ZERO);
         guard.grant(Duration.ofMinutes(2));
+    }
+    String endpointVariable() {
+        return "SYNC_BATCH_TEST_REDIS";
+    }
+    String checkpointKey() {
+        return "__redis_ops_sync_ckpt__:{" + taskId + "}:standalone";
     }
     TargetCommandSession session() throws Exception {
         return new TargetCommandSession(new WorkerRedisConnectionProfile(1, WorkerClusterMode.STANDALONE,
@@ -133,6 +182,12 @@ class TargetBatchRedisTest {
         try (var takeover = session()) {
             assertThrows(SyncBlockedException.class, () -> takeover.publishFence(
                     new TargetFence("epoch", 2, "new-runtime", "worker", Instant.now()), guard));
+            assertEquals(2, takeover.currentFence().orElseThrow().generation());
+            assertThrows(SyncBlockedException.class, () -> takeover.checkpoint());
+        }
+        try (var stale = session()) {
+            assertThrows(FencingException.class,
+                    () -> stale.apply(List.of(planned("INCR", key("counter"))), next(), fence, guard));
         }
         assertEquals("1", new String(((RespValue.Bulk) call("GET", key("counter"))).value(), StandardCharsets.UTF_8));
     }
@@ -141,7 +196,7 @@ class TargetBatchRedisTest {
         try (var session = session()) {
             session.publishFence(fence, guard);
         }
-        call("SET", "__redis_ops_sync_ckpt__:{" + taskId + "}:standalone",
+        call("SET", checkpointKey(),
                 new String(PendingTargetBatch.encode(null, next()), StandardCharsets.US_ASCII));
         try (var session = session()) {
             assertThrows(SyncBlockedException.class,

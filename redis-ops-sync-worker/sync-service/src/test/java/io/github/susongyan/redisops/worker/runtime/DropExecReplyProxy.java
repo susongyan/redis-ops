@@ -12,6 +12,14 @@ final class DropExecReplyProxy implements AutoCloseable {
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Future<?> result;
     DropExecReplyProxy(int targetPort, int dropExec, boolean beforeSend) throws IOException {
+        this(targetPort, dropExec, beforeSend, true, () -> {
+        });
+    }
+    DropExecReplyProxy(int targetPort, int selectedExec, Runnable beforeExec) throws IOException {
+        this(targetPort, selectedExec, false, false, beforeExec);
+    }
+    private DropExecReplyProxy(int targetPort, int dropExec, boolean beforeSend, boolean dropReply,
+            Runnable beforeExec) throws IOException {
         listener = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
         result = executor.submit(() -> {
             try (var inbound = listener.accept(); var upstream = new Socket("127.0.0.1", targetPort)) {
@@ -25,11 +33,13 @@ final class DropExecReplyProxy implements AutoCloseable {
                     byte[][] args = request.values().stream().map(v -> ((RespValue.Bulk) v).value())
                             .toArray(byte[][]::new);
                     boolean cut = new String(args[0], StandardCharsets.US_ASCII).equals("EXEC") && ++execs == dropExec;
+                    if (cut)
+                        beforeExec.run();
                     if (cut && beforeSend)
                         return;
                     target.writeCommand(args);
                     RespValue reply = target.read();
-                    if (cut)
+                    if (cut && dropReply)
                         return;
                     write(reply, inbound.getOutputStream());
                     inbound.getOutputStream().flush();

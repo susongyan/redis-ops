@@ -237,8 +237,10 @@ public final class TargetCommandSession implements AutoCloseable {
             leaseGuard.assertValid();
             expectOk(command(bytes("WATCH"), operationFenceKey, operationCheckpointKey), "WATCH");
             Optional<TargetFence> existingFence = fence(command(bytes("GET"), operationFenceKey));
-            Optional<TargetCheckpoint> existingCheckpoint = checkpoint(command(bytes("GET"),
-                    operationCheckpointKey));
+            RespValue checkpointValue = command(bytes("GET"), operationCheckpointKey);
+            boolean pending = checkpointValue instanceof RespValue.Bulk bulk
+                    && PendingTargetBatch.isPending(bulk.value());
+            Optional<TargetCheckpoint> existingCheckpoint = pending ? Optional.empty() : checkpoint(checkpointValue);
             if (existingFence.isPresent()) {
                 TargetFence existing = existingFence.get();
                 if (!existing.epoch().equals(requested.epoch())) {
@@ -268,6 +270,9 @@ public final class TargetCommandSession implements AutoCloseable {
             if (result == RespValue.NullValue.INSTANCE)
                 continue;
             assertTransaction(result, "target fence transaction");
+            // Revoke the former writer even when recovery cannot yet continue. Never clear ambiguity.
+            if (pending)
+                throw PendingTargetBatch.unresolved();
             return new FencePublication(requested, existingCheckpoint);
         }
         throw new IllegalStateException("target fence transaction remained contended");
