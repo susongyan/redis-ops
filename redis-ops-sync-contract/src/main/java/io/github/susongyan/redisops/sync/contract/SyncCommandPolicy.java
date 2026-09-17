@@ -42,4 +42,8 @@ public record SyncCommandPolicy(boolean allowDestructiveCommands, boolean allowS
     public boolean supportsTransactions() {
         return TRANSACTION_VERSION.equals(policyVersion);
     }
+    public boolean supportsMultiKeyRedisVersion(int major, int minor) {
+        return supportsMultiKey() && (major == 7 || major == 6 && minor >= 2
+                || supportsTransactions() && major == 5 && minor == 0);
+    }
 }

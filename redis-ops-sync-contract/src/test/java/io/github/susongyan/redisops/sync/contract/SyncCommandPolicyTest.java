@@ -7,6 +7,20 @@ import org.junit.jupiter.api.Test;
 
 class SyncCommandPolicyTest {
     @Test
+    void redis5TransactionsAreV3OnlyWithoutOpeningUntestedVersionLines() {
+        for (String version : Set.of("v1", "v2", "v3")) {
+            var policy = new SyncCommandPolicy(false, true, Set.of(), version);
+            assertEquals(version.equals("v3"), policy.supportsMultiKeyRedisVersion(5, 0));
+            assertEquals(!version.equals("v1"), policy.supportsMultiKeyRedisVersion(6, 2));
+            assertEquals(!version.equals("v1"), policy.supportsMultiKeyRedisVersion(7, 4));
+            assertFalse(policy.supportsMultiKeyRedisVersion(4, 0));
+            assertFalse(policy.supportsMultiKeyRedisVersion(5, 1));
+            assertFalse(policy.supportsMultiKeyRedisVersion(6, 0));
+            assertFalse(policy.supportsMultiKeyRedisVersion(8, 0));
+            assertTrue(SyncCommandCapabilities.classify("EVAL", false, policy).currentlyBlocked());
+        }
+    }
+    @Test
     void normalizesAdditionalBlocksAndKeepsHardBlocksClosed() {
         var policy = new SyncCommandPolicy(false, true, Set.of("del", "eval"), "v1");
 

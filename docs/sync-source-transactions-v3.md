@@ -4,12 +4,17 @@
 
 ## 版本与范围
 
-契约 artifact 为 `sync-contract:0.3.0`。任务显式使用 `commandPolicy.policyVersion=v3`；
+契约 artifact 为 `sync-contract:0.3.1`。任务显式使用 `commandPolicy.policyVersion=v3`；
 API 缺省仍为 v1，第四阶段新建任务页面显式选择 v3；v2 仍只增加多 Key 命令准入，不自动支持源事务。
 Worker 领取 SQL 和能力声明同步区分版本。
 先升级 Worker，再允许创建 v3 任务；旧策略不原地升级，过滤范围扩大需重新建立全量基线。
 
-v3 处理复制流中的 `MULTI ... EXEC`，包括 Redis 6.2 / 7.x 的 Lua 写入 effects。
+v3 处理 Redis 5.0 / 6.2 / 7.x 复制流中的 `MULTI ... EXEC`，包括 Lua 写入 effects。
+Redis 5.0 支持由 [ADR-026](adr/ADR-026-redis5-source-transactions.md) 补充；仅 0.3.1 及对应新版
+Worker 开放，运行中的全部 Worker 应有 `syncCapabilities.redis5Transactions=true`。
+Redis 5 默认采用 effects；若 `lua-replicate-commands no` 导致脚本原文传播，任务仍阻塞，
+平台不会自动修改源配置。原始脚本支持和“Redis 5 事务支持”不是同一个能力。
+使用方式、隔离验证及升级顺序见[Redis 5 事务说明](sync-redis5-transactions.md)。
 不在目标重放 EVAL / EVALSHA 脚本原文，不支持未知 Module 命令或跨 Slot 原子事务。
 
 ## 提交边界

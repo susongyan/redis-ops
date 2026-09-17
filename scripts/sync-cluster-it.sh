@@ -22,12 +22,15 @@ start_cluster_container() {
     -p "127.0.0.1:${third_port}:${third_port}" \
     "${redis_image}" sh -c "
       redis-server --port ${first_port} --cluster-enabled yes \
+        --dbfilename dump-${first_port}.rdb \
         --cluster-config-file /tmp/nodes-${first_port}.conf --cluster-node-timeout 5000 \
         --appendonly no --save '' --protected-mode no --daemonize yes
       redis-server --port ${second_port} --cluster-enabled yes \
+        --dbfilename dump-${second_port}.rdb \
         --cluster-config-file /tmp/nodes-${second_port}.conf --cluster-node-timeout 5000 \
         --appendonly no --save '' --protected-mode no --daemonize yes
       redis-server --port ${third_port} --cluster-enabled yes \
+        --dbfilename dump-${third_port}.rdb \
         --cluster-config-file /tmp/nodes-${third_port}.conf --cluster-node-timeout 5000 \
         --appendonly no --save '' --protected-mode no --daemonize yes
       tail -f /dev/null
@@ -39,8 +42,8 @@ start_cluster_container "${target_container}" 7201 7202 7203
 docker run -d --name "${standalone_container}" \
   -p 127.0.0.1:7301:7301 -p 127.0.0.1:7302:7302 \
   "${redis_image}" sh -c "
-    redis-server --port 7301 --appendonly no --save '' --protected-mode no --daemonize yes
-    redis-server --port 7302 --appendonly no --save '' --protected-mode no --daemonize yes
+    redis-server --port 7301 --dbfilename dump-7301.rdb --appendonly no --save '' --protected-mode no --daemonize yes
+    redis-server --port 7302 --dbfilename dump-7302.rdb --appendonly no --save '' --protected-mode no --daemonize yes
     tail -f /dev/null
   " >/dev/null
 

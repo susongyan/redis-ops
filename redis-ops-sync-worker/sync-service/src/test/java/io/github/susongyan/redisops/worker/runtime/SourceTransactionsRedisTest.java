@@ -14,6 +14,10 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 /** Captures actual committed replication effects, never script source text from a log or MONITOR. */
 class SourceTransactionsRedisTest {
     @Test
+    void redis5PropagatesTransactionsAndLuaAsCompleteEffectUnits() throws Exception {
+        capture("SYNC_TRANSACTION_TEST_REDIS5");
+    }
+    @Test
     void redis62PropagatesTransactionsAndLuaAsCompleteEffectUnits() throws Exception {
         capture("SYNC_BATCH_TEST_REDIS");
     }

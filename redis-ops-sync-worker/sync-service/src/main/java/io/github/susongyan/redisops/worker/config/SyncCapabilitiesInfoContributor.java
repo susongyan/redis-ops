@@ -15,7 +15,8 @@ public final class SyncCapabilitiesInfoContributor implements InfoContributor {
                 "commandPolicyVersions", List.of("v1", "v2", "v3"),
                 "batchConfirmationVersion", 2,
                 "policyAwareClaims", true,
-                "sourceTransactions", true));
+                "sourceTransactions", true,
+                "redis5Transactions", true));
         builder.withDetail("syncCommandObservations",
                 io.github.susongyan.redisops.worker.runtime.SyncCommandObservations.snapshot());
     }

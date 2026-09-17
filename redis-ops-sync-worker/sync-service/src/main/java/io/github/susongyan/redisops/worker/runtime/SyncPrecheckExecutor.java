@@ -95,8 +95,9 @@ public class SyncPrecheckExecutor {
         supportedVersion(targetVersion, "target");
         if (commandPolicy(task).supportsMultiKey()) {
             for (int[] candidate : List.of(sourceVersion, targetVersion))
-                if (!(candidate[0] == 7 || candidate[0] == 6 && candidate[1] >= 2))
-                    throw new IllegalStateException("v2 requires Redis 6.2 or 7.x");
+                if (!commandPolicy(task).supportsMultiKeyRedisVersion(candidate[0], candidate[1]))
+                    throw new IllegalStateException(
+                            "Redis version is outside the selected command policy compatibility range");
         }
         if (task.relationId() != null && (sourceVersion[0] != targetVersion[0] || sourceVersion[1] != targetVersion[1]))
             throw new IllegalStateException("disaster recovery requires matching Redis major.minor versions");

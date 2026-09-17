@@ -28,6 +28,40 @@ class StandaloneSyncTaskRunnerIntegrationTest {
     Path dataDirectory;
 
     @Test
+    @EnabledIfEnvironmentVariable(named = "REDIS_SYNC_LEGACY_LUA_IT", matches = "true")
+    void redis5VerbatimScriptsRemainBlockedWithoutTargetEffects() throws Exception {
+        // Dedicated fixture on 6394 must use lua-replicate-commands no; never change a business instance.
+        RedisClient sourceClient = RedisClient.create("redis://127.0.0.1:6394");
+        RedisClient targetClient = RedisClient.create("redis://127.0.0.1:6391");
+        try (var source = sourceClient.connect(); var target = targetClient.connect()) {
+            source.sync().flushall();
+            target.sync().flushall();
+            source.sync().set("baseline", "ready");
+            var task = task(195, "epoch-verbatim");
+            WorkerRedisConnectionProfilePort profiles = clusterId -> new WorkerRedisConnectionProfile(clusterId,
+                    WorkerClusterMode.STANDALONE, List.of("127.0.0.1:" + (clusterId == 1 ? 6394 : 6391)),
+                    null, null, "NONE", null);
+            var runner = runner(task, false, profiles, "v1:" + Base64.getEncoder().encodeToString(new byte[32]));
+            try {
+                runner.prepare();
+                runner.leaseAcquired(runtime(task.id(), 1));
+                runner.start();
+                await(() -> "ready".equals(target.sync().get("baseline")), runner);
+                source.sync().eval("redis.call('INCR',KEYS[1]); redis.call('INCR',KEYS[2]); return 1",
+                        io.lettuce.core.ScriptOutputType.INTEGER, new String[]{"raw:a", "raw:b"});
+                await(() -> "BLOCKED".equals(runner.phase()), runner);
+                assertNull(target.sync().get("raw:a"));
+                assertNull(target.sync().get("raw:b"));
+            } finally {
+                runner.close();
+            }
+        } finally {
+            sourceClient.shutdown();
+            targetClient.shutdown();
+        }
+    }
+
+    @Test
     @EnabledIfEnvironmentVariable(named = "SYNC_IT_POLICY_VERSION", matches = "v3")
     void usesSameBusinessScopeForFullAndIncrementalAndBlocksMixedLua() throws Exception {
         RedisClient sourceClient = RedisClient.create("redis://127.0.0.1:6390");
@@ -112,6 +146,8 @@ class StandaloneSyncTaskRunnerIntegrationTest {
                         && "value".equals(target.sync().hget("hash", "field"))
                         && List.of("a", "b").equals(target.sync().lrange("items", 0, -1))
                         && "value-499".equals(target.sync().get("parallel:499")), runner);
+                // RDB key order differs across versions; a few visible keys do not imply full completion.
+                await(() -> "INCR_SYNCING".equals(runner.phase()) || "CAUGHT_UP".equals(runner.phase()), runner);
                 assertEquals("value", target.sync().hget("hash", "field"));
                 assertEquals(List.of("a", "b"), target.sync().lrange("items", 0, -1));
                 assertTrue(target.sync().pttl("expires") > 0);

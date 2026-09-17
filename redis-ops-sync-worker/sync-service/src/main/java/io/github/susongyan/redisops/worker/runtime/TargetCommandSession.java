@@ -75,7 +75,8 @@ public final class TargetCommandSession implements AutoCloseable {
         return checkpoint(command(bytes("GET"), checkpointKey));
     }
 
-    void requireMultiKeyVersion() throws IOException {
+    void requireMultiKeyVersion(io.github.susongyan.redisops.sync.contract.SyncCommandPolicy policy)
+            throws IOException {
         int previousTimeout = socket.getSoTimeout();
         socket.setSoTimeout(3000);
         try {
@@ -87,7 +88,7 @@ public final class TargetCommandSession implements AutoCloseable {
                         try {
                             int major = Integer.parseInt(components[0]);
                             int minor = Integer.parseInt(components[1]);
-                            if (major == 7 || major == 6 && minor >= 2)
+                            if (policy.supportsMultiKeyRedisVersion(major, minor))
                                 return;
                         } catch (RuntimeException invalid) {
                             // Fail closed without returning raw server data.
@@ -97,7 +98,7 @@ public final class TargetCommandSession implements AutoCloseable {
                 }
             }
             throw new SyncBlockedException("BLOCKED_UNSUPPORTED_REDIS_VERSION",
-                    "multi-key policies require Redis 6.2 or 7.x");
+                    "Redis version is outside the selected command policy compatibility range");
         } finally {
             socket.setSoTimeout(previousTimeout);
         }

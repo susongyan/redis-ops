@@ -60,7 +60,9 @@ public final class SyncCommandCapabilities {
             if (policy.additionallyBlocks(command))
                 return new SyncCommandCapability(command, "POLICY_BLOCKED", "任务策略显式屏蔽", true, true);
             return new SyncCommandCapability(command, "CONDITIONAL",
-                    "Redis 6.2/7.x；读写范围完整；Cluster 必须同 Slot；COPY 不跨 DB；不拆分", false, false);
+                    (policy.supportsTransactions() ? "Redis 5.0/6.2/7.x（须支持该命令）" : "Redis 6.2/7.x")
+                            + "；读写范围完整；Cluster 必须同 Slot；COPY 不跨 DB；不拆分",
+                    false, false);
         }
         if (hardBlocked(command))
             return new SyncCommandCapability(command, "HARD_BLOCKED", "无法保证等价转换或原子性", false, true);

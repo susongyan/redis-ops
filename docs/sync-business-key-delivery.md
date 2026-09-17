@@ -16,7 +16,8 @@
   外部调用方创建全范围任务时需同步升级请求字段，范围受限任务无需该确认。
 - 新建页面显式默认 v3，可选择 v1 / v2。API 未提供 `commandPolicy.policyVersion` 仍按 v1。
   详情展示规则快照、策略版本和固定阻塞原因；能力查询传入所选策略版本。
-- v2 / v3 限 Redis 6.2 / 7.x。跨范围事务、跨 Slot 原子操作、未知命令和原始脚本仍失败关闭。
+- v2 限 Redis 6.2 / 7.x；v3 自契约 0.3.1 及对应 Worker 起增加 Redis 5.0。
+  跨范围事务、跨 Slot 原子操作、未知命令和原始脚本仍失败关闭。
 
 ## 观测统计
 
@@ -39,7 +40,8 @@ Worker 已有 `/actuator/info` 的 `syncCommandObservations` 提供固定七项�
 ## 升级与恢复
 
 1. 暂停相关任务并核对目标 checkpoint / pending，保留 spool 和故障现场。
-2. 发布 `sync-contract:0.3.0`，构建所有 Worker；确认能力声明支持 v1 / v2 / v3 后再升级 Platform。
+2. 发布 `sync-contract:0.3.1`，构建所有 Worker；确认能力声明支持 v1 / v2 / v3 后再升级 Platform。
+   Redis 5 任务还需确认全部 Worker 的 `syncCapabilities.redis5Transactions=true`。
    不能混用尚无策略版本领取过滤的旧 Worker。
 3. 最后发布前端，避免新页面向旧后端提交 v3 或全范围确认字段。
 4. 历史 v1 / v2 任务不自动升级策略，不原地扩大规则；用隔离目标新建任务试迁移。

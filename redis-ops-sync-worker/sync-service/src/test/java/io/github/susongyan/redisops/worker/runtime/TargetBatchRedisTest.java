@@ -42,7 +42,7 @@ class TargetBatchRedisTest {
         boolean cluster = endpointVariable().equals("SYNC_BATCH_TEST_CLUSTER_SLOT0");
         var planner = new CommandPlanner(new KeyFilter(List.of(), List.of()), cluster, null, policy);
         try (var target = session()) {
-            target.requireMultiKeyVersion();
+            target.requireMultiKeyVersion(policy);
             target.publishFence(fence, guard);
             int offset = 0;
             for (var fixture : cases) {

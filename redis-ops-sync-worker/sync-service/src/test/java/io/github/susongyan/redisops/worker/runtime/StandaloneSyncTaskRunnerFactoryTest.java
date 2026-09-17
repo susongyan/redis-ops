@@ -13,6 +13,47 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class StandaloneSyncTaskRunnerFactoryTest {
     @Test
+    void redis5RuntimeVersionGateAdmitsV3ButNotV2() throws Exception {
+        String endpoint = System.getenv("SYNC_TRANSACTION_TEST_REDIS5");
+        org.junit.jupiter.api.Assumptions.assumeTrue(endpoint != null && !endpoint.isBlank());
+        WorkerRedisConnectionProfilePort profiles = id -> new WorkerRedisConnectionProfile(id,
+                WorkerClusterMode.STANDALONE, List.of(endpoint), null, null, "NONE", null);
+        assertInstanceOf(StandaloneSyncTaskRunner.class,
+                factory(profiles, 4, 10, 1).create(task("{\"policyVersion\":\"v3\"}"), false));
+        var error = assertThrows(SyncBlockedException.class,
+                () -> factory(profiles, 4, 10, 1).create(task("{\"policyVersion\":\"v2\"}"), false));
+        org.junit.jupiter.api.Assertions.assertEquals("BLOCKED_UNSUPPORTED_REDIS_VERSION", error.reason());
+    }
+
+    @Test
+    void precheckUsesPolicyVersionAndStillRejectsDowngrades() throws Exception {
+        var assets = org.mockito.Mockito
+                .mock(io.github.susongyan.redisops.worker.persistence.WorkerAssetReadPort.class);
+        var redis5 = new io.github.susongyan.redisops.worker.domain.WorkerClusterView(1,
+                WorkerClusterMode.STANDALONE, "5.0.14", "127.0.0.1:6379",
+                io.github.susongyan.redisops.worker.domain.WorkerClusterStatus.ACTIVE);
+        var redis7 = new io.github.susongyan.redisops.worker.domain.WorkerClusterView(2,
+                WorkerClusterMode.STANDALONE, "7.4.2", "127.0.0.1:6380",
+                io.github.susongyan.redisops.worker.domain.WorkerClusterStatus.ACTIVE);
+        org.mockito.Mockito.when(assets.get(1)).thenReturn(redis5);
+        org.mockito.Mockito.when(assets.get(2)).thenReturn(redis5);
+        var precheck = new SyncPrecheckExecutor(assets, null, null, null,
+                new com.fasterxml.jackson.databind.ObjectMapper(), null, Path.of("data"), 1024);
+        var method = SyncPrecheckExecutor.class.getDeclaredMethod("compatibleVersions", WorkerSyncTask.class);
+        method.setAccessible(true);
+        org.junit.jupiter.api.Assertions.assertEquals("5.0.14 -> 5.0.14",
+                method.invoke(precheck, task("{\"policyVersion\":\"v3\"}")));
+        assertThrows(java.lang.reflect.InvocationTargetException.class,
+                () -> method.invoke(precheck, task("{\"policyVersion\":\"v2\"}")));
+        org.mockito.Mockito.when(assets.get(2)).thenReturn(redis7);
+        org.junit.jupiter.api.Assertions.assertEquals("5.0.14 -> 7.4.2",
+                method.invoke(precheck, task("{\"policyVersion\":\"v3\"}")));
+        org.mockito.Mockito.when(assets.get(1)).thenReturn(redis7);
+        org.mockito.Mockito.when(assets.get(2)).thenReturn(redis5);
+        assertThrows(java.lang.reflect.InvocationTargetException.class,
+                () -> method.invoke(precheck, task("{\"policyVersion\":\"v3\"}")));
+    }
+    @Test
     void rejectsUnknownPolicyBeforeReadingCredentials() {
         var task = task("{\"policyVersion\":\"v999\"}");
         var profiles = org.mockito.Mockito.mock(WorkerRedisConnectionProfilePort.class);

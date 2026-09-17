@@ -176,7 +176,7 @@ export default function SyncTasksPage() {
     BLOCKED_CROSS_DATABASE: '不支持跨源 DB 的 COPY',
     BLOCKED_COMMAND_ARGUMENTS: '命令参数不满足已适配的语法',
     BLOCKED_COMMAND_POLICY: '任务策略明确屏蔽了该命令',
-    BLOCKED_UNSUPPORTED_REDIS_VERSION: '当前策略仅适配 Redis 6.2 / 7.x',
+    BLOCKED_UNSUPPORTED_REDIS_VERSION: 'Redis 版本不在当前策略兼容范围：v2 为 6.2 / 7.x，v3 为 5.0 / 6.2 / 7.x',
     BLOCKED_VERSION_CHECK_UNAVAILABLE: '无法确认实际 Redis 版本',
     BLOCKED_TRANSACTION_MIXED_SCOPE: '事务涉及范围内外 Key，不能只同步其中一部分',
     BLOCKED_TRANSACTION_CROSS_SLOT: '事务涉及不同 Slot，不能拆成多次提交',
@@ -802,9 +802,9 @@ export default function SyncTasksPage() {
               style={{ marginBottom: 16 }}
             />
             <Form.Item name={['commandPolicy', 'policyVersion']} label="策略版本" rules={[{ required: true }]}
-              extra="使用 v2 / v3 前，需先升级 Worker；旧任务不会自动改变策略。">
+              extra="v3：Redis 5.0 / 6.2 / 7.x；v2：Redis 6.2 / 7.x。需先升级全部 Worker，旧任务不会自动改变策略。">
               <Select options={[
-                { value: 'v3', label: 'v3 · 多 Key + 源事务 / Lua effects（Redis 6.2 / 7.x）' },
+                { value: 'v3', label: 'v3 · 多 Key + 源事务 / Lua effects（Redis 5.0 / 6.2 / 7.x）' },
                 { value: 'v2', label: 'v2 · 多 Key 命令（不支持源事务）' },
                 { value: 'v1', label: 'v1 · 旧版保守范围' },
               ]} />
