@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [ADR-027 治理预检可跳过与可暂停](ADR-027-governance-optional-preflight.md)
+
 - [ADR-026 Redis 5.0 源事务同步](ADR-026-redis5-source-transactions.md)
 
 - [ADR-025 业务 Key 过滤与同步命令语义扩展（Accepted，分阶段实施）](ADR-025-sync-command-semantics.md)

@@ -4,6 +4,8 @@ import java.time.Duration;
 import java.util.Optional;
 
 public interface JobRepository {
+    boolean hasExecuting(String jobType, long bizId);
+    boolean renew(long id, String leaseOwner, Duration leaseDuration);
     AsyncJob enqueue(String jobType, long bizId, String payload, String idempotencyKey);
     Optional<AsyncJob> findById(long id);
     Optional<AsyncJob> claimNext(String jobType, String leaseOwner, Duration leaseDuration);

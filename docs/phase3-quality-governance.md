@@ -2,10 +2,14 @@
 
 状态：TTL 治理和数据清理治理闭环已实现，进入真实 Redis 验收阶段。
 
+更新：按 [ADR-027](adr/ADR-027-governance-optional-preflight.md)，两类治理均支持预检暂停/恢复，
+以及填写原因并明确确认后跳过预检直接执行；不再强制预检。
+新接口、审计与发布边界见 [治理预检操作说明](governance-preflight.md)。下方审批链路为常规预检路径。
+
 ## 当前已实现：TTL 治理
 
 TTL 治理任务通过 `ttl_governance_task` 保存集群、DB、Key Glob、目标 TTL、速率和最大 Key 数。
-执行流程固定为：
+常规预检流程为：
 
 ```text
 CREATED → DRY_RUN → AWAITING_APPROVAL → APPROVED → RUNNING → COMPLETED
@@ -13,7 +17,7 @@ CREATED → DRY_RUN → AWAITING_APPROVAL → APPROVED → RUNNING → COMPLETED
                                       ↘ CANCELLED
 ```
 
-- Dry Run 只使用 `SCAN`、`TTL` 和只读元数据，不修改 Redis。
+- Dry Run 为只读扫描，不修改 Redis；当前复用校验接口，会读取类型/TTL/内存及部分内容摘要。
 - 只有 Dry Run 完成并进入 `AWAITING_APPROVAL` 后才能审批。
 - 执行阶段使用 `EXPIRE`，每次写入前重新确认 TTL 仍为 `-1`；期间已被业务设置 TTL 的 Key 会跳过。
 - 支持 Cluster 分 master 扫描、数据库游标 checkpoint、限速、最大 Key 数、暂停、恢复和取消。

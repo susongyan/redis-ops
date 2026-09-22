@@ -5,6 +5,10 @@ import org.apache.ibatis.annotations.*;
 
 @Mapper
 public interface JobMapper {
+    @Select("SELECT EXISTS(SELECT 1 FROM async_job WHERE job_type=#{type} AND biz_id=#{bizId} AND status='RUNNING' AND lease_until>=CURRENT_TIMESTAMP(3))")
+    boolean hasExecuting(@Param("type") String type, @Param("bizId") long bizId);
+    @Update("UPDATE async_job SET lease_until=DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL #{seconds} SECOND) WHERE id=#{id} AND lease_owner=#{owner} AND status='RUNNING' AND lease_until>CURRENT_TIMESTAMP(3)")
+    int renew(@Param("id") long id, @Param("owner") String owner, @Param("seconds") long seconds);
     @Insert("""
             INSERT INTO async_job(job_type,biz_id,payload_json,status,idempotency_key)
             VALUES(#{jobType},#{bizId},CAST(#{payload} AS JSON),'PENDING',#{idempotencyKey})

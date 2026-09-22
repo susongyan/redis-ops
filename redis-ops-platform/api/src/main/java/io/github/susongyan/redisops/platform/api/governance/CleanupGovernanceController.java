@@ -41,6 +41,17 @@ public class CleanupGovernanceController {
         return command(id, key, version, "CLEANUP_GOVERNANCE_DRY_RUN",
                 () -> service.dryRun(id, version, operator(request), key), request);
     }
+    @PostMapping("/api/v1/cleanup-governance-tasks/{id}/skip-dry-run-and-start")
+    ApiResponse<CleanupGovernanceTask> skip(@PathVariable long id, @RequestHeader("Idempotency-Key") String key,
+            @RequestHeader("If-Match") long version, @jakarta.validation.Valid @RequestBody Skip body,
+            HttpServletRequest request) {
+        return response(idempotency.execute(operator(request), key, "CLEANUP_GOVERNANCE_SKIP_DRY_RUN_AND_START",
+                Map.of("id", id, "version", version, "reason", body.reason(), "confirmed", body.confirmed()),
+                () -> service.skipDryRunAndStart(id, version, operator(request), body.reason(), key),
+                x -> x.id().toString(), x -> service.get(Long.parseLong(x))), request);
+    }
+    record Skip(@NotBlank @Size(max = 500) String reason, @NotNull @AssertTrue Boolean confirmed) {
+    }
     @PostMapping("/api/v1/cleanup-governance-tasks/{id}/approve")
     ApiResponse<CleanupGovernanceTask> approve(@PathVariable long id, @RequestHeader("Idempotency-Key") String key,
             @RequestHeader("If-Match") long version, @RequestBody Approval body, HttpServletRequest request) {

@@ -39,12 +39,7 @@ public class TtlGovernanceJobWorker {
         String lease = owner + ":" + UUID.randomUUID();
         jobs.claimNext("TTL_GOVERNANCE", lease, Duration.ofMinutes(10)).ifPresent(job -> {
             try {
-                var matcher = ID.matcher(job.payload());
-                if (!matcher.find())
-                    throw new IllegalArgumentException("ttl task id missing");
-                long id = Long.parseLong(matcher.group(1));
-                boolean apply = job.payload().contains("APPLY");
-                execute(id, apply);
+                execute(GovernanceJobCommand.parse(job.payload()), job.id(), lease);
                 jobs.complete(job.id(), lease);
             } catch (RuntimeException error) {
                 try {
@@ -52,8 +47,8 @@ public class TtlGovernanceJobWorker {
                     if (failedMatcher.find()) {
                         long failedId = Long.parseLong(failedMatcher.group(1));
                         var failedTask = service.get(failedId);
-                        if (failedTask.status() == TtlGovernanceStatus.RUNNING
-                                || failedTask.status() == TtlGovernanceStatus.DRY_RUN)
+                        if (GovernanceJobCommand.parse(job.payload()).accepts(failedTask.version(), failedTask.status())
+                                && jobs.renew(job.id(), lease, Duration.ofMinutes(10)))
                             service.transition(failedId, failedTask.version(), TtlGovernanceStatus.FAILED,
                                     failedTask.approvalStatus());
                     }
@@ -72,17 +67,17 @@ public class TtlGovernanceJobWorker {
             }
         });
     }
-    private void execute(long id, boolean apply) {
+    private void execute(GovernanceJobCommand command, long jobId, String lease) {
+        long id = command.taskId();
+        boolean apply = command.apply();
         TtlGovernanceTask task = service.get(id);
-        if (task.status() == TtlGovernanceStatus.CANCELLED || task.status() == TtlGovernanceStatus.PAUSED)
-            return;
-        if ((!apply && task.status() != TtlGovernanceStatus.DRY_RUN)
-                || (apply && task.status() != TtlGovernanceStatus.RUNNING))
+        if (!command.accepts(task.version(), task.status()))
             return;
         var run = repository.latestRun(id).orElse(null);
-        if (run == null || run.status() != TtlGovernanceStatus.RUNNING) {
-            run = saveRun(new TtlGovernanceRun(null, task.id(), "TRUN-" + UUID.randomUUID().toString().substring(0, 12),
-                    TtlGovernanceStatus.RUNNING, redis.countKeys(task.clusterId(), task.databaseNo()), 0, 0, 0, 0, 0,
+        if (run == null || (!command.resume() && !run.runNo().equals("TRUN-" + jobId))
+                || run.status() != command.phase()) {
+            run = saveRun(new TtlGovernanceRun(null, task.id(), "TRUN-" + jobId,
+                    command.phase(), redis.countKeys(task.clusterId(), task.databaseNo()), 0, 0, 0, 0, 0,
                     java.time.Instant.now(), null, null));
         }
         long scanned = run.scannedKeys(), candidates = run.candidateKeys(), applied = run.appliedKeys();
@@ -94,13 +89,13 @@ public class TtlGovernanceJobWorker {
                 ValidationTaskStatus.CREATED, null, 0, java.time.Instant.now(), java.time.Instant.now());
         for (var shard : redis.scanShards(task.clusterId(), task.databaseNo())) {
             var checkpoint = repository.checkpoint(run.id(), shard.id()).orElse(null);
+            if (checkpoint != null && checkpoint.status() == TtlGovernanceStatus.COMPLETED)
+                continue;
             String cursor = checkpoint == null ? "0" : checkpoint.cursor();
             do {
                 task = service.get(id);
-                if (task.status() == TtlGovernanceStatus.CANCELLED || task.status() == TtlGovernanceStatus.PAUSED)
-                    return;
-                if ((!apply && task.status() != TtlGovernanceStatus.DRY_RUN)
-                        || (apply && task.status() != TtlGovernanceStatus.RUNNING))
+                if (!command.accepts(task.version(), task.status())
+                        || !jobs.renew(jobId, lease, Duration.ofMinutes(10)))
                     return;
                 var page = redis.scan(task.clusterId(), task.databaseNo(), shard.id(), cursor, 200);
                 cursor = page.nextCursor();
@@ -126,22 +121,24 @@ public class TtlGovernanceJobWorker {
                     else
                         skipped++;
                 }
-                repository.saveCheckpoint(new TtlGovernanceCheckpoint(run.id(), shard.id(), cursor, scanned,
+                var savedCheckpoint = new TtlGovernanceCheckpoint(run.id(), shard.id(), cursor, scanned,
                         "0".equals(cursor) ? TtlGovernanceStatus.COMPLETED : TtlGovernanceStatus.RUNNING,
-                        java.time.Instant.now()));
-                run = new TtlGovernanceRun(run.id(), run.taskId(), run.runNo(), TtlGovernanceStatus.RUNNING,
+                        java.time.Instant.now());
+                run = new TtlGovernanceRun(run.id(), run.taskId(), run.runNo(), command.phase(),
                         run.plannedKeys(), scanned, candidates, applied, skipped, failed, run.startedAt(), null, null);
-                run = saveRun(run);
-                rateLimit(page.keys().size(), task.scanRatePerSecond());
+                if (!jobs.renew(jobId, lease, Duration.ofMinutes(10)))
+                    return;
+                run = service.saveProgress(run, savedCheckpoint);
+                rateLimit(page.keys().size(), task.scanRatePerSecond(), command);
             } while (!"0".equals(cursor) && scanned < task.maxKeys());
         }
+        task = service.get(id);
+        if (!command.accepts(task.version(), task.status()) || !jobs.renew(jobId, lease, Duration.ofMinutes(10)))
+            return;
         run = new TtlGovernanceRun(run.id(), run.taskId(), run.runNo(), TtlGovernanceStatus.COMPLETED,
                 run.plannedKeys(), scanned, candidates, applied, skipped, failed, run.startedAt(),
                 java.time.Instant.now(), null);
-        saveRun(run);
-        service.transition(id, service.get(id).version(),
-                apply ? TtlGovernanceStatus.COMPLETED : TtlGovernanceStatus.AWAITING_APPROVAL,
-                apply ? TtlApprovalStatus.APPROVED : TtlApprovalStatus.PENDING);
+        service.completeRun(run, command.version(), apply);
     }
     private TtlGovernanceRun saveRun(TtlGovernanceRun run) {
         return repository.saveRun(run);
@@ -149,11 +146,19 @@ public class TtlGovernanceJobWorker {
     private static boolean matches(String pattern, String key) {
         return "*".equals(pattern) || key.matches(pattern.replace(".", "\\.").replace("*", ".*"));
     }
-    private static void rateLimit(int count, int rate) {
+    private void rateLimit(int count, int rate, GovernanceJobCommand command) {
         if (rate <= 0)
             return;
         try {
-            Thread.sleep(Math.max(0, count * 1000L / rate));
+            long remaining = Math.max(0, count * 1000L / rate);
+            while (remaining > 0) {
+                var task = service.get(command.taskId());
+                if (!command.accepts(task.version(), task.status()))
+                    return;
+                long step = Math.min(200, remaining);
+                Thread.sleep(step);
+                remaining -= step;
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("ttl governance interrupted", e);

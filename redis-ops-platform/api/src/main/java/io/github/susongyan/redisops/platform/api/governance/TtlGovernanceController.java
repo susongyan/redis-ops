@@ -42,6 +42,17 @@ public class TtlGovernanceController {
         return command(id, key, version, "TTL_GOVERNANCE_DRY_RUN",
                 () -> service.dryRun(id, version, operator(request), key), request);
     }
+    @PostMapping("/api/v1/ttl-governance-tasks/{id}/skip-dry-run-and-start")
+    ApiResponse<TtlGovernanceTask> skip(@PathVariable long id, @RequestHeader("Idempotency-Key") String key,
+            @RequestHeader("If-Match") long version, @jakarta.validation.Valid @RequestBody Skip body,
+            HttpServletRequest request) {
+        return response(idempotency.execute(operator(request), key, "TTL_GOVERNANCE_SKIP_DRY_RUN_AND_START",
+                Map.of("id", id, "version", version, "reason", body.reason(), "confirmed", body.confirmed()),
+                () -> service.skipDryRunAndStart(id, version, operator(request), body.reason(), key),
+                x -> x.id().toString(), x -> service.get(Long.parseLong(x))), request);
+    }
+    record Skip(@NotBlank @Size(max = 500) String reason, @NotNull @AssertTrue Boolean confirmed) {
+    }
     @PostMapping("/api/v1/ttl-governance-tasks/{id}/approve")
     ApiResponse<TtlGovernanceTask> approve(@PathVariable long id, @RequestHeader("Idempotency-Key") String key,
             @RequestHeader("If-Match") long version, HttpServletRequest request) {

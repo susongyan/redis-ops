@@ -41,7 +41,8 @@ public class TtlGovernanceService {
                 clusterId, db, pattern == null || pattern.isBlank() ? "*" : pattern, ttl,
                 Math.min(100_000, Math.max(1, rate)), Math.min(10_000_000, Math.max(1, max)),
                 TtlGovernanceStatus.CREATED, TtlApprovalStatus.PENDING, 0, Instant.now(), Instant.now()));
-        audits.append(operator, "TTL_GOVERNANCE_CREATE", "TTL_GOVERNANCE", saved.id().toString(), "SUCCESS");
+        audits.append(operator, "TTL_GOVERNANCE_CREATE", "TTL_GOVERNANCE", saved.id().toString(), "SUCCESS",
+                GovernanceAudit.details(saved));
         return saved;
     }
     public List<TtlGovernanceTask> list() {
@@ -56,24 +57,41 @@ public class TtlGovernanceService {
     public List<TtlGovernanceCheckpoint> checkpoints(long id) {
         return latest(id).map(x -> tasks.checkpoints(x.id())).orElse(List.of());
     }
+    @Transactional
+    public TtlGovernanceRun saveProgress(TtlGovernanceRun run, TtlGovernanceCheckpoint checkpoint) {
+        tasks.saveCheckpoint(checkpoint);
+        return tasks.saveRun(run);
+    }
+    @Transactional
+    public void completeRun(TtlGovernanceRun run, long version, boolean apply) {
+        transition(run.taskId(), version, apply ? TtlGovernanceStatus.COMPLETED : TtlGovernanceStatus.AWAITING_APPROVAL,
+                apply ? TtlApprovalStatus.APPROVED : TtlApprovalStatus.PENDING);
+        tasks.saveRun(run);
+    }
 
     @Transactional
     public TtlGovernanceTask dryRun(long id, long version, String operator, String idempotencyKey) {
         TtlGovernanceTask current = get(id);
-        if (!Set.of(TtlGovernanceStatus.CREATED, TtlGovernanceStatus.FAILED).contains(current.status()))
+        if (!Set.of(TtlGovernanceStatus.CREATED, TtlGovernanceStatus.FAILED, TtlGovernanceStatus.DRY_RUN_PAUSED)
+                .contains(current.status()))
             throw new BusinessException("GOVERNANCE_INVALID_STATE", "task must be created or failed before dry run");
+        idle(id);
         TtlGovernanceTask task = transition(id, version, TtlGovernanceStatus.DRY_RUN, TtlApprovalStatus.PENDING);
-        jobs.enqueue("TTL_GOVERNANCE", id, "{\"taskId\":" + id + ",\"action\":\"DRY_RUN\"}", idempotencyKey);
-        audits.append(operator, "TTL_GOVERNANCE_DRY_RUN", "TTL_GOVERNANCE", Long.toString(id), "SUCCESS");
+        jobs.enqueue("TTL_GOVERNANCE", id,
+                payload(task, "DRY_RUN", current.status() == TtlGovernanceStatus.DRY_RUN_PAUSED), idempotencyKey);
+        audits.append(operator, "TTL_GOVERNANCE_DRY_RUN", "TTL_GOVERNANCE", Long.toString(id), "SUCCESS",
+                GovernanceAudit.details(get(id)));
         return task;
     }
     @Transactional
     public TtlGovernanceTask approve(long id, long version, String operator) {
         TtlGovernanceTask task = get(id);
         if (task.status() != TtlGovernanceStatus.AWAITING_APPROVAL)
-            throw new BusinessException("GOVERNANCE_NOT_READY", "dry run must complete before approval");
+            throw new BusinessException("GOVERNANCE_NOT_READY",
+                    "preflight must complete or be explicitly skipped before approval");
         TtlGovernanceTask next = transition(id, version, TtlGovernanceStatus.APPROVED, TtlApprovalStatus.APPROVED);
-        audits.append(operator, "TTL_GOVERNANCE_APPROVE", "TTL_GOVERNANCE", Long.toString(id), "SUCCESS");
+        audits.append(operator, "TTL_GOVERNANCE_APPROVE", "TTL_GOVERNANCE", Long.toString(id), "SUCCESS",
+                GovernanceAudit.details(get(id)));
         return next;
     }
     @Transactional
@@ -83,16 +101,24 @@ public class TtlGovernanceService {
                 || task.approvalStatus() != TtlApprovalStatus.APPROVED)
             throw new BusinessException("GOVERNANCE_APPROVAL_REQUIRED", "approved dry run is required");
         TtlGovernanceTask next = transition(id, version, TtlGovernanceStatus.RUNNING, TtlApprovalStatus.APPROVED);
-        jobs.enqueue("TTL_GOVERNANCE", id, "{\"taskId\":" + id + ",\"action\":\"APPLY\"}", key);
-        audits.append(operator, "TTL_GOVERNANCE_START", "TTL_GOVERNANCE", Long.toString(id), "SUCCESS");
+        idle(id);
+        jobs.enqueue("TTL_GOVERNANCE", id, payload(next, "APPLY", task.status() == TtlGovernanceStatus.PAUSED), key);
+        audits.append(operator, "TTL_GOVERNANCE_START", "TTL_GOVERNANCE", Long.toString(id), "SUCCESS",
+                GovernanceAudit.details(get(id)));
         return next;
     }
     @Transactional
     public TtlGovernanceTask pause(long id, long version, String operator) {
-        if (get(id).status() != TtlGovernanceStatus.RUNNING)
+        TtlGovernanceTask current = get(id);
+        if (!Set.of(TtlGovernanceStatus.RUNNING, TtlGovernanceStatus.DRY_RUN).contains(current.status()))
             throw new BusinessException("GOVERNANCE_NOT_RUNNING", "only a running task can be paused");
-        TtlGovernanceTask next = transition(id, version, TtlGovernanceStatus.PAUSED, TtlApprovalStatus.APPROVED);
-        audits.append(operator, "TTL_GOVERNANCE_PAUSE", "TTL_GOVERNANCE", Long.toString(id), "SUCCESS");
+        TtlGovernanceTask next = transition(id, version,
+                current.status() == TtlGovernanceStatus.DRY_RUN
+                        ? TtlGovernanceStatus.DRY_RUN_PAUSED
+                        : TtlGovernanceStatus.PAUSED,
+                current.approvalStatus());
+        audits.append(operator, "TTL_GOVERNANCE_PAUSE", "TTL_GOVERNANCE", Long.toString(id), "SUCCESS",
+                GovernanceAudit.details(get(id)));
         return next;
     }
     @Transactional
@@ -101,8 +127,33 @@ public class TtlGovernanceService {
         if (Set.of(TtlGovernanceStatus.COMPLETED, TtlGovernanceStatus.CANCELLED).contains(task.status()))
             throw new BusinessException("GOVERNANCE_NOT_ACTIVE", "governance task is already finished");
         TtlGovernanceTask next = transition(id, version, TtlGovernanceStatus.CANCELLED, task.approvalStatus());
-        audits.append(operator, "TTL_GOVERNANCE_CANCEL", "TTL_GOVERNANCE", Long.toString(id), "SUCCESS");
+        audits.append(operator, "TTL_GOVERNANCE_CANCEL", "TTL_GOVERNANCE", Long.toString(id), "SUCCESS",
+                GovernanceAudit.details(get(id)));
         return next;
+    }
+    @Transactional
+    public TtlGovernanceTask skipDryRunAndStart(long id, long version, String operator, String reason, String key) {
+        var current = get(id);
+        if (!Set.of(TtlGovernanceStatus.CREATED, TtlGovernanceStatus.DRY_RUN_PAUSED).contains(current.status()))
+            throw new BusinessException("GOVERNANCE_INVALID_STATE", "pause preflight before skipping");
+        String details = GovernanceAudit.skip(current.status(), reason);
+        idle(id);
+        var next = transition(id, version, TtlGovernanceStatus.RUNNING, TtlApprovalStatus.APPROVED);
+        audits.append(operator, "TTL_GOVERNANCE_SKIP_DRY_RUN", "TTL_GOVERNANCE", Long.toString(id), "SUCCESS", details);
+        audits.append(operator, "TTL_GOVERNANCE_EXECUTION_AUTHORIZED", "TTL_GOVERNANCE", Long.toString(id), "SUCCESS",
+                GovernanceAudit.details(next));
+        jobs.enqueue("TTL_GOVERNANCE", id, payload(next, "APPLY", false), key);
+        audits.append(operator, "TTL_GOVERNANCE_START", "TTL_GOVERNANCE", Long.toString(id), "SUCCESS",
+                GovernanceAudit.details(next));
+        return next;
+    }
+    private void idle(long id) {
+        if (jobs.hasExecuting("TTL_GOVERNANCE", id))
+            throw new BusinessException("REQUEST_IN_PROGRESS", "上一个执行批次仍在退出，请稍后重试");
+    }
+    private static String payload(TtlGovernanceTask t, String action, boolean resume) {
+        return "{\"taskId\":" + t.id() + ",\"version\":" + t.version() + ",\"action\":\"" + action + "\",\"resume\":"
+                + resume + "}";
     }
     public TtlGovernanceTask transition(long id, long version, TtlGovernanceStatus status, TtlApprovalStatus approval) {
         TtlGovernanceTask current = get(id);

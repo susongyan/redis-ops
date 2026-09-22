@@ -13,6 +13,12 @@ public class MyBatisJobRepository implements JobRepository {
     public MyBatisJobRepository(JobMapper mapper) {
         this.mapper = mapper;
     }
+    public boolean hasExecuting(String type, long bizId) {
+        return mapper.hasExecuting(type, bizId);
+    }
+    public boolean renew(long id, String owner, Duration duration) {
+        return mapper.renew(id, owner, duration.toSeconds()) == 1;
+    }
     @Override
     public AsyncJob enqueue(String type, long bizId, String payload, String key) {
         JobMapper.JobRow row = new JobMapper.JobRow();
