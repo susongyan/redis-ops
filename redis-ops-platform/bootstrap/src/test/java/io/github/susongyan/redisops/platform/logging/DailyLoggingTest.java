@@ -24,7 +24,10 @@ class DailyLoggingTest {
     void activeLogMovesToNextDateWithoutRestart() throws Exception {
         var environment = new MockEnvironment()
                 .withProperty("log-dir", directory.toString())
-                .withProperty("spring.application.name", "logging-test");
+                .withProperty("spring.application.name", "logging-test")
+                .withProperty("logging.logback.rollingpolicy.max-history", "1")
+                .withProperty("logging.logback.rollingpolicy.file-name-pattern",
+                        "ignored/%d{yyyy-MM-dd}/ignored.%i.log");
         // Isolate the test from the JVM-wide logging context.
         var constructor = Class.forName("org.springframework.boot.logging.logback.SpringBootJoranConfigurator")
                 .getDeclaredConstructor(LoggingInitializationContext.class);

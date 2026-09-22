@@ -13,8 +13,9 @@
 单文件达到 20MB 后递增序号（如 `platform.1.log`），不压缩。历史保留 14 天，每个进程历史容量上限 1GB。
 启动时清理过期历史；容量上限不包含当前活动文件。多实例不得共写一个文件，应配置不同目录。
 
-日常调整格式与默认容量直接修改 XML；仍支持通过 Spring 外部配置覆盖 `logging.level.*`、
-`logging.logback.rollingpolicy.*`。目录推荐通过环境变量 `LOG_DIR` 覆盖。
+格式、默认级别、文件路径模式和容量策略直接维护在 XML，不再读取 `logging.logback.rollingpolicy.*`。
+目录推荐通过环境变量 `LOG_DIR` 覆盖。Spring Boot 自身仍支持外部 `logging.level.*` 调整级别，
+但本项目 YAML 不再定义日志配置。
 不使用固定的 `logging.file.name`，避免活动日志始终留在同一个路径。启动用户需有目录写权限。
 
 本地旧启动脚本仍将控制台输出追加到 `data/local/*.log`，那是启动器副本，不是滚动文件。
