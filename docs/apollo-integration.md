@@ -1,13 +1,11 @@
-# Apollo 应用侧接入（尚未实现）
+# Apollo 接入说明
 
-已实现：两个进程读取 Spring 属性，支持外部 YAML，现有 AES-GCM 加密逻辑不变。
-未实现/未验收：Apollo 客户端依赖、生产连接与统一热更新。当前 JAR 不能仅设置
-`spring.config.import=apollo://...` 就算接入成功。本文件是后续接入说明，不建设 Namespace/CI/私服。
+当前项目未引入 Apollo，需要时由研发添加以下依赖和配置。配置按重启生效管理，无需新增 profile 或开关。
 
-## 后续应用改动
+## 1. Maven 依赖
 
-Apollo 官方有 Config Data 适配器。后续在 Platform bootstrap 和 Worker sync-service 各自引入，
-不放进 contract/domain；在父 POM 固定公司批准、与本项目 Spring Boot 验证兼容的 `${apollo.version}`：
+在 Platform 的 [bootstrap/pom.xml](../redis-ops-platform/bootstrap/pom.xml) 和 Worker 的
+[sync-service/pom.xml](../redis-ops-sync-worker/sync-service/pom.xml) 中添加：
 
 ```xml
 <dependency>
@@ -17,7 +15,21 @@ Apollo 官方有 Config Data 适配器。后续在 Platform bootstrap 和 Worker
 </dependency>
 ```
 
-适配器已包含客户端依赖。引入并验证后才可用以下本地引导配置：
+在两个项目各自父 POM 的 `<properties>` 中定义版本：
+
+```xml
+<apollo.version>REPLACE_WITH_APPROVED_VERSION</apollo.version>
+```
+
+将占位符替换为公司批准、与本项目 Spring Boot 3.3.5 验证兼容的版本，然后重新构建。
+适配器已包含 `apollo-client`，无需重复添加，也无需添加 `@EnableApolloConfig` 或配置 `apollo.bootstrap.enabled`。
+
+## 2. 参数配置
+
+在现有外部 `application-pro.yml` 中合并以下内容，不新增 Apollo 专用配置文件。
+已有 `spring:` 节点时，将 `config.import` 合并到该节点下。
+
+Platform 示例：
 
 ```yaml
 app:
@@ -27,40 +39,67 @@ apollo:
   cluster: default
 spring:
   config:
-    import: "apollo://redis-ops-platform-pro"
+    import: "apollo://application"
 ```
 
-Worker 使用自己的 app.id 和 `apollo://redis-ops-worker-pro`。名字只是约定示例，由公司提供实际值。
-Spring profile=pro 不会自动选择 Apollo 环境。不要混用 bootstrap 与 Config Data 两套加载方式。
-加载机制依据 [Apollo 官方 Java 客户端指南](https://github.com/apolloconfig/apollo/blob/master/docs/zh/client/java-sdk-user-guide.md)。
+Worker 示例：
 
-## Namespace 内容与引导信息
+```yaml
+app:
+  id: redis-ops-worker
+apollo:
+  meta: https://REPLACE_APOLLO_META
+  cluster: default
+spring:
+  config:
+    import: "apollo://application"
+```
 
-properties Namespace 将两套 YAML 展平为同名 Spring 属性：
+| 参数 | 含义 |
+| --- | --- |
+| `app.id` | Apollo 中创建的应用 ID，替换为各进程实际使用的 App ID。 |
+| `apollo.meta` | 对应环境的 Apollo Meta Server 地址，用于发现 Config Service。 |
+| `apollo.cluster` | Apollo 配置集群名，使用默认集群时填 `default`。 |
+| `spring.config.import` | 要加载的 Namespace，默认使用 `apollo://application`；`apollo://` 也是加载默认 `application` 的简写。 |
 
-| 属性 | Platform | Worker |
-| --- | --- | --- |
-| spring.datasource.url / username / password | Platform 账号 | 同库 Worker 账号 |
-| spring.flyway.enabled | 按迁移方案 | false |
-| spring.flyway.user / password | 若启动时迁移则设置 | 不设置 |
-| redis-ops.credential.keys | 完整密钥环 | 同一完整密钥环 |
-| server.port | 8080 示例 | 8081 示例 |
-| sync.engine.* | 不设置 | 并发、租约、spool 等 |
+两个进程分别读取各自 `app.id` 下的 `application` Namespace。
 
-不要求使用 DB_PASSWORD/REDIS_OPS_CREDENTIAL_KEYS 等旧环境变量名。
-app.id、配置服务发现地址、首次连接需要的访问凭据必须在读取远端前取得，不能仅放在待连接 Namespace。
-避免在命令行、环境变量、本地 YAML 和 Apollo 配置同一属性为不同值。
-配置中心负责权限、审计、存储安全；客户端缓存也可能包含秘密，应按公司缓存保护策略处理。
+需要加载多个 Namespace 时，使用 YAML 列表，每项都带 `apollo://` 前缀：
 
-## 生效与验收
+```yaml
+spring:
+  config:
+    import:
+      - "apollo://application"
+      - "apollo://your-extra-namespace"
+```
 
-密钥对象、数据源及引擎参数在启动时构造，当前未实现统一动态重绑定。
-默认按“发布配置 → 暂停/结束任务 → 受控重启 → 验收”处理，不承诺发布即热更新。
-轮换先让所有读者持有新旧 key，再切换新写入 key，旧密文迁移完成前不能删旧 key。
-配置中心回滚不是密文/数据库回滚。MySQL 仍保存加密后的 Redis 凭据，不将密码放入 Job payload。
+将 `your-extra-namespace` 替换为实际名称，并确保对应 Namespace 已发布且应用有权读取。
+同名属性以后面的导入项为准；上例中 `your-extra-namespace` 覆盖 `application` 中的同名属性。
+也可以写成逗号分隔的字符串：`"apollo://application,apollo://your-extra-namespace"`。
 
-接入验收覆盖：首次无缓存启动、配置服务不可达、缓存回退策略、Namespace 缺失、无权限、
-配置缺项、两侧密钥一致及重启生效；错误日志不能暴露秘密。不要仅凭缓存可用宣称具备生产容灾。
-本轮未做 Apollo 联调，不承诺某个公司客户端版本可直接投入生产。
+引导参数保留在本地部署配置中，不能只放在待连接的 Apollo Namespace 中。
+沿用现有启动命令；Spring 的 `pro` profile 不会自动选择 Apollo 环境，应配置对应环境的 Meta Server。
 
-返回 [部署交付入口](deployment-delivery.md)。
+## 3. Namespace 中的配置
+
+创建并发布 **properties 类型 Namespace**，使用应用原有的 Spring 属性名。例如：
+
+```properties
+spring.datasource.url=jdbc:mysql://REPLACE_MYSQL_HOST:3306/redis_governance?serverTimezone=UTC
+spring.datasource.username=REPLACE_DB_USERNAME
+spring.datasource.password=REPLACE_DB_PASSWORD
+redis-ops.credential.keys=v1:REPLACE_BASE64_32_BYTE_KEY
+```
+
+| 配置 | 含义 |
+| --- | --- |
+| `spring.datasource.url` | MySQL 连接地址，保留 `serverTimezone=UTC`；两个进程连接同一个业务库。 |
+| `spring.datasource.username` / `password` | 各进程自己的数据库账号和密码。 |
+| `redis-ops.credential.keys` | 凭据加密密钥环，格式为 `keyId:Base64密钥`，多个用逗号分隔；每个密钥解码后为 32 字节，两侧配置一致。 |
+
+其他配置按 [Platform 模板](../redis-ops-platform/deploy/config/application-pro.yml.example) 和
+[Worker 模板](../redis-ops-sync-worker/deploy/config/application-pro.yml.example) 展平为同名属性即可。
+已迁入 Apollo 的属性避免在本地重复配置；配置发布后受控重启相关进程生效。
+
+参考：[Apollo 官方 Java 客户端指南](https://github.com/apolloconfig/apollo/blob/master/docs/zh/client/java-sdk-user-guide.md)。
