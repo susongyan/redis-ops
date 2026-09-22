@@ -170,7 +170,7 @@ sudo journalctl -u redis-ops-platform -f
 - `doctor` 报缺失配置：检查 `conf/redis-ops.env`，脚本不会打印秘密值。
 - 配置权限错误：执行 `chmod 600 conf/redis-ops.env`。
 - 端口占用：调整对应端口或停止占用进程。
-- Platform 健康超时：检查 `var/log/platform.log`、MySQL 网络与账号权限。
+- Platform 健康超时：检查启动目录下 `log/yyyy-MM-dd/platform.*.log`（或 `LOG_DIR` 指定目录）、MySQL 网络与账号权限。
 - 前端启动失败：执行 `nginx -t -p "$PWD/" -c "$PWD/var/nginx/nginx.conf"`。
 - `/api` 返回 502：检查 `PLATFORM_PROXY_URL` 以及前端机器到 Platform 的网络。
 

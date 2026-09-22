@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="redis-ops-platform"/>
+    <springProperty scope="context" name="LOG_DIRECTORY" source="log-dir" defaultValue="${LOG_DIR:-./log}"/>
+    <property name="CONSOLE_LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSSXXX} %5p [${APP_NAME}] [pid=${PID:-}] [%t] %logger{48} - %msg%n%wEx"/>
+    <property name="FILE_LOG_PATTERN" value="${CONSOLE_LOG_PATTERN}"/>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <springProperty scope="context" name="DAILY_PATTERN" source="logging.logback.rollingpolicy.file-name-pattern"
+                    defaultValue="${LOG_DIRECTORY}/%d{yyyy-MM-dd}/platform.%i.log"/>
+    <springProperty scope="context" name="MAX_FILE_SIZE" source="logging.logback.rollingpolicy.max-file-size" defaultValue="20MB"/>
+    <springProperty scope="context" name="MAX_HISTORY" source="logging.logback.rollingpolicy.max-history" defaultValue="14"/>
+    <springProperty scope="context" name="TOTAL_SIZE_CAP" source="logging.logback.rollingpolicy.total-size-cap" defaultValue="1GB"/>
+    <springProperty scope="context" name="CLEAN_HISTORY" source="logging.logback.rollingpolicy.clean-history-on-start" defaultValue="true"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+    <appender name="DAILY_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <!-- No fixed file: the active file itself follows the rolling date directory. -->
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${DAILY_PATTERN}</fileNamePattern>
+            <maxFileSize>${MAX_FILE_SIZE}</maxFileSize>
+            <maxHistory>${MAX_HISTORY}</maxHistory>
+            <totalSizeCap>${TOTAL_SIZE_CAP}</totalSizeCap>
+            <cleanHistoryOnStart>${CLEAN_HISTORY}</cleanHistoryOnStart>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${FILE_LOG_PATTERN}</pattern>
+            <charset>${FILE_LOG_CHARSET}</charset>
+        </encoder>
+    </appender>
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="DAILY_FILE"/>
+    </root>
+</configuration>
