@@ -22,7 +22,7 @@ spring:
     import: optional:file:./config/
 
   application:
-    name: redis-api
+    name: redis-ops-platform
   datasource:
     url: ${DB_URL:jdbc:mysql://localhost:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
     username: ${DB_USERNAME:redis_governance}
