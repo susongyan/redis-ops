@@ -33,10 +33,10 @@ public interface TtlGovernanceMapper {
     @Insert("INSERT INTO ttl_governance_checkpoint(run_id,shard_id,cursor_value,scanned_keys,status) VALUES(#{runId},#{shardId},#{cursor},#{scannedKeys},#{status}) ON DUPLICATE KEY UPDATE cursor_value=VALUES(cursor_value),scanned_keys=VALUES(scanned_keys),status=VALUES(status),updated_at=CURRENT_TIMESTAMP(3)")
     void upsertCheckpoint(CheckpointRow row);
 
-    @Select("SELECT run_id runId,shard_id shardId,cursor_value cursor,scanned_keys scannedKeys,status,updated_at updatedAt FROM ttl_governance_checkpoint WHERE run_id=#{runId} AND shard_id=#{shardId}")
+    @Select("SELECT run_id runId,shard_id shardId,cursor_value AS `cursor`,scanned_keys scannedKeys,status,updated_at updatedAt FROM ttl_governance_checkpoint WHERE run_id=#{runId} AND shard_id=#{shardId}")
     TtlGovernanceCheckpoint checkpoint(@Param("runId") long runId, @Param("shardId") String shardId);
 
-    @Select("SELECT run_id runId,shard_id shardId,cursor_value cursor,scanned_keys scannedKeys,status,updated_at updatedAt FROM ttl_governance_checkpoint WHERE run_id=#{runId} ORDER BY id")
+    @Select("SELECT run_id runId,shard_id shardId,cursor_value AS `cursor`,scanned_keys scannedKeys,status,updated_at updatedAt FROM ttl_governance_checkpoint WHERE run_id=#{runId} ORDER BY id")
     List<TtlGovernanceCheckpoint> checkpoints(long runId);
 
     class TaskRow {

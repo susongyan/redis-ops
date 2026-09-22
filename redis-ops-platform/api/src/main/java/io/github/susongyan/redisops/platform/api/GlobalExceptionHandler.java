@@ -10,6 +10,12 @@ import java.util.List;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(org.springframework.dao.DataAccessException.class)
+    ResponseEntity<ErrorBody> database(HttpServletRequest request) {
+        // Do not expose SQL, bound parameters, or credentials in the response or logs.
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(new ErrorBody("DATABASE_ERROR", "数据库操作失败，请联系管理员", requestId(request), List.of()));
+    }
     @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
     ResponseEntity<ErrorBody> unreadable(HttpServletRequest request) {
         return ResponseEntity.badRequest()
