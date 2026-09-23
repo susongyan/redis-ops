@@ -25,6 +25,8 @@ public class RedisDataEndpointResolver {
 
     public RedisDataEndpointResolver(
             @Value("${sync.engine.connect-timeout-ms:10000}") long connectTimeoutMillis) {
+        if (connectTimeoutMillis < 1 || connectTimeoutMillis > Integer.MAX_VALUE)
+            throw new IllegalArgumentException("sync.engine.connect-timeout-ms must be positive and bounded");
         this.connectTimeout = Duration.ofMillis(connectTimeoutMillis);
     }
 
@@ -41,6 +43,39 @@ public class RedisDataEndpointResolver {
         }
         throw new IOException("all Sentinel endpoints failed to resolve master "
                 + profile.sentinelMasterName(), last);
+    }
+
+    public String readServerVersion(WorkerRedisConnectionProfile profile, RedisEndpoint endpoint) throws IOException {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(endpoint.host(), endpoint.port()),
+                    Math.toIntExact(connectTimeout.toMillis()));
+            socket.setSoTimeout(Math.toIntExact(connectTimeout.toMillis()));
+            RespCodec codec = new RespCodec(new BufferedInputStream(socket.getInputStream(), 16 * 1024),
+                    new BufferedOutputStream(socket.getOutputStream(), 16 * 1024));
+            if (profile.password() != null)
+                authenticate(codec, profile);
+            String version = infoField(codec, "server", "redis_version");
+            if (!version.matches("[0-9]{1,3}\\.[0-9]{1,3}(?:\\.[0-9]{1,6})?(?:[-+][A-Za-z0-9._-]{1,32})?"))
+                throw new RespProtocolException("INFO server contains an invalid redis_version");
+            if (!"master".equals(infoField(codec, "replication", "role")))
+                throw new RespProtocolException("version probe endpoint is no longer a master; retry precheck");
+            return version;
+        }
+    }
+
+    private static String infoField(RespCodec codec, String section, String field) throws IOException {
+        codec.writeCommand("INFO", section);
+        RespValue response = codec.read();
+        if (!(response instanceof RespValue.Bulk bulk) || bulk.value() == null)
+            throw new RespProtocolException("INFO " + section + " failed; check Redis connection and INFO permission");
+        for (String line : new String(bulk.value(), StandardCharsets.US_ASCII).split("\\r?\\n")) {
+            if (line.startsWith(field + ":")) {
+                String value = line.substring(field.length() + 1).trim();
+                if (!value.isEmpty())
+                    return value;
+            }
+        }
+        throw new RespProtocolException("INFO " + section + " is missing " + field);
     }
 
     public List<ClusterMaster> resolveClusterMasters(WorkerRedisConnectionProfile profile) throws IOException {

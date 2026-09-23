@@ -8,6 +8,12 @@ Region 和 IDC 是独立资源，集群通过 `idcId` 关联机房，Region 由 
 关联主备关系的同步任务仍要求两端配置 IDC 且 IDC 不同；创建任务时重新校验，避免资产元数据变更绕过约束。
 两种任务均要求源、目标为不同的 ACTIVE 集群，版本、DB、命令策略及执行预检保持不变。
 
+同步预检的 VERSION_COMPATIBILITY 使用实时 INFO server 的 redis_version，不依赖资产中可选的
+Redis 版本字段。创建普通同步任务不因该字段为空、过时或方向不符而拒绝；真正兼容性由预检把关。
+Standalone/Sentinel 检查当前数据主节点，Cluster 检查全部主节点并校验混合版本。
+需具备 INFO server、INFO replication 权限，以及对应 Sentinel/Cluster 拓扑读取权限；
+连接、权限、版本解析或主节点角色校验失败时不放行，不自动回写资产版本。
+
 主备关系要求两个 ACTIVE 集群位于不同 IDC、部署模式一致，并且 Redis 主版本兼容。关系当前方向为 `primaryClusterId → standbyClusterId`，目标 RPO 由 `desiredRpoSeconds` 定义。
 
 RPO 的时间戳水位、Offset 估算、Backlog 追平时间和切换判定规则见 [Redis 同步 RPO 计算与切换判定](rpo-calculation-and-switchover.md)。

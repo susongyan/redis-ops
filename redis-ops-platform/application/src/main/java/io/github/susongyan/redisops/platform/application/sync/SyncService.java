@@ -92,7 +92,6 @@ public class SyncService {
         else
             relationService.validateDisasterRecoveryPair(source, target);
         RedisCluster sourceCluster = cluster(source), targetCluster = cluster(target);
-        validateVersionDirection(relationId, sourceCluster.redisVersion(), targetCluster.redisVersion());
         int actualSourceDb = validateDb("sourceDb", sourceCluster.mode(), sourceDb);
         int actualTargetDb = validateDb("targetDb", targetCluster.mode(), targetDb);
         List<String> actualIncludes = patterns(includes, true), actualExcludes = patterns(excludes, false);
@@ -532,21 +531,6 @@ public class SyncService {
                 status == SyncTaskStatus.INCR_SYNCING || status == SyncTaskStatus.CAUGHT_UP ||
                 status == SyncTaskStatus.PAUSING || status == SyncTaskStatus.PAUSED ||
                 status == SyncTaskStatus.RESUMING || status == SyncTaskStatus.STOPPING;
-    }
-    private static void validateVersionDirection(Long relationId, String source, String target) {
-        if (source == null || target == null)
-            return;
-        int[] a = version(source), b = version(target);
-        if (relationId == null && (a[0] > b[0] || (a[0] == b[0] && a[1] > b[1])))
-            throw invalid("temporary migration from newer Redis to older Redis is not certified");
-    }
-    private static int[] version(String value) {
-        try {
-            String[] p = value.split("[.-]");
-            return new int[]{Integer.parseInt(p[0]), p.length > 1 ? Integer.parseInt(p[1]) : 0};
-        } catch (RuntimeException ignored) {
-            return new int[]{0, 0};
-        }
     }
     private String toJson(Object value) {
         try {

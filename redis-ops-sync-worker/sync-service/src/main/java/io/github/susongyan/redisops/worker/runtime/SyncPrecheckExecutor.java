@@ -87,23 +87,66 @@ public class SyncPrecheckExecutor {
         return task.sourceClusterId() + " -> " + task.targetClusterId();
     }
     private String compatibleVersions(WorkerSyncTask task) throws Exception {
-        WorkerClusterView source = clusters.get(task.sourceClusterId());
-        WorkerClusterView target = clusters.get(task.targetClusterId());
-        int[] sourceVersion = version(source.redisVersion());
-        int[] targetVersion = version(target.redisVersion());
-        supportedVersion(sourceVersion, "source");
-        supportedVersion(targetVersion, "target");
-        if (commandPolicy(task).supportsMultiKey()) {
-            for (int[] candidate : List.of(sourceVersion, targetVersion))
-                if (!commandPolicy(task).supportsMultiKeyRedisVersion(candidate[0], candidate[1]))
-                    throw new IllegalStateException(
-                            "Redis version is outside the selected command policy compatibility range");
+        List<String> sourceVersions = liveVersions(task.sourceClusterId(), "source");
+        List<String> targetVersions = liveVersions(task.targetClusterId(), "target");
+        var policy = commandPolicy(task);
+        for (var entry : Map.of("source", sourceVersions, "target", targetVersions).entrySet()) {
+            for (String value : entry.getValue()) {
+                int[] candidate = version(value);
+                supportedVersion(candidate, entry.getKey());
+                if (policy.supportsMultiKey() && !policy.supportsMultiKeyRedisVersion(candidate[0], candidate[1]))
+                    throw new IllegalStateException(entry.getKey() + " Redis " + value
+                            + " is outside the selected command policy compatibility range");
+            }
         }
-        if (task.relationId() != null && (sourceVersion[0] != targetVersion[0] || sourceVersion[1] != targetVersion[1]))
-            throw new IllegalStateException("disaster recovery requires matching Redis major.minor versions");
-        if (task.relationId() == null && compare(sourceVersion, targetVersion) > 0)
-            throw new IllegalStateException("migration from newer Redis to older Redis is not certified");
-        return source.redisVersion() + " -> " + target.redisVersion();
+        for (String source : sourceVersions) {
+            for (String target : targetVersions) {
+                int comparison = compare(version(source), version(target));
+                if (task.relationId() != null && comparison != 0)
+                    throw new IllegalStateException("disaster recovery requires matching Redis major.minor versions: "
+                            + source + " -> " + target);
+                if (task.relationId() == null && comparison > 0)
+                    throw new IllegalStateException("migration from newer Redis to older Redis is not certified: "
+                            + source + " -> " + target);
+            }
+        }
+        return "INFO server: source=" + sourceVersions + " -> target=" + targetVersions;
+    }
+
+    private List<String> liveVersions(long clusterId, String side) throws Exception {
+        WorkerRedisConnectionProfile loaded;
+        try {
+            loaded = profiles.get(clusterId);
+        } catch (Exception error) {
+            throw new IllegalStateException(side + " version probe could not load credentials");
+        }
+        try (WorkerRedisConnectionProfile profile = loaded) {
+            Set<RedisEndpoint> masters = new LinkedHashSet<>();
+            if (profile.mode() == WorkerClusterMode.CLUSTER)
+                endpoints.resolveClusterMasters(profile).forEach(master -> masters.add(master.endpoint()));
+            else
+                masters.add(endpoints.resolvePrimary(profile));
+            if (masters.isEmpty() || masters.size() > 256)
+                throw new IllegalStateException(side + " version probe requires 1..256 master nodes");
+            List<String> versions = new ArrayList<>();
+            for (RedisEndpoint master : masters) {
+                try {
+                    versions.add(endpoints.readServerVersion(profile, master));
+                } catch (Exception error) {
+                    // Do not include raw Redis responses or credential-related exception details.
+                    String reason = error instanceof io.github.susongyan.redisops.worker.protocol.RespProtocolException
+                            ? error.getMessage()
+                            : "connection failed or timed out";
+                    throw new IllegalStateException(side + " node " + master.host() + ":" + master.port()
+                            + " version probe failed: " + reason);
+                }
+            }
+            return List.copyOf(versions);
+        } catch (IllegalStateException error) {
+            throw error;
+        } catch (Exception error) {
+            throw new IllegalStateException(side + " version probe failed; check credentials and topology");
+        }
     }
     private String validDatabases(WorkerSyncTask task) {
         WorkerClusterView source = clusters.get(task.sourceClusterId());
