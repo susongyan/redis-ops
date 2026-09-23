@@ -1,6 +1,7 @@
 # Architecture Decision Records
 
 - [ADR-027 治理预检可跳过与可暂停](ADR-027-governance-optional-preflight.md)
+- [ADR-028 同步任务与主备关系的 IDC 校验边界](ADR-028-sync-idc-validation-boundary.md)
 
 - [ADR-026 Redis 5.0 源事务同步](ADR-026-redis5-source-transactions.md)
 

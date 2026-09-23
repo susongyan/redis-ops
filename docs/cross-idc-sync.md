@@ -4,6 +4,10 @@
 
 Region 和 IDC 是独立资源，集群通过 `idcId` 关联机房，Region 由 IDC 推导。长期容灾使用主备关系；迁移或一次性同步任务可以不创建关系，直接指定源、目标集群。
 
+已实现：不关联主备关系的同步任务允许源、目标位于同一 IDC，也允许未配置 IDC。
+关联主备关系的同步任务仍要求两端配置 IDC 且 IDC 不同；创建任务时重新校验，避免资产元数据变更绕过约束。
+两种任务均要求源、目标为不同的 ACTIVE 集群，版本、DB、命令策略及执行预检保持不变。
+
 主备关系要求两个 ACTIVE 集群位于不同 IDC、部署模式一致，并且 Redis 主版本兼容。关系当前方向为 `primaryClusterId → standbyClusterId`，目标 RPO 由 `desiredRpoSeconds` 定义。
 
 RPO 的时间戳水位、Offset 估算、Backlog 追平时间和切换判定规则见 [Redis 同步 RPO 计算与切换判定](rpo-calculation-and-switchover.md)。

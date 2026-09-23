@@ -87,7 +87,10 @@ public class SyncService {
         }
         if (mode != null && mode != SyncMode.FULL_AND_INCREMENTAL)
             throw invalid("new tasks only support FULL_AND_INCREMENTAL; INCREMENTAL is reserved for checkpoint resume");
-        relationService.validatePair(source, target);
+        if (relationId == null)
+            relationService.validatePair(source, target);
+        else
+            relationService.validateDisasterRecoveryPair(source, target);
         RedisCluster sourceCluster = cluster(source), targetCluster = cluster(target);
         validateVersionDirection(relationId, sourceCluster.redisVersion(), targetCluster.redisVersion());
         int actualSourceDb = validateDb("sourceDb", sourceCluster.mode(), sourceDb);

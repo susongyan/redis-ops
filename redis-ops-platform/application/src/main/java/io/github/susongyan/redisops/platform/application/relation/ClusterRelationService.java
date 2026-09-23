@@ -80,13 +80,18 @@ public class ClusterRelationService {
         var b = cluster(targetId);
         if (a.status() != ClusterStatus.ACTIVE || b.status() != ClusterStatus.ACTIVE)
             throw invalid("both clusters must be active");
+    }
+    public void validateDisasterRecoveryPair(long sourceId, long targetId) {
+        validatePair(sourceId, targetId);
+        var a = cluster(sourceId);
+        var b = cluster(targetId);
         if (a.idcId() == null || b.idcId() == null)
             throw invalid("both clusters must have IDC metadata");
         if (a.idcId().equals(b.idcId()))
             throw invalid("clusters must be in different IDCs");
     }
     private void validateRelationPair(long sourceId, long targetId) {
-        validatePair(sourceId, targetId);
+        validateDisasterRecoveryPair(sourceId, targetId);
         var a = cluster(sourceId);
         var b = cluster(targetId);
         String av = majorMinor(a.redisVersion()), bv = majorMinor(b.redisVersion());
