@@ -1,9 +1,11 @@
+import { randomUuid } from './uuid.js'
+
 const API_BASE = import.meta.env?.VITE_API_BASE || ''
 
 function headers(extra = {}) {
   return {'Content-Type':'application/json',...extra}
 }
-function idempotencyKey() { return crypto.randomUUID() }
+function idempotencyKey() { return randomUuid() }
 
 export async function request(path, options={}) {
   const requestHeaders=headers(options.headers)

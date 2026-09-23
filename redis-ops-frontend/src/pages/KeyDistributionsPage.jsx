@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Card, Checkbox, Drawer, Input, InputNumber, Modal, Select, Space, Steps, Table, Tag, message } from 'antd'
 import { api } from '../api.js'
+import { randomUuid } from '../uuid.js'
 import { byteLength, classifySample } from '../distributionRules.js'
 import { distributionCsv, exportableDistribution, loadDistributionExport } from '../distributionExport.js'
 
-const newRule = () => ({ id: crypto.randomUUID().replaceAll('-', ''), name: '业务分组', prefix: '', kind: 'SEGMENTS', delimiter: ':', segments: 1 })
+const newRule = () => ({ id: randomUuid().replaceAll('-', ''), name: '业务分组', prefix: '', kind: 'SEGMENTS', delimiter: ':', segments: 1 })
 const statusNames = { QUEUED: '排队', RUNNING: '运行中', PAUSED: '已暂停', COMPLETED: '遍历完成', INCOMPLETE: '不完整', FAILED: '失败', CANCELLED: '已取消' }
 const bucketNames = { OTHER: '其他', GROUP_LIMIT: '分组超限', KEY_TOO_LONG: 'Key 过长', GROUP_TOO_LONG: '分组过长', BINARY_KEY: '二进制 Key', STRUCTURE_MISMATCH: '结构不匹配', INVALID_RULE: '规则不合法' }
 const groupLabel = (group, snapshot) => {

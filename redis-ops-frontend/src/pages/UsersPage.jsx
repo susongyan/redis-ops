@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Button, Card, Form, Input, Modal, Select, Space, Table, Tag, message } from 'antd'
 import { request } from '../api.js'
+import { randomUuid } from '../uuid.js'
 
 export default function UsersPage(){
   const [data,setData]=useState({items:[],total:0}),[page,setPage]=useState(1),[edit,setEdit]=useState(null),[busy,setBusy]=useState(false)
   const [form]=Form.useForm()
   const refresh=()=>request(`/api/v1/users?page=${page}&size=20`).then(setData).catch(e=>message.error(e.message))
   useEffect(()=>{refresh()},[page])
-  const open=(mode,account)=>{form.resetFields();form.setFieldsValue(account?.user||{role:'OPERATOR',status:'ACTIVE'});setEdit({mode,account,key:crypto.randomUUID()})}
+  const open=(mode,account)=>{form.resetFields();form.setFieldsValue(account?.user||{role:'OPERATOR',status:'ACTIVE'});setEdit({mode,account,key:randomUuid()})}
   const save=async()=>{
     const values=await form.validateFields();setBusy(true)
     try{
