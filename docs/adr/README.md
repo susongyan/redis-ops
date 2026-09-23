@@ -2,6 +2,7 @@
 
 - [ADR-027 治理预检可跳过与可暂停](ADR-027-governance-optional-preflight.md)
 - [ADR-028 同步任务与主备关系的 IDC 校验边界](ADR-028-sync-idc-validation-boundary.md)
+- [ADR-029 运维集群详情直接显示 Redis 密码](ADR-029-controlled-redis-password-reveal.md)
 
 - [ADR-026 Redis 5.0 源事务同步](ADR-026-redis5-source-transactions.md)
 

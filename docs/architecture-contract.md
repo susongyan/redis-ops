@@ -92,11 +92,12 @@ migration 是不可变历史；任何 schema 演进均新增版本化 migration�
 ## 6. 秘密、隐私与风险动作契约
 
 - Redis 密码仅以 AES-256-GCM 密文保存；主密钥仅来自部署配置，Platform 与 Sync Worker 使用同一
-  密钥环，但不得通过 REST、任务 payload 或日志传输明文。
+  密钥环；仅 ADR-029 定义的已登录运维集群详情接口允许返回 Redis 密码，任务 payload 或日志禁止明文。
 - 连接配置消费者必须通过 `RedisConnectionProfileProvider` 获取可清零的密码内存；不得直接
   查询密文表或自行解密。
 - API、日志、异常、审计、幂等记录、spool 元数据和指标中禁止出现密码、密文、主密钥或完整
-  Redis value。
+  Redis value。唯一 API 例外是 [ADR-029](adr/ADR-029-controlled-redis-password-reveal.md) 的
+  已登录用户在集群详情直接查看 Redis 密码，不记录查看审计，详情禁止缓存；列表不返回密码。
 - Webhook URL 及后续认证 Header、签名密钥均为 write-only AES-256-GCM 密文；其 AAD 必须与
   Redis 连接密钥的 AAD 隔离。通知投递记录不能保存 URL、认证 Header 或密文。
 - 企业内部排障页面可保存并展示原始 Redis Key，以支持数据订正和慢命令定位；Key 不得进入日志、

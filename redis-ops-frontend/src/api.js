@@ -34,7 +34,7 @@ export const api={
   distributionGroups:(id,page=1)=>request(`/api/v1/key-distributions/tasks/${id}/groups?page=${page}&size=20`),
   controlDistribution:(id,version,action)=>request(`/api/v1/key-distributions/tasks/${id}/${action}`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'}),
   clusters:(params={})=>request(`/api/v1/clusters?${new URLSearchParams(Object.entries(params).filter(([,v])=>v!==undefined&&v!==''))}`),
-  cluster:id=>request(`/api/v1/clusters/${id}`),
+  cluster:id=>request(`/api/v1/clusters/${id}`,{cache:'no-store'}),
   createCluster:data=>request('/api/v1/clusters',{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:JSON.stringify(data)}),
   updateCluster:(id,version,data)=>request(`/api/v1/clusters/${id}`,{method:'PUT',headers:{'If-Match':String(version),'Idempotency-Key':idempotencyKey()},body:JSON.stringify(data)}),
   testClusterConnection:data=>request('/api/v1/clusters/connection-tests',{method:'POST',body:JSON.stringify(data)}),

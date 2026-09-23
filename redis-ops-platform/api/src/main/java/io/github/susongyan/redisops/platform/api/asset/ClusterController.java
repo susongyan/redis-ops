@@ -6,6 +6,7 @@ import io.github.susongyan.redisops.platform.application.IdempotencyService;
 import io.github.susongyan.redisops.platform.common.PageResult;
 import io.github.susongyan.redisops.platform.domain.asset.*;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import org.springframework.http.HttpStatus;
@@ -22,13 +23,15 @@ public class ClusterController {
     private final IdempotencyService idempotency;
     private final LocationService locations;
     private final RedisConnectionTestService connectionTests;
+    private final ClusterPasswordService passwords;
     public ClusterController(ClusterService clusters, AssetService assets, IdempotencyService idempotency,
-            LocationService locations, RedisConnectionTestService connectionTests) {
+            LocationService locations, RedisConnectionTestService connectionTests, ClusterPasswordService passwords) {
         this.clusters = clusters;
         this.assets = assets;
         this.idempotency = idempotency;
         this.locations = locations;
         this.connectionTests = connectionTests;
+        this.passwords = passwords;
     }
 
     @PostMapping
@@ -42,10 +45,13 @@ public class ClusterController {
         return wrap(result, request);
     }
     @GetMapping("/{id}")
-    public ApiResponse<ClusterDetail> get(@PathVariable long id, HttpServletRequest request) {
+    public ApiResponse<ClusterDetail> get(@PathVariable long id, HttpServletRequest request,
+            HttpServletResponse response) {
+        response.setHeader("Cache-Control", "no-store");
+        response.setHeader("Pragma", "no-cache");
         RedisCluster cluster = clusters.get(id);
         return wrap(new ClusterDetail(cluster, cluster.idcId() == null ? null : locations.getIdc(cluster.idcId()),
-                clusters.authentication(id), assets.nodes(id), assets.bindings(id)), request);
+                clusters.authentication(id), assets.nodes(id), assets.bindings(id), passwords.read(id)), request);
     }
     @GetMapping
     public ApiResponse<PageResult<RedisCluster>> list(@RequestParam(required = false) String environment,
@@ -107,7 +113,11 @@ public class ClusterController {
         }
     }
     public record ClusterDetail(RedisCluster cluster, Idc location, ClusterService.AuthenticationSummary authentication,
-            List<RedisNode> nodes, List<ApplicationBinding> bindings) {
+            List<RedisNode> nodes, List<ApplicationBinding> bindings, String password) {
+        @Override
+        public String toString() {
+            return "ClusterDetail[REDACTED]";
+        }
     }
     public record ConnectionTestRequest(Long clusterId, @NotNull ClusterMode mode, @NotBlank String endpoint,
             boolean authEnabled, String username, String password) {
