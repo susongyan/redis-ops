@@ -51,6 +51,7 @@ platform:
     instance-id: ${PLATFORM_JOBS_INSTANCE_ID:${HOSTNAME:local-platform}}
     discovery:
       poll-interval-ms: ${PLATFORM_JOBS_DISCOVERY_POLL_INTERVAL_MS:1000}
+      poll-jitter-ms: ${PLATFORM_JOBS_DISCOVERY_POLL_JITTER_MS:500}
     risk-scan:
       poll-interval-ms: 1000
     validation:

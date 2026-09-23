@@ -5,7 +5,8 @@ import io.github.susongyan.redisops.platform.domain.job.AsyncJob;
 import io.github.susongyan.redisops.platform.domain.job.JobRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.annotation.SchedulingConfigurer;
+import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -15,18 +16,26 @@ import java.util.regex.Pattern;
 
 @Component
 @ConditionalOnProperty(name = "platform.jobs.enabled", havingValue = "true", matchIfMissing = true)
-public class DiscoveryJobWorker {
+public class DiscoveryJobWorker implements SchedulingConfigurer {
     private static final Pattern CLUSTER_ID = Pattern.compile("\\\"clusterId\\\"\\s*:\\s*(\\d+)");
     private final JobRepository jobs;
     private final AssetService assets;
     private final String instanceId;
+    private final DiscoveryPollTrigger pollTrigger;
     public DiscoveryJobWorker(JobRepository jobs, AssetService assets,
-            @Value("${platform.jobs.instance-id:${HOSTNAME:local-platform}}") String instanceId) {
+            @Value("${platform.jobs.instance-id:${HOSTNAME:local-platform}}") String instanceId,
+            @Value("${platform.jobs.discovery.poll-interval-ms:1000}") long intervalMillis,
+            @Value("${platform.jobs.discovery.poll-jitter-ms:500}") long jitterMillis) {
         this.jobs = jobs;
         this.assets = assets;
         this.instanceId = instanceId + "-" + UUID.randomUUID();
+        this.pollTrigger = new DiscoveryPollTrigger(intervalMillis, jitterMillis);
     }
-    @Scheduled(fixedDelayString = "${platform.jobs.discovery.poll-interval-ms:1000}")
+    @Override
+    public void configureTasks(ScheduledTaskRegistrar registrar) {
+        registrar.addTriggerTask(this::poll, pollTrigger);
+    }
+
     public void poll() {
         String leaseOwner = instanceId + ":" + UUID.randomUUID();
         jobs.claimNext("CLUSTER_DISCOVERY", leaseOwner, Duration.ofSeconds(30))

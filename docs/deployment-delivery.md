@@ -49,7 +49,20 @@ Worker 不依赖 Platform HTTP。Cluster 场景必须能到达拓扑返回的全
 通用后台任务统一使用 `platform.jobs.*`：`enabled`、`instance-id`，以及
 `discovery / risk-scan / validation / ttl-governance / cleanup-governance` 下的 `poll-interval-ms`。
 开关默认 true，各任务轮询默认 1000 ms。环境变量使用 `PLATFORM_JOBS_ENABLED`，
-发现轮询使用 `PLATFORM_JOBS_DISCOVERY_POLL_INTERVAL_MS`。
+发现轮询使用 `PLATFORM_JOBS_DISCOVERY_POLL_INTERVAL_MS`（默认 1000 ms）和
+`PLATFORM_JOBS_DISCOVERY_POLL_JITTER_MS`（默认 500 ms）。每轮完成后重新随机等待
+500～1500 ms，首次轮询也采用随机延迟，不占用线程睡眠；不会在本机重叠执行同一发现轮询。
+基准间隔范围为 1～86400000 ms，抖动必须非负且小于基准间隔；抖动为 0 时恢复固定间隔。
+配置不合法时启动失败，修改后需重启。仅影响集群发现，MySQL 原子领取及 30 秒租约不变。
+随机抖动减少固定轮询节奏的偏向，不保证平均分配，也不解决调度线程阻塞。
+继续使用 Spring 调度池，可通过 `spring.task.scheduling.pool.size` 配置线程数。
+
+对应 properties 配置：
+
+```properties
+platform.jobs.discovery.poll-interval-ms=1000
+platform.jobs.discovery.poll-jitter-ms=500
+```
 
 这是不兼容的配置重命名：升级时必须迁移旧 `worker.*` 配置和旧环境变量；旧名称不再生效，
 只设置旧关闭开关会导致新开关使用默认 true。请尤其检查纯 API 实例及部署配置中心。
