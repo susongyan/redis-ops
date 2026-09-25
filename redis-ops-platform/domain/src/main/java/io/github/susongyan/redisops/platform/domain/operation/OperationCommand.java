@@ -6,7 +6,20 @@ public record OperationCommand(Long id, String commandName, int commandVersion, 
         String riskLevel, boolean enabled, String parameterSchemaJson, int keyPosition, String routingPolicy,
         String approvalPolicy, int maxValueBytes, String allowedDataTypesJson, String missingKeyPolicy,
         boolean blockedByDefault, String changeReason, String updatedBy, long version, Instant createdAt,
-        Instant updatedAt, String updatedBySnapshot) {
+        Instant updatedAt, String updatedBySnapshot, String nodeKind, Long parentId) {
+    public OperationCommand {
+        nodeKind = nodeKind == null ? "COMMAND" : nodeKind;
+    }
+    public OperationCommand(Long id, String commandName, int commandVersion, String category, String accessMode,
+            String riskLevel, boolean enabled, String parameterSchemaJson, int keyPosition, String routingPolicy,
+            String approvalPolicy, int maxValueBytes, String allowedDataTypesJson, String missingKeyPolicy,
+            boolean blockedByDefault, String changeReason, String updatedBy, long version, Instant createdAt,
+            Instant updatedAt, String updatedBySnapshot) {
+        this(id, commandName, commandVersion, category, accessMode, riskLevel, enabled, parameterSchemaJson,
+                keyPosition, routingPolicy, approvalPolicy, maxValueBytes, allowedDataTypesJson, missingKeyPolicy,
+                blockedByDefault, changeReason, updatedBy, version, createdAt, updatedAt, updatedBySnapshot,
+                "COMMAND", null);
+    }
     public OperationCommand(Long id, String commandName, int commandVersion, String category, String accessMode,
             String riskLevel, boolean enabled, String parameterSchemaJson, int keyPosition, String routingPolicy,
             String approvalPolicy, int maxValueBytes, String allowedDataTypesJson, String missingKeyPolicy,

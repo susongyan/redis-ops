@@ -28,6 +28,8 @@ public class CommandCatalogController {
     ApiResponse<?> update(@PathVariable long id, @RequestHeader("If-Match") long version,
             @RequestHeader("Idempotency-Key") String key, @RequestBody CommandCatalogService.Definition body,
             HttpServletRequest request) {
+        if (body.enabled() && !request.isUserInRole("ADMIN"))
+            throw new org.springframework.security.access.AccessDeniedException("COMMAND_ENABLE_REQUIRES_ADMIN");
         String actor = request.getUserPrincipal().getName();
         return ApiResponse.of(
                 idempotency.execute(actor, key, "COMMAND_DEFINE_UPDATE:" + id, java.util.List.of(version, body),

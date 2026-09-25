@@ -10,6 +10,10 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 public class RedisOperationController {
+    @ModelAttribute
+    void preventCaching(jakarta.servlet.http.HttpServletResponse response) {
+        response.setHeader("Cache-Control", "no-store");
+    }
     private final RedisOperationService service;
     private final IdempotencyService idempotency;
     public RedisOperationController(RedisOperationService service, IdempotencyService idempotency) {
@@ -24,6 +28,8 @@ public class RedisOperationController {
     @PutMapping("/api/v1/operation-commands/{id}")
     ApiResponse<?> updateCommand(@PathVariable long id, @RequestHeader("Idempotency-Key") String key,
             @RequestHeader("If-Match") long version, @RequestBody CommandUpdate b, HttpServletRequest r) {
+        if (b.enabled && !r.isUserInRole("ADMIN"))
+            throw new org.springframework.security.access.AccessDeniedException("COMMAND_ENABLE_REQUIRES_ADMIN");
         var operator = operator(r);
         var result = idempotency.execute(operator, key, "OPERATION_COMMAND_UPDATE", b,
                 () -> service.updateCommand(id, version, b.enabled, b.riskLevel, b.approvalPolicy, b.maxValueBytes,
@@ -38,11 +44,13 @@ public class RedisOperationController {
     }
     @PostMapping("/api/v1/redis-operations")
     ApiResponse<?> create(@RequestHeader("Idempotency-Key") String key, @RequestBody Request b, HttpServletRequest r) {
-        return response(service.request(b.clusterId, b.databaseNo, b.commandName, b.arguments, operator(r)), r);
+        return response(service.request(b.clusterId, b.databaseNo, b.commandName, b.arguments, operator(r), key), r);
     }
     @PostMapping("/api/v1/redis-operations/{id}/confirm")
-    ApiResponse<?> confirm(@PathVariable long id, @RequestHeader("If-Match") long v, HttpServletRequest r) {
-        return response(service.confirm(id, v, operator(r)), r);
+    ApiResponse<?> confirm(@PathVariable long id, @RequestHeader("If-Match") long v,
+            @RequestBody(required = false) Confirmation body, HttpServletRequest r) {
+        return response(service.confirm(id, v, operator(r), body == null ? null : body.targetName(),
+                body == null ? null : body.reason()), r);
     }
     @PostMapping("/api/v1/redis-operations/{id}/approve")
     ApiResponse<?> approve(@PathVariable long id, @RequestHeader("If-Match") long v, @RequestBody Note b,
@@ -74,6 +82,8 @@ public class RedisOperationController {
         }
     }
     record Note(String note) {
+    }
+    record Confirmation(String targetName, String reason) {
     }
     record CommandUpdate(boolean enabled, String riskLevel, String approvalPolicy, int maxValueBytes,
             List<String> allowedDataTypes, String missingKeyPolicy, boolean blockedByDefault, String changeReason) {

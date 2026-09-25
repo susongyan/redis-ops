@@ -29,7 +29,7 @@ class DatabaseCommandAdmissionTest {
     @Test
     void databaseDefinitionAdmitsNewCommandAndRejectsMissingCommand() {
         cluster(ClusterMode.STANDALONE);
-        when(repo.command("ECHO")).thenReturn(Optional.of(command(0)));
+        when(repo.commands(true, true)).thenReturn(List.of(command(0)));
         assertEquals("ECHO", service.preview(1, 0, "echo", List.of("hello")).command());
         assertThrows(IllegalArgumentException.class, () -> service.preview(1, 0, "NOT_CONFIGURED", List.of()));
         assertThrows(IllegalArgumentException.class, () -> service.preview(1, 0, "ECHO", List.of("one", "extra")));
@@ -38,7 +38,7 @@ class DatabaseCommandAdmissionTest {
     @Test
     void clusterKeylessRoutingIsRejectedWithoutRedisAccess() {
         cluster(ClusterMode.CLUSTER);
-        when(repo.command("ECHO")).thenReturn(Optional.of(command(0)));
+        when(repo.commands(true, true)).thenReturn(List.of(command(0)));
         assertThrows(IllegalArgumentException.class, () -> service.preview(1, 0, "ECHO", List.of("hello")));
         verifyNoInteractions(redis);
     }
@@ -60,11 +60,11 @@ class DatabaseCommandAdmissionTest {
         var operation = new RedisOperation(1L, "OP", 1, 0, "ECHO", "[]", digest, "READ", "LOW", "APPROVED",
                 "{\"definitionId\":1,\"definitionVersion\":0}", null, "user:1", null, null, 0, now, now);
         when(repo.find(1)).thenReturn(Optional.of(operation));
-        when(repo.command("ECHO")).thenReturn(Optional.of(command(1)));
+        when(repo.commands(true, true)).thenReturn(List.of(command(1)));
         assertEquals("COMMAND_CHANGED_RECREATE_OPERATION",
                 assertThrows(IllegalArgumentException.class, () -> service.execute(1, 0, "user:1", List.of("hello")))
                         .getMessage());
-        when(repo.command("ECHO")).thenReturn(Optional.empty());
+        when(repo.commands(true, true)).thenReturn(List.of());
         assertEquals("COMMAND_NOT_ALLOWED",
                 assertThrows(IllegalArgumentException.class, () -> service.execute(1, 0, "user:1", List.of("hello")))
                         .getMessage());

@@ -1,31 +1,59 @@
 # Redis 操作终端
 
-Redis 操作终端使用数据库命令目录准入和 Lettuce 通用 RESP2 执行器。代码不维护命令名称白名单或黑名单；由 Redis 运维决定哪些命令可执行。它是单次请求执行器，不是持续连接的 redis-cli。
+## 连接认证
 
-## 安全边界
+资产连通性测试、拓扑发现与 Console 均使用 RESP2 认证握手。配置密码时必须通过 AUTH；Redis 未配置密码却提供密码时，连通性测试返回 `REDIS_AUTHENTICATION_FAILED`。免密 Redis 应关闭资产的连接认证。编辑时填写新密码优先使用新密码，留空沿用已保存密码；测试不会保存配置。
 
-- `operation_command_definition` 是唯一业务准入源；未配置或未启用即拒绝。Redis ACL 仍是服务端最终权限边界。
-- DIRECT 提交即执行，CONFIRM 确认后执行，APPROVAL 审批后执行；不再根据 READ 属性绕过配置的审批。运维必须根据最危险的允许参数组合设置策略，不能将可写的子命令错误标为只读。
-- SINGLE_KEY 通过配置的 Key 位置路由，Cluster 固定 DB 0。NO_KEY 仅支持 Standalone/Sentinel；Cluster 无 Key 请求需要明确节点目标，当前未实现。多 Key 路由、跨请求事务、持续订阅会话未实现，不通过名称黑名单模拟这些能力。
-- 最多 128 个实参、32 个参数定义、1 MiB 参数总字节；VALUE 单项上限按目录配置（不超过 1 MiB）。单连接接收预算 1 MiB（包括握手）、解码内容 64 KiB、元素/声明容量 2048、嵌套 16 层。超限失败并关闭独立连接，不先读取无限结果再截断。
-- 连接期限 2 秒，单条命令期限 3 秒，不自动重试。超时、断线或超限时 Redis 可能已执行，失败不等于撤销；应核查实际状态。TTL 是单 Key 的附加观测；无 Key 或观测失败时为 -1，不应据此判断持久性。
-- 新操作不保存原始参数，仅保存摘要供执行时核对；不将 Key、Value 或凭据写入日志、审计或异步 payload。历史参数记录不自动清理。
-- 受控内部页面允许显示 Redis Key 以便排障，但仍不在日志、指标和审计中记录敏感业务内容。
+Sentinel 连通性测试仍只验证 Sentinel 的认证与拓扑查询，不代表已验证数据主节点的认证。
 
-操作记录状态为 `PENDING_CONFIRMATION`、`PENDING_APPROVAL`、`APPROVED`、`EXECUTING`、`SUCCEEDED`、`FAILED` 或 `CANCELLED`。配置写入使用 `Idempotency-Key`，更新同时要求 `If-Match`。
+## 当前交付范围
 
-## 命令策略配置
+命令树与逐次确认的第一批代码已实现，数据库需升级至 V34。提供分类、命令族、命令、具体子命令和显式通配节点，CLI 风格单条输入，查询直接执行、普通修改确认、高危强化确认。不引入短期写授权表，不新增操作审批流程。
 
-进入 `#/commandCatalog` 新增或编辑定义：命令名称、分类、读写属性、启用状态、风险、执行策略、参数 JSON、路由和 VALUE 大小限制。新增默认禁用，审核后再编辑启用。ADMIN 和 OPERATOR 均可维护，与既有运维权限一致。变更记录操作者快照与审计，原因必填。
+尚未交付：Cluster 指定节点/全部主节点诊断、细粒度角色能力分配、参数选项级规则、更多常用命令种子、真实 Redis 5.0.4 专项回归。现有 ADMIN / OPERATOR 均可执行已开放操作；启用及修改生效定义要求 ADMIN。未配置、禁用、协议或路由能力不支持时仍拒绝执行，不能将计划能力视为可用。
 
-例：扩充 `ECHO`，路由 NO_KEY、Key 位置 0、参数 JSON 为 `[{"name":"message","type":"TEXT","required":true}]`。`PING` 无参时使用 `[]`。`LRANGE` 使用 Key、INTEGER start、INTEGER stop 三项定义，Key 位置为 1。无需修改 Java 代码或重新部署。
+## 命令树与准入
 
-类型支持 REDIS_KEY、TEXT、VALUE、INTEGER、DECIMAL；可选参数只能放在末尾，最后一项可以设置 `variadic: true`，`literal` 可锁定子命令或选项，例如 `{"name":"subcommand","type":"TEXT","required":true,"literal":"GET"}`。命令名是单个 token，子命令作为参数；不能把 `CONFIG GET` 作为命令名。
+数据库 operation_command_definition 是准入源。不读取 Redis COMMAND 元信息，不维护版本兼容表；命令发送后由 Redis 判断是否支持。Sync Worker 的独立命令安全策略不变。
 
-命令行支持单双引号和反斜杠转义下一字符。包含空格的 Value 必须加引号，例如 `SET key "hello world"`；不再把多余 token 自动拼入最后的 Value，也不会静默丢弃额外参数。
+- CATEGORY：分类，可为子节点提供默认执行方式；本身不执行。
+- FAMILY：命令族容器，仅配置 CLUSTER 不会开放其子命令。
+- COMMAND：独立命令，如 GET。
+- SUBCOMMAND：精确子命令，如 CLUSTER INFO；参数定义仍包含子命令本身，第一项 required: true、literal: INFO。
+- WILDCARD：显式命令族通配，如 CLUSTER *。第一项是必填 TEXT 子命令；要求 MANAGE、HIGH 及强化确认或禁止。当前仍受无 Key 的 Cluster 路由限制，不能用于尚未支持的节点诊断。
 
-执行前重新核对目录启用状态及定义 ID/版本。停用或修改定义使旧待执行请求失效，需要重新创建并确认/审批。本版本以前未保存定义版本的待执行请求同样要求重建。业务记录状态的乐观锁在 Redis 调用前校验，但数据库与 Redis 之间不提供分布式事务；数据库提交失败应人工核查，不应盲目重试。
+匹配先检查命令族，再选择具体子命令，找不到具体规则才使用显式通配。具体规则禁用或参数校验失败不能回退通配。祖先禁用阻断整个分支。节点最多 4096 个，路径最多 16 层；写入使用目录锁和乐观锁，禁止环、错误父类型及同名新增。
 
-API：`POST /api/v1/operation-commands` 新增（幂等）；`PUT /api/v1/operation-commands/{id}/definition` 修改完整定义（幂等＋版本）；既有 GET 和策略更新接口保留。数据表已能容纳扩展，无需新增 migration；初始化包仍提供原有 15 条种子定义，不自动开放新命令。
+参数不包含隐含版本判断。命令关键字归一化大小写，Key/value 不改变。参数类型为 REDIS_KEY、TEXT、VALUE、INTEGER、DECIMAL；尾部可选及最后一项 variadic 可配置。无参数用 []，目录节点使用 CONTAINER 和空参数列表。
 
-本地 Compose Cluster 如果返回 Docker 内部节点地址，Platform 会按已配置的宿主机端口做演示环境地址映射；生产环境应让 Redis 正确配置 `cluster-announce` 地址，不依赖该本地兼容逻辑。
+## 策略与确认
+
+执行策略：DIRECT、CONFIRM、DANGER_CONFIRM、INHERIT、DENY。INHERIT 使用最近显式祖先策略，无可用策略拒绝。风险/操作属性是最低确认门槛：非查询不能因 DIRECT 绕过确认，HIGH、MANAGE 和通配始终强化确认。旧 APPROVAL 迁移为 DANGER_CONFIRM，不再提供审批执行入口。
+
+普通修改逐次二次确认。高危操作须输入集群名称并填写原因。确认和执行必须由发起人完成；操作绑定参数摘要、集群记录版本、定义版本及完整策略路径版本，任何变化使原操作失效。没有 15 分钟免确认窗口。
+
+新增节点默认禁用。运维可提交禁用定义或禁用现有节点，管理员负责启用及修改生效定义；本批不提供独立草稿审批队列。变更弹窗显示影响分支，页面显示配置策略和最终策略来源。名称及节点类型不可原地修改，父分类可在合法范围内调整。
+
+## CLI 交互
+
+Enter 执行，Shift+Enter 编辑，方向键浏览当前会话历史，Tab 补全唯一匹配，Ctrl+L 清屏。页面显示目标环境和 DB；语法及补全来自同一命令目录，不扫描真实 Key。输入有界，未引用的换行拒绝，粘贴不自动执行，不经过 Shell。
+
+一次提交一条命令，不支持跨请求事务、持续订阅或 Shell 管道。写操作弹框确认后由页面串联创建、确认及执行；用户不再逐个点击多步按钮。页面离开清除本地历史，不写 LocalStorage。确认框、目标选择及帮助入口支持窄屏。
+
+## 路由与执行可靠性
+
+当前保留 SINGLE_KEY 路由；NO_KEY 仅 Standalone/Sentinel，Cluster 无 Key 操作需待节点选择阶段。不自动跨 Slot 拆分或广播写操作。
+
+执行认领以独立数据库事务提交后才发送 Redis；操作号由操作者和 Idempotency-Key 的摘要确定。重复创建不再次发送，换参数复用同一个键拒绝。独立状态版本更新只允许一个执行者。发送后的结果保存失败仍保留 EXECUTING，禁止通过重试自动重放；必须人工核查，不将悬挂 EXECUTING 当作可再次执行的任务。
+
+失败响应保守记录 UNKNOWN，不自动重试。当前错误码为固定分类，未细分每类 Redis 错误是否可证明完全没有副作用。执行完成、确认和配置变更均记录审计。
+
+单连接接收预算 1 MiB，解码内容 64 KiB、元素/声明容量 2048、嵌套 16 层；连接 2 秒、单命令 3 秒。结果超限不代表 Redis 未执行。平台级多实例并发/频率限制尚需后续补齐，不应开放无约束重型命令。
+
+## 数据与安全
+
+不保存原始命令参数，仅保存摘要；预览不落原始 Key。完整响应只返回首次执行调用者，数据库及重放只提供结果摘要，接口禁止缓存。历史既有记录不自动删除。日志、审计及异步载荷不保存 Key/value、密码或脚本正文。
+
+V34 新增节点类型、父节点和目录串行化锁表，扩展命令名称长度；将已有标准分类组织为树，保持原有命令启停和显式策略。完整初始化包位于 sql/latest，增量迁移位于 bootstrap/src/main/resources/db/migration。
+
+后续计划见 [Console 改造计划](console-command-tree-plan.md)，架构依据见 [ADR-031](adr/ADR-031-console-command-tree.md)。

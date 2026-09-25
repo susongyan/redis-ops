@@ -1,15 +1,16 @@
 {
-  "sourceCommit": "963b4647cb0ae6e5b156434382d2e3f94659a30f",
+  "sourceCommit": "d6ef5b6e61482b9e5462fd9862254c535240a43d",
   "sourceIncludesUncommittedMigrations": true,
   "mysqlVersion": "8.4.11",
-  "baselineVersion": 33,
-  "businessTables": 53,
+  "baselineVersion": 34,
+  "businessTables": 54,
   "seedRows": {
-    "operation_command_definition": 15,
+    "operation_catalog_lock": 1,
+    "operation_command_definition": 20,
     "platform_auth_control": 1
   },
   "tests": [
-    "33 migrations applied",
+    "34 migrations applied",
     "combined SQL imported into fresh database",
     "all business table DDL and effective column metadata compared",
     "all business table data compared",
@@ -147,12 +148,16 @@
     {
       "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V33__audit_change_details.sql",
       "sha256": "a9b9fd3f0db1cbb205b871bfcb93d37135a46001ed503a985376dd87e661ef00"
+    },
+    {
+      "path": "redis-ops-platform/bootstrap/src/main/resources/db/migration/V34__console_command_tree.sql",
+      "sha256": "97f4b48179d6a25705a4ad816ce21def424208066c661a3657024ca7cc35b20b"
     }
   ],
   "files": {
-    "redis-governance-init.sql": "edaaf7f760a2d1dfd8515f723aaf29338086df656b6dea9342dd4a56c8229a62",
-    "schema.sql": "bcff79e2be8a3a7c52725cccaa4c48e86797a45b8551dc2f141cf512a40aa2b1",
-    "seed.sql": "0f1b1cd901ed9d5378448e34be8f7653c2c505b3404dce24b7827bd91464ffdf",
-    "flyway-baseline.sql": "8c8e3340b89c2857087936003802fb159262957be20fc6756ab2e34e4f94127f"
+    "redis-governance-init.sql": "1fb3661c3d2423fafc2f0470e43a1454e868d2557713cddd12dc593845f0d2c6",
+    "schema.sql": "26e7d3723770f2972a7d0b9396ed6aee6819ff2e36a48dcc59338f7ed3c974c7",
+    "seed.sql": "df8462f64e06271a0d8c91a8d8cab1089d9b07562d44564ddf0c5723a8945eac",
+    "flyway-baseline.sql": "ba434c80f96f55253f848867a73da469feea520361b4feed7d58c4e91640b269"
   }
 }

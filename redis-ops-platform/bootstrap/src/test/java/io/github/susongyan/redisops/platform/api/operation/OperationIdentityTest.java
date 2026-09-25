@@ -19,7 +19,7 @@ class OperationIdentityTest {
         controller.create("key", body, request);
         controller.approve(1, 0, new RedisOperationController.Note("approved"), request);
         controller.execute(1, 1, body, request);
-        verify(service).request(1, 0, "GET", List.of("fixture"), "user:7");
+        verify(service).request(1, 0, "GET", List.of("fixture"), "user:7", "key");
         verify(service).approve(1, 0, "user:7", "approved");
         verify(service).execute(1, 1, "user:7", List.of("fixture"));
     }

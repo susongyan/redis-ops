@@ -59,7 +59,8 @@ public final class AuditDetails {
     public static Map<String, Object> command(OperationCommand c) {
         if (c == null)
             return Map.of();
-        return fields("命令", c.commandName(), "分类", c.category(), "读写属性", c.accessMode(), "风险等级", c.riskLevel(),
+        return fields("命令", c.commandName(), "分类", c.category(), "节点类型", c.nodeKind(), "父节点 ID", c.parentId(), "读写属性",
+                c.accessMode(), "风险等级", c.riskLevel(),
                 "启用", c.enabled(), "Key 参数位置", c.keyPosition(), "路由", c.routingPolicy(), "执行策略", c.approvalPolicy(),
                 "Value 字节上限", c.maxValueBytes(), "允许数据类型", c.allowedDataTypesJson(), "Key 不存在策略", c.missingKeyPolicy(),
                 "默认阻止", c.blockedByDefault());

@@ -26,22 +26,44 @@ public class CommandCatalogService {
     }
     @Transactional
     public OperationCommand define(Long id, long version, Definition input, String operator) {
+        repo.lockCatalog();
+        var nodes = repo.commands(true, true);
+        if (id == null && nodes.size() >= 4096)
+            throw new IllegalArgumentException("COMMAND_TREE_CAPACITY");
         if (input.accessMode() == null || input.riskLevel() == null || input.approvalPolicy() == null
                 || input.routingPolicy() == null)
             throw new IllegalArgumentException("INVALID_COMMAND_DEFINITION");
         String name = input.commandName() == null ? "" : input.commandName().trim().toUpperCase(Locale.ROOT);
-        if (!name.matches("[A-Z][A-Z0-9_.-]{0,31}") || input.category() == null || input.category().isBlank()
+        if (!name.matches("[A-Z][A-Z0-9_.-]{0,31}(?: (?:[A-Z][A-Z0-9_.-]{0,31}|\\*))?") || input.category() == null
+                || input.category().isBlank()
                 || input.category().length() > 32
-                || !Set.of("READ", "WRITE").contains(input.accessMode())
+                || !Set.of("READ", "WRITE", "MANAGE").contains(input.accessMode())
                 || !Set.of("LOW", "MEDIUM", "HIGH").contains(input.riskLevel())
-                || !Set.of("DIRECT", "CONFIRM", "APPROVAL").contains(input.approvalPolicy())
-                || !Set.of("SINGLE_KEY", "NO_KEY").contains(input.routingPolicy()) || input.maxValueBytes() < 0
+                || !Set.of("DIRECT", "CONFIRM", "DANGER_CONFIRM", "INHERIT", "DENY").contains(input.approvalPolicy())
+                || !Set.of("SINGLE_KEY", "NO_KEY", "CONTAINER").contains(input.routingPolicy())
+                || input.maxValueBytes() < 0
                 || input.maxValueBytes() > 1048576)
             throw new IllegalArgumentException("INVALID_COMMAND_DEFINITION");
         if (input.changeReason() == null || input.changeReason().isBlank() || input.changeReason().length() > 512)
             throw new IllegalArgumentException("CHANGE_REASON_REQUIRED");
         var fields = parameters(json, input.parameterSchemaJson());
-        if (fields.size() > 32 || ("NO_KEY".equals(input.routingPolicy())
+        boolean container = Set.of("CATEGORY", "FAMILY").contains(input.nodeKind());
+        if ("SUBCOMMAND".equals(input.nodeKind()) && (fields.isEmpty()
+                || !Objects.equals(fields.get(0).get("literal"), name.substring(name.indexOf(' ') + 1))
+                || !Boolean.TRUE.equals(fields.get(0).get("required"))))
+            throw new IllegalArgumentException("SUBCOMMAND_LITERAL_REQUIRED");
+        if ("WILDCARD".equals(input.nodeKind()) && (fields.isEmpty()
+                || !"TEXT".equals(fields.get(0).get("type")) || fields.get(0).containsKey("literal")
+                || !Boolean.TRUE.equals(fields.get(0).get("required"))))
+            throw new IllegalArgumentException("SUBCOMMAND_ARGUMENT_REQUIRED");
+        if (container != "CONTAINER".equals(input.routingPolicy()) || (container && !fields.isEmpty()))
+            throw new IllegalArgumentException("INVALID_CONTAINER_DEFINITION");
+        if ("WILDCARD".equals(input.nodeKind()) && (!"MANAGE".equals(input.accessMode())
+                || !"HIGH".equals(input.riskLevel())
+                || !Set.of("DANGER_CONFIRM", "DENY").contains(input.approvalPolicy())
+                || !"NO_KEY".equals(input.routingPolicy())))
+            throw new IllegalArgumentException("WILDCARD_REQUIRES_MANAGEMENT_CONFIRMATION");
+        if (fields.size() > 32 || (!"SINGLE_KEY".equals(input.routingPolicy())
                 ? input.keyPosition() != 0
                 : input.keyPosition() < 1 || input.keyPosition() > fields.size()))
             throw new IllegalArgumentException("INVALID_KEY_POSITION");
@@ -72,6 +94,8 @@ public class CommandCatalogService {
         var current = id == null ? null : get(id);
         if (current != null && !current.commandName().equals(name))
             throw new IllegalArgumentException("COMMAND_NAME_IMMUTABLE");
+        if (current != null && !current.nodeKind().equals(input.nodeKind()))
+            throw new IllegalArgumentException("NODE_KIND_IMMUTABLE");
         if (id == null && repo.commands(true, true).stream().anyMatch(x -> x.commandName().equals(name)))
             throw new IllegalArgumentException("COMMAND_ALREADY_EXISTS");
         String schema;
@@ -84,7 +108,8 @@ public class CommandCatalogService {
                 input.accessMode(), input.riskLevel(), id != null && input.enabled(), schema, input.keyPosition(),
                 input.routingPolicy(), input.approvalPolicy(), input.maxValueBytes(), "[\"key\"]", "CREATE_ALLOWED",
                 false, input.changeReason(), operator, version, current == null ? Instant.now() : current.createdAt(),
-                Instant.now());
+                Instant.now(), null, input.nodeKind(), input.parentId());
+        CommandTreePolicy.validatePlacement(value, nodes);
         OperationCommand result;
         if (id == null)
             result = repo.createCommand(value);
@@ -112,6 +137,16 @@ public class CommandCatalogService {
     }
     public record Definition(String commandName, String category, String accessMode, String riskLevel, boolean enabled,
             String parameterSchemaJson, int keyPosition, String routingPolicy, String approvalPolicy, int maxValueBytes,
-            String changeReason) {
+            String changeReason, String nodeKind, Long parentId) {
+        public Definition {
+            nodeKind = nodeKind == null ? "COMMAND" : nodeKind;
+        }
+        public Definition(String commandName, String category, String accessMode, String riskLevel, boolean enabled,
+                String parameterSchemaJson, int keyPosition, String routingPolicy, String approvalPolicy,
+                int maxValueBytes,
+                String changeReason) {
+            this(commandName, category, accessMode, riskLevel, enabled, parameterSchemaJson, keyPosition, routingPolicy,
+                    approvalPolicy, maxValueBytes, changeReason, "COMMAND", null);
+        }
     }
 }

@@ -12,6 +12,9 @@ public class MyBatisOperationRepository implements OperationRepository {
         this.mapper = mapper;
         this.actors = actors;
     }
+    public void lockCatalog() {
+        mapper.lockCatalog();
+    }
     public List<OperationCommand> commands(boolean writes, boolean includeDisabled) {
         return mapper.commands(writes, includeDisabled);
     }
@@ -26,6 +29,10 @@ public class MyBatisOperationRepository implements OperationRepository {
     }
     public Optional<RedisOperation> find(long id) {
         return Optional.ofNullable(mapper.find(id));
+    }
+    public Optional<RedisOperation> findByNumber(String number) {
+        Long id = mapper.findIdByNumber(number);
+        return id == null ? Optional.empty() : find(id);
     }
     public List<RedisOperation> list(int page, int size) {
         return mapper.list(Math.max(0, page - 1) * size, size);
@@ -50,6 +57,8 @@ public class MyBatisOperationRepository implements OperationRepository {
     private OperationMapper.CommandRow commandRow(OperationCommand x, long version) {
         var r = new OperationMapper.CommandRow();
         r.commandName = x.commandName();
+        r.nodeKind = x.nodeKind();
+        r.parentId = x.parentId();
         r.category = x.category();
         r.accessMode = x.accessMode();
         r.parameterSchemaJson = x.parameterSchemaJson();

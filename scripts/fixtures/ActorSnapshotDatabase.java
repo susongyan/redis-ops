@@ -52,6 +52,7 @@ public class ActorSnapshotDatabase {
                 check(operations.commands(true,true).size()>0, "command record mapping");
                 var command = operations.commands(true,true).get(0);
                 var row = new OperationMapper.CommandRow();
+                row.nodeKind=command.nodeKind(); row.parentId=command.parentId();
                 row.commandName=command.commandName(); row.category=command.category(); row.accessMode=command.accessMode(); row.parameterSchemaJson=command.parameterSchemaJson(); row.keyPosition=command.keyPosition(); row.routingPolicy=command.routingPolicy();
                 row.id=command.id();row.version=command.version();row.enabled=command.enabled();row.riskLevel=command.riskLevel();row.approvalPolicy=command.approvalPolicy();row.maxValueBytes=command.maxValueBytes();row.allowedDataTypesJson=command.allowedDataTypesJson();row.missingKeyPolicy=command.missingKeyPolicy();row.blockedByDefault=command.blockedByDefault();row.changeReason="test";row.updatedBy="user:910001";row.updatedBySnapshot=actors.capture(row.updatedBy);
                 check(session.getMapper(OperationMapper.class).updateCommand(row)==1,"command update snapshot");
@@ -60,6 +61,11 @@ public class ActorSnapshotDatabase {
                 var custom=operations.createCommand(new OperationCommand(null,"EXAMPLE.CUSTOM",1,"CUSTOM","READ","LOW",false,"[]",0,"NO_KEY","CONFIRM",4096,"[\"key\"]","CREATE_ALLOWED",false,"fixture","user:910001",0,now,now));
                 check(custom.keyPosition()==0 && !custom.enabled() && custom.updatedBySnapshot().contains("alice"),"custom command insert and snapshot");
                 check(operations.command("EXAMPLE.CUSTOM").isEmpty(),"disabled command not admitted");
+                operations.lockCatalog();
+                var family=operations.createCommand(new OperationCommand(null,"EXAMPLE",1,"CUSTOM","MANAGE","HIGH",true,"[]",0,"CONTAINER","DANGER_CONFIRM",4096,"[\"key\"]","CREATE_ALLOWED",false,"fixture","user:910001",0,now,now,null,"FAMILY",null));
+                var child=operations.createCommand(new OperationCommand(null,"EXAMPLE INFO",1,"CUSTOM","READ","LOW",true,"[{\"name\":\"subcommand\",\"type\":\"TEXT\",\"required\":true,\"literal\":\"INFO\"}]",0,"NO_KEY","DIRECT",4096,"[\"key\"]","CREATE_ALLOWED",false,"fixture","user:910001",0,now,now,null,"SUBCOMMAND",family.id()));
+                check(child.parentId().equals(family.id()) && child.nodeKind().equals("SUBCOMMAND"),"tree parent and kind mapping");
+                check(CommandTreePolicy.resolve(operations.commands(true,true),"EXAMPLE",java.util.List.of("INFO")).definition().id().equals(child.id()),"tree SQL policy resolution");
                 var alerts = new MyBatisAlertRepository(session.getMapper(AlertMapper.class), actors);
                 jdbc.update("INSERT INTO alert_event(id,rule_id,resource_type,resource_id,status,severity,title) VALUES(910001,1,'FIXTURE','1','OPEN','P1','fixture')");
                 check(alerts.acknowledge(910001,"user:910001",0),"acknowledgement");

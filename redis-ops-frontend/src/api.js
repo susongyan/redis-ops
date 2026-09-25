@@ -145,7 +145,7 @@ export const api={
   ,createOperation:data=>request('/api/v1/redis-operations',{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:JSON.stringify(data)})
   ,operation:id=>request(`/api/v1/redis-operations/${id}`)
   ,operations:(page=1,size=20)=>request(`/api/v1/redis-operations?page=${page}&size=${size}`)
-  ,confirmOperation:(id,version)=>request(`/api/v1/redis-operations/${id}/confirm`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
+  ,confirmOperation:(id,version,confirmation={})=>request(`/api/v1/redis-operations/${id}/confirm`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:JSON.stringify(confirmation)})
   ,approveOperation:(id,version,note)=>request(`/api/v1/redis-operations/${id}/approve`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:JSON.stringify({note})})
   ,executeOperation:(id,version,data)=>request(`/api/v1/redis-operations/${id}/execute`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:JSON.stringify(data)})
   ,cancelOperation:(id,version)=>request(`/api/v1/redis-operations/${id}/cancel`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
