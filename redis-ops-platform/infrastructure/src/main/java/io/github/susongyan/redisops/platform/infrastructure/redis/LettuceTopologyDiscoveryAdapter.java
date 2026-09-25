@@ -3,6 +3,8 @@ package io.github.susongyan.redisops.platform.infrastructure.redis;
 import io.github.susongyan.redisops.platform.common.BusinessException;
 import io.github.susongyan.redisops.platform.domain.asset.*;
 import io.lettuce.core.RedisClient;
+import io.lettuce.core.ClientOptions;
+import io.lettuce.core.protocol.ProtocolVersion;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
@@ -62,7 +64,8 @@ public class LettuceTopologyDiscoveryAdapter implements TopologyDiscoveryPort, R
 
     static BusinessException connectionFailure(RuntimeException error) {
         String message = failureMessages(error);
-        if (message.contains("noauth") || message.contains("wrongpass") || message.contains("authentication"))
+        if (message.contains("noauth") || message.contains("wrongpass") || message.contains("authentication")
+                || message.contains("without any password configured"))
             return new BusinessException("REDIS_AUTHENTICATION_FAILED",
                     "Redis authentication failed; check the username and password");
         if (message.contains("timeout") || message.contains("connection") || message.contains("refused")
@@ -88,6 +91,7 @@ public class LettuceTopologyDiscoveryAdapter implements TopologyDiscoveryPort, R
     private List<RedisNode> discoverSeed(long clusterId, RedisConnectionProfile profile, HostPort seed) {
         RedisURI uri = redisUri(seed, profile);
         RedisClient client = RedisClient.create(uri);
+        client.setOptions(connectionOptions());
         try (StatefulRedisConnection<String, String> connection = client.connect()) {
             RedisCommands<String, String> commands = connection.sync();
             if (profile.mode() == ClusterMode.CLUSTER)
@@ -118,6 +122,7 @@ public class LettuceTopologyDiscoveryAdapter implements TopologyDiscoveryPort, R
             HostPort seed) {
         RedisURI uri = redisUri(seed, profile);
         RedisClient client = RedisClient.create(uri);
+        client.setOptions(connectionOptions());
         try (StatefulRedisSentinelConnection<String, String> connection = client.connectSentinel(uri)) {
             RedisSentinelCommands<String, String> commands = connection.sync();
             Map<String, String> master = commands.master(masterName);
@@ -132,6 +137,11 @@ public class LettuceTopologyDiscoveryAdapter implements TopologyDiscoveryPort, R
         } finally {
             client.shutdown();
         }
+    }
+
+    static ClientOptions connectionOptions() {
+        // Match Console authentication: supplied credentials must pass AUTH, not HELLO.
+        return ClientOptions.builder().protocolVersion(ProtocolVersion.RESP2).autoReconnect(false).build();
     }
 
     private RedisURI redisUri(HostPort seed, RedisConnectionProfile profile) {
