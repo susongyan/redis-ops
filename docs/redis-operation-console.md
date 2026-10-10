@@ -8,31 +8,31 @@ Sentinel 连通性测试仍只验证 Sentinel 的认证与拓扑查询，不代�
 
 ## 当前交付范围
 
-命令树与逐次确认的第一批代码已实现，数据库需升级至 V34。提供分类、命令族、命令、具体子命令和显式通配节点，CLI 风格单条输入，查询直接执行、普通修改确认、高危强化确认。不引入短期写授权表，不新增操作审批流程。
+手动分组、独立命令配置和逐次确认已实现，数据库需升级至 V36。提供手动分组、完整命令名、可视化参数编辑和软删除，CLI 风格单条输入，查询直接执行、普通修改确认、高危强化确认。不引入短期写授权表，不新增操作审批流程。
 
-尚未交付：Cluster 指定节点/全部主节点诊断、细粒度角色能力分配、参数选项级规则、更多常用命令种子、真实 Redis 5.0.4 专项回归。现有 ADMIN / OPERATOR 均可执行已开放操作；启用及修改生效定义要求 ADMIN。未配置、禁用、协议或路由能力不支持时仍拒绝执行，不能将计划能力视为可用。
+尚未交付：Cluster 指定节点/全部主节点诊断、细粒度角色能力分配、参数选项级规则、更多常用命令种子、真实 Redis 5.0.4 专项回归。现有 ADMIN / OPERATOR 均可执行已开放操作；两种角色均可新增并直接启用、编辑、禁用及删除命令。未配置、禁用、协议或路由能力不支持时仍拒绝执行，不能将计划能力视为可用。
 
 ## 命令树与准入
 
 数据库 operation_command_definition 是准入源。不读取 Redis COMMAND 元信息，不维护版本兼容表；命令发送后由 Redis 判断是否支持。Sync Worker 的独立命令安全策略不变。
 
-- CATEGORY：分类，可为子节点提供默认执行方式；本身不执行。
-- FAMILY：命令族容器，仅配置 CLUSTER 不会开放其子命令。
-- COMMAND：独立命令，如 GET。
-- SUBCOMMAND：精确子命令，如 CLUSTER INFO；参数定义仍包含子命令本身，第一项 required: true、literal: INFO。
-- WILDCARD：显式命令族通配，如 CLUSTER *。第一项是必填 TEXT 子命令；要求 MANAGE、HIGH 及强化确认或禁止。当前仍受无 Key 的 Cluster 路由限制，不能用于尚未支持的节点诊断。
+分组只用于归类展示，由用户手动新增、重命名和删除，不自动识别或创建、不参与授权。数据库 CATEGORY 行保存分组；parent_id 仅表示所属分组。COMMAND / SUBCOMMAND 为内部参数编码类型，页面不要求配置父命令。CLUSTER INFO 直接维护为完整命令名，无需创建 CLUSTER 容器。
 
-匹配先检查命令族，再选择具体子命令，找不到具体规则才使用显式通配。具体规则禁用或参数校验失败不能回退通配。祖先禁用阻断整个分支。节点最多 4096 个，路径最多 16 层；写入使用目录锁和乐观锁，禁止环、错误父类型及同名新增。
+不再支持 FAMILY、WILDCARD 及父策略继承。精确完整命令优先匹配，禁用规则不会回退通配。创建时检查 4096 个有效分组/命令的容量，非跨请求硬额度。配置使用已有 version 乐观锁及名称唯一索引；关联分组仅锁定目标分组行，不使用全局目录锁。冲突后刷新重试，见 ADR-034。
 
-参数不包含隐含版本判断。命令关键字归一化大小写，Key/value 不改变。参数类型为 REDIS_KEY、TEXT、VALUE、INTEGER、DECIMAL；尾部可选及最后一项 variadic 可配置。无参数用 []，目录节点使用 CONTAINER 和空参数列表。
+V36 移除 operation_catalog_lock。升级前停止所有旧 Platform 实例，再启动新版本；无需增加乐观锁字段。
+
+页面通过参数表维护名称、类型、必填、可重复和可选固定值；JSON 为内部存储，子命令固定字面量自动生成。支持一个必填且不可重复的 Key；Key 位置与路由自动生成。参数类型为 REDIS_KEY、TEXT、VALUE、INTEGER、DECIMAL，可选参数必须位于尾部，仅末项允许重复。
 
 ## 策略与确认
 
-执行策略：DIRECT、CONFIRM、DANGER_CONFIRM、INHERIT、DENY。INHERIT 使用最近显式祖先策略，无可用策略拒绝。风险/操作属性是最低确认门槛：非查询不能因 DIRECT 绕过确认，HIGH、MANAGE 和通配始终强化确认。旧 APPROVAL 迁移为 DANGER_CONFIRM，不再提供审批执行入口。
+执行策略独立配置：DIRECT、CONFIRM、DANGER_CONFIRM、DENY，不再继承。风险/操作属性是最低确认门槛：非查询不能因 DIRECT 绕过确认，HIGH、MANAGE 始终强化确认。旧 APPROVAL 迁移为 DANGER_CONFIRM，不再提供审批执行入口。
 
-普通修改逐次二次确认。高危操作须输入集群名称并填写原因。确认和执行必须由发起人完成；操作绑定参数摘要、集群记录版本、定义版本及完整策略路径版本，任何变化使原操作失效。没有 15 分钟免确认窗口。
+普通修改逐次二次确认。高危操作须输入集群名称并填写原因。确认和执行必须由发起人完成；操作绑定参数摘要、集群记录版本、命令定义版本，任何变化使原操作失效。没有 15 分钟免确认窗口。
 
-新增节点默认禁用。运维可提交禁用定义或禁用现有节点，管理员负责启用及修改生效定义；本批不提供独立草稿审批队列。变更弹窗显示影响分支，页面显示配置策略和最终策略来源。名称及节点类型不可原地修改，父分类可在合法范围内调整。
+新增命令默认启用，ADMIN / OPERATOR 都可直接保存生效。命令名称不可原地修改，所属分组可手动调整。配置变更必须填写原因并记录审计。
+
+DELETE /api/v1/operation-commands/{id} 要求 Idempotency-Key、If-Match 和请求体 {"reason":"原因"}。命令软删除后不再准入，旧确认请求失效；历史执行和审计保留。删除分组只解除成员关联，成员转入未分组。删除不撤回已发送 Redis 的操作。存储使用 deleted_at、updated_by 和 change_reason 保存删除信息，生成列唯一索引允许删除后重新创建同名配置。
 
 ## CLI 交互
 
@@ -42,7 +42,7 @@ Enter 执行，Shift+Enter 编辑，方向键浏览当前会话历史，Tab 补�
 
 ## 路由与执行可靠性
 
-当前保留 SINGLE_KEY 路由；NO_KEY 仅 Standalone/Sentinel，Cluster 无 Key 操作需待节点选择阶段。不自动跨 Slot 拆分或广播写操作。
+SINGLE_KEY 根据 Key 路由。NO_KEY 在 Cluster 中仅接纳目录标记 READ 的命令，自动选择本次拓扑中的一个健康主节点，返回 executionNode 并标明单节点结果；不广播、不自动重试。WRITE / MANAGE 无 Key 命令仍拒绝。Standalone/Sentinel 行为不变。不自动跨 Slot 拆分或广播写操作。见 ADR-033。
 
 执行认领以独立数据库事务提交后才发送 Redis；操作号由操作者和 Idempotency-Key 的摘要确定。重复创建不再次发送，换参数复用同一个键拒绝。独立状态版本更新只允许一个执行者。发送后的结果保存失败仍保留 EXECUTING，禁止通过重试自动重放；必须人工核查，不将悬挂 EXECUTING 当作可再次执行的任务。
 
@@ -54,6 +54,6 @@ Enter 执行，Shift+Enter 编辑，方向键浏览当前会话历史，Tab 补�
 
 不保存原始命令参数，仅保存摘要；预览不落原始 Key。完整响应只返回首次执行调用者，数据库及重放只提供结果摘要，接口禁止缓存。历史既有记录不自动删除。日志、审计及异步载荷不保存 Key/value、密码或脚本正文。
 
-V34 新增节点类型、父节点和目录串行化锁表，扩展命令名称长度；将已有标准分类组织为树，保持原有命令启停和显式策略。完整初始化包位于 sql/latest，增量迁移位于 bootstrap/src/main/resources/db/migration。
+V35 在 V34 基础上增加软删除，扁平化命令配置。禁用/拒绝祖先的后代保持禁用；原继承命令保守禁用并改为高危确认，需人工复核后启用；命令族和通配配置退役为软删除。完整初始化包位于 sql/latest，增量迁移位于 bootstrap/src/main/resources/db/migration。
 
-后续计划见 [Console 改造计划](console-command-tree-plan.md)，架构依据见 [ADR-031](adr/ADR-031-console-command-tree.md)。
+后续计划见 [Console 改造计划](console-command-tree-plan.md)，架构依据见 [ADR-032](adr/ADR-032-flat-console-catalog.md)。

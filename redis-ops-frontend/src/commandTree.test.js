@@ -8,18 +8,18 @@ const rows=[
 ]
 test('disabled exact definition is not hidden by wildcard in UI',()=>{
   assert.equal(matchCommand(rows,{commandName:'CLUSTER',arguments:['info']}).id,2)
-  assert.equal(matchCommand(rows,{commandName:'CLUSTER',arguments:['nodes']}).id,3)
+  assert.equal(matchCommand(rows,{commandName:'CLUSTER',arguments:['nodes']}),null)
   assert.equal(matchCommand([rows[0]],{commandName:'CLUSTER',arguments:['nodes']}),null)
 })
 test('effective display cannot present a write as direct or ignore disabled ancestor',()=>{
   const root={id:1,commandName:'GROUP.STRING',enabled:true,approvalPolicy:'DIRECT'}
-  const child={id:2,parentId:1,commandName:'SET',enabled:true,accessMode:'WRITE',riskLevel:'LOW',approvalPolicy:'INHERIT'}
+  const child={id:2,parentId:1,commandName:'SET',enabled:true,accessMode:'WRITE',riskLevel:'LOW',approvalPolicy:'DIRECT'}
   assert.equal(effectivePolicy([root,child],child).action,'CONFIRM')
-  assert.equal(effectivePolicy([{...root,enabled:false},child],child).action,'DENY')
+  assert.equal(effectivePolicy([{...root,enabled:false},child],child).action,'CONFIRM')
 })
 test('tree, bounded suggestions and syntax come from definitions',()=>{
   assert.equal(commandTree(rows)[0].children.length,2)
-  assert.deepEqual(commandSuggestions(rows,'cl'),['CLUSTER'])
+  assert.deepEqual(commandSuggestions(rows,'cl'),[])
   assert.equal(commandSyntax(rows[1]),'CLUSTER INFO')
   assert.equal(commandSuggestions(Array.from({length:50},(_,i)=>({commandName:`TEST${i}`,enabled:true})),'').length,20)
 })

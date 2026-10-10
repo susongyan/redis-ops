@@ -46,6 +46,11 @@ try {
   {env:{...process.env,BASELINE_DB_PASSWORD:password,BASELINE_JDBC_URL:`jdbc:mysql://127.0.0.1:${port}/${db}?serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false`}});
  mysql('CREATE DATABASE reference CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE restored CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;');
  flyway('reference','migrate');
+ if(version>=35){
+  mysql('CREATE DATABASE console_upgrade CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;');
+  flyway('console_upgrade','upgrade-console');
+  console.log('V34–V35 legacy authorization migration verified');
+ }
  console.log(`V1–V${version} migration chain applied in isolated MySQL`);
  const dump=(db,flags,tables=[])=>docker(['mysqldump','-uroot','--skip-comments','--skip-add-drop-table','--skip-add-locks',
   '--skip-lock-tables','--no-tablespaces','--set-gtid-purged=OFF','--hex-blob',...flags,db,...tables]).trimEnd()+'\n';

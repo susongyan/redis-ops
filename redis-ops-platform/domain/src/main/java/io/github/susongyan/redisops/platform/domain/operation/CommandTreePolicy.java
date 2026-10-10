@@ -20,40 +20,16 @@ public final class CommandTreePolicy {
             if (ids.put(node.id(), node) != null || names.put(node.commandName(), node) != null)
                 throw invalid("AMBIGUOUS_COMMAND_TREE");
         }
-        OperationCommand root = names.get(name);
-        if (root == null || !Set.of("COMMAND", "FAMILY").contains(root.nodeKind()))
+        String exact = name + " "
+                + ((arguments == null || arguments.isEmpty()) ? "" : arguments.get(0)).toUpperCase(Locale.ROOT);
+        OperationCommand selected = names.get(exact);
+        if (selected == null)
+            selected = names.get(name);
+        if (selected == null || !Set.of("COMMAND", "SUBCOMMAND").contains(selected.nodeKind()) || !selected.enabled())
             throw invalid("COMMAND_NOT_ALLOWED");
-        OperationCommand selected = root;
-        if ("FAMILY".equals(root.nodeKind())) {
-            if (arguments == null || arguments.isEmpty() || arguments.get(0) == null)
-                throw invalid("SUBCOMMAND_REQUIRED");
-            String sub = arguments.get(0);
-            if (!sub.matches("[A-Za-z][A-Za-z0-9_.-]{0,31}"))
-                throw invalid("COMMAND_NOT_ALLOWED");
-            selected = names.get(name + " " + sub.toUpperCase(Locale.ROOT));
-            if (selected == null)
-                selected = names.get(name + " *");
-            if (selected == null || !Objects.equals(selected.parentId(), root.id())
-                    || !Set.of("SUBCOMMAND", "WILDCARD").contains(selected.nodeKind()))
-                throw invalid("COMMAND_NOT_ALLOWED");
-        }
-        String action = null;
-        StringBuilder fingerprint = new StringBuilder();
-        Set<Long> seen = new HashSet<>();
-        OperationCommand current = selected;
-        while (current != null) {
-            if (!seen.add(current.id()) || seen.size() > 16)
-                throw invalid("INVALID_COMMAND_TREE");
-            if (!current.enabled())
-                throw invalid("COMMAND_NOT_ALLOWED");
-            fingerprint.append(current.id()).append(':').append(current.version()).append('/');
-            if (action == null && !"INHERIT".equals(current.approvalPolicy()))
-                action = current.approvalPolicy();
-            Long parent = current.parentId();
-            current = parent == null ? null : ids.get(parent);
-            if (parent != null && current == null)
-                throw invalid("INVALID_COMMAND_TREE");
-        }
+        String action = selected.approvalPolicy();
+        StringBuilder fingerprint = new StringBuilder().append(selected.id()).append(':').append(selected.version())
+                .append('/');
         if (action == null || "DENY".equals(action))
             throw invalid("COMMAND_NOT_ALLOWED");
         if (!Set.of("DIRECT", "CONFIRM", "DANGER_CONFIRM", "APPROVAL").contains(action))
@@ -76,18 +52,15 @@ public final class CommandTreePolicy {
         var parent = candidate.parentId() == null ? null : ids.get(candidate.parentId());
         if (candidate.parentId() != null && parent == null)
             throw invalid("PARENT_NOT_FOUND");
-        if (Set.of("SUBCOMMAND", "WILDCARD").contains(candidate.nodeKind())) {
-            if (parent == null || !"FAMILY".equals(parent.nodeKind()))
-                throw invalid("COMMAND_FAMILY_REQUIRED");
-            String suffix = "WILDCARD".equals(candidate.nodeKind()) ? "\\*" : "[A-Z][A-Z0-9_.-]{0,31}";
-            if (!candidate.commandName().matches(java.util.regex.Pattern.quote(parent.commandName()) + " " + suffix))
-                throw invalid("INVALID_SUBCOMMAND_NAME");
-        } else {
-            if (parent != null && !"CATEGORY".equals(parent.nodeKind()))
-                throw invalid("CATEGORY_PARENT_REQUIRED");
-            if (!candidate.commandName().matches("[A-Z][A-Z0-9_.-]{0,31}"))
-                throw invalid("INVALID_COMMAND_NAME");
-        }
+        if (!Set.of("CATEGORY", "COMMAND", "SUBCOMMAND").contains(candidate.nodeKind()))
+            throw invalid("INVALID_NODE_KIND");
+        if (parent != null && !"CATEGORY".equals(parent.nodeKind()))
+            throw invalid("CATEGORY_PARENT_REQUIRED");
+        if ("CATEGORY".equals(candidate.nodeKind()) && parent != null)
+            throw invalid("CATEGORY_PARENT_REQUIRED");
+        if (!"CATEGORY".equals(candidate.nodeKind())
+                && !candidate.commandName().matches("[A-Z][A-Z0-9_.-]{0,31}( [A-Z][A-Z0-9_.-]{0,31})?"))
+            throw invalid("INVALID_COMMAND_NAME");
         Set<Long> seen = new HashSet<>();
         if (candidate.id() != null)
             seen.add(candidate.id());

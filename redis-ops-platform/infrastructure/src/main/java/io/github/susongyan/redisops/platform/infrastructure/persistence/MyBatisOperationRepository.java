@@ -12,8 +12,17 @@ public class MyBatisOperationRepository implements OperationRepository {
         this.mapper = mapper;
         this.actors = actors;
     }
-    public void lockCatalog() {
-        mapper.lockCatalog();
+    public Optional<String> lockGroup(long id) {
+        return Optional.ofNullable(mapper.lockGroup(id));
+    }
+    public boolean deleteCommand(long id, long version, String reason, String operator) {
+        return mapper.deleteCommand(id, version, reason, operator, actors.capture(operator)) == 1;
+    }
+    public void detachGroup(long id) {
+        mapper.detachGroup(id);
+    }
+    public void relabelGroup(long id, String name) {
+        mapper.relabelGroup(id, name);
     }
     public List<OperationCommand> commands(boolean writes, boolean includeDisabled) {
         return mapper.commands(writes, includeDisabled);

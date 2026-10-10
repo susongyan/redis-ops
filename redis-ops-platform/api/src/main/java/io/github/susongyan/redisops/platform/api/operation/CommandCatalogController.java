@@ -28,13 +28,22 @@ public class CommandCatalogController {
     ApiResponse<?> update(@PathVariable long id, @RequestHeader("If-Match") long version,
             @RequestHeader("Idempotency-Key") String key, @RequestBody CommandCatalogService.Definition body,
             HttpServletRequest request) {
-        if (body.enabled() && !request.isUserInRole("ADMIN"))
-            throw new org.springframework.security.access.AccessDeniedException("COMMAND_ENABLE_REQUIRES_ADMIN");
         String actor = request.getUserPrincipal().getName();
         return ApiResponse.of(
                 idempotency.execute(actor, key, "COMMAND_DEFINE_UPDATE:" + id, java.util.List.of(version, body),
                         () -> catalog.define(id, version, body, actor), x -> x.id().toString(),
                         saved -> catalog.get(Long.parseLong(saved))),
                 String.valueOf(request.getAttribute("requestId")));
+    }
+    @DeleteMapping("/{id}")
+    @ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
+    void delete(@PathVariable long id, @RequestHeader("If-Match") long version,
+            @RequestHeader("Idempotency-Key") String key, @RequestBody DeleteRequest body,
+            HttpServletRequest request) {
+        String actor = request.getUserPrincipal().getName();
+        idempotency.executeVoid(actor, key, "COMMAND_DELETE:" + id, java.util.List.of(version, body),
+                () -> catalog.delete(id, version, body.reason(), actor), Long.toString(id));
+    }
+    public record DeleteRequest(String reason) {
     }
 }

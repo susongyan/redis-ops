@@ -12,17 +12,14 @@ export function commandTree(rows) {
 }
 
 export function matchCommand(rows, parsed) {
-  const root=rows.find(row=>row.commandName===parsed.commandName && ['COMMAND','FAMILY'].includes(row.nodeKind||'COMMAND'))
-  if(!root) return null
-  if(root.nodeKind!=='FAMILY') return root
-  const exact=`${root.commandName} ${(parsed.arguments[0]||'').toUpperCase()}`
-  return rows.find(row=>row.parentId===root.id && row.commandName===exact)
-    || rows.find(row=>row.parentId===root.id && row.commandName===`${root.commandName} *`) || null
+  const exact=parsed.commandName+' '+(parsed.arguments[0]||'').toUpperCase()
+  return rows.find(row=>row.nodeKind==='SUBCOMMAND'&&row.commandName===exact)
+    || rows.find(row=>(row.nodeKind||'COMMAND')==='COMMAND'&&row.commandName===parsed.commandName)||null
 }
 
 export function commandSuggestions(rows, input) {
   const prefix=input.trimStart().toUpperCase()
-  return rows.filter(row=>row.enabled && !['CATEGORY','WILDCARD'].includes(row.nodeKind)
+  return rows.filter(row=>row.enabled && !['CATEGORY','FAMILY','WILDCARD'].includes(row.nodeKind)
       && row.commandName.startsWith(prefix)).slice(0,20).map(row=>row.commandName)
 }
 
@@ -36,17 +33,9 @@ export function commandSyntax(command) {
 }
 
 export function effectivePolicy(rows,node){
-  const byId=new Map(rows.map(row=>[row.id,row])),seen=new Set()
-  let current=node,action,source
-  while(current){
-    if(seen.has(current.id)||seen.size>=16)return {action:'DENY',source:'目录关系无效'}
-    seen.add(current.id)
-    if(!current.enabled)return {action:'DENY',source:current.commandName+'（已禁用）'}
-    if(!action&&current.approvalPolicy!=='INHERIT'){action=current.approvalPolicy;source=current.commandName}
-    const parent=current.parentId
-    current=parent==null?null:byId.get(parent)
-    if(parent!=null&&!current)return {action:'DENY',source:'父节点不存在'}
-  }
+  const action0=node.approvalPolicy,source=node.commandName
+  let action=action0
+  if(!node.enabled||action==='INHERIT')return {action:'DENY',source}
   if(!action||action==='DENY')return {action:'DENY',source:source||'未配置策略'}
   if(node.riskLevel==='HIGH'||node.accessMode==='MANAGE'||node.nodeKind==='WILDCARD'||action==='APPROVAL')action='DANGER_CONFIRM'
   else if(node.accessMode!=='READ'&&action==='DIRECT')action='CONFIRM'

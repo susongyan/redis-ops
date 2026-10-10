@@ -433,13 +433,6 @@ CREATE TABLE `notification_record` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `operation_catalog_lock` (
-  `id` int NOT NULL,
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `operation_command_definition` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `command_name` varchar(96) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -464,8 +457,10 @@ CREATE TABLE `operation_command_definition` (
   `updated_by_snapshot` json DEFAULT NULL,
   `node_kind` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'COMMAND',
   `parent_id` bigint DEFAULT NULL,
+  `deleted_at` datetime(3) DEFAULT NULL,
+  `active_command_name` varchar(96) COLLATE utf8mb4_unicode_ci GENERATED ALWAYS AS (if((`deleted_at` is null),`command_name`,NULL)) STORED,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_operation_command` (`command_name`,`command_version`),
+  UNIQUE KEY `uk_operation_command` (`active_command_name`,`command_version`),
   KEY `idx_operation_command_parent` (`parent_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=23 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;

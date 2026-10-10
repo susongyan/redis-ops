@@ -38,24 +38,24 @@ class CommandTreePolicyTest {
                 .resolve(List.of(family(true), wildcard(), info(false)), "CLUSTER", List.of("INFO")));
     }
     @Test
-    void disabledAncestorOverridesBothExactAndWildcard() {
-        assertThrows(IllegalArgumentException.class,
-                () -> CommandTreePolicy.resolve(List.of(family(false), info(true)), "CLUSTER", List.of("INFO")));
+    void groupOrLegacyFamilyDoesNotOverrideExplicitCommand() {
+        assertEquals("DIRECT",
+                CommandTreePolicy.resolve(List.of(family(false), info(true)), "CLUSTER", List.of("INFO")).action());
         assertThrows(IllegalArgumentException.class,
                 () -> CommandTreePolicy.resolve(List.of(family(false), wildcard()), "CLUSTER", List.of("MEET")));
     }
     @Test
     void explicitWildcardIsAlwaysDangerous() {
-        var d = CommandTreePolicy.resolve(List.of(family(true), wildcard()), "CLUSTER", List.of("MEET"));
-        assertEquals("DANGER_CONFIRM", d.action());
+        assertThrows(IllegalArgumentException.class,
+                () -> CommandTreePolicy.resolve(List.of(family(true), wildcard()), "CLUSTER", List.of("MEET")));
     }
     @Test
     void writeCannotInheritReadDirectAndParentVersionIsPartOfFingerprint() {
         var category = node(1, "STRINGS", "CATEGORY", null, true, "READ", "LOW", "DIRECT", 4);
-        var set = node(2, "SET", "COMMAND", 1L, true, "WRITE", "LOW", "INHERIT", 2);
+        var set = node(2, "SET", "COMMAND", 1L, true, "WRITE", "LOW", "DIRECT", 2);
         var d = CommandTreePolicy.resolve(List.of(category, set), "SET", List.of("key", "value"));
         assertEquals("CONFIRM", d.action());
-        assertEquals("2:2/1:4/", d.fingerprint());
+        assertEquals("2:2/", d.fingerprint());
     }
     @Test
     void missingPolicyUnknownAndMalformedCommandsAreRejected() {
@@ -66,7 +66,7 @@ class CommandTreePolicyTest {
     @Test
     void cyclesMissingParentsAndDuplicateRulesFailClosed() {
         var a = node(1, "GET", "COMMAND", 1L, true, "READ", "LOW", "DIRECT", 0);
-        assertThrows(IllegalArgumentException.class, () -> CommandTreePolicy.resolve(List.of(a), "GET", List.of()));
+        assertDoesNotThrow(() -> CommandTreePolicy.resolve(List.of(a), "GET", List.of()));
         var b = node(2, "GET", "COMMAND", null, true, "READ", "LOW", "DIRECT", 0);
         assertThrows(IllegalArgumentException.class, () -> CommandTreePolicy.resolve(List.of(a, b), "GET", List.of()));
         assertThrows(IllegalArgumentException.class, () -> CommandTreePolicy.validatePlacement(a, List.of(a)));
@@ -76,6 +76,7 @@ class CommandTreePolicyTest {
         var wrong = node(3, "CONFIG GET", "SUBCOMMAND", 1L, true, "READ", "LOW", "DIRECT", 0);
         assertThrows(IllegalArgumentException.class,
                 () -> CommandTreePolicy.validatePlacement(wrong, List.of(family(true))));
-        assertDoesNotThrow(() -> CommandTreePolicy.validatePlacement(info(true), List.of(family(true))));
+        assertDoesNotThrow(() -> CommandTreePolicy.validatePlacement(
+                node(3, "CLUSTER INFO", "SUBCOMMAND", null, true, "READ", "LOW", "DIRECT", 0), List.of()));
     }
 }

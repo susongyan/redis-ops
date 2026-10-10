@@ -4,7 +4,10 @@ import java.util.List;
 import java.util.Optional;
 
 public interface OperationRepository {
-    void lockCatalog();
+    Optional<String> lockGroup(long id);
+    boolean deleteCommand(long id, long version, String reason, String operator);
+    void detachGroup(long id);
+    void relabelGroup(long id, String name);
     List<OperationCommand> commands(boolean writes, boolean includeDisabled);
     Optional<OperationCommand> command(String name);
     RedisOperation save(RedisOperation operation);

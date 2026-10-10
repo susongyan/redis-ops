@@ -5,6 +5,8 @@ import io.github.susongyan.redisops.platform.domain.operation.RedisOperationPort
 import io.lettuce.core.*;
 import io.lettuce.core.api.sync.*;
 import io.lettuce.core.cluster.RedisClusterClient;
+import io.lettuce.core.cluster.models.partitions.RedisClusterNode;
+import io.lettuce.core.cluster.models.partitions.RedisClusterNode.NodeFlag;
 import io.lettuce.core.cluster.api.StatefulRedisClusterConnection;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.codec.ByteArrayCodec;
@@ -26,8 +28,6 @@ public class LettuceRedisOperationAdapter implements RedisOperationPort {
     }
     public OperationResult execute(long clusterId, int database, String command, List<String> args, int keyPosition) {
         try (RedisConnectionProfile p = profiles.get(clusterId)) {
-            if (p.mode() == ClusterMode.CLUSTER && keyPosition == 0)
-                throw new IllegalArgumentException("CLUSTER_NODE_TARGET_REQUIRED");
             if (p.mode() == ClusterMode.CLUSTER) {
                 var resources = ClientResources.builder()
                         .socketAddressResolver(new DemoClusterSocketAddressResolver(p.seedEndpoints()))
@@ -39,6 +39,16 @@ public class LettuceRedisOperationAdapter implements RedisOperationPort {
                         .socketOptions(SocketOptions.builder().connectTimeout(java.time.Duration.ofSeconds(2)).build())
                         .build());
                 try (StatefulRedisClusterConnection<byte[], byte[]> x = c.connect(ByteArrayCodec.INSTANCE)) {
+                    if (keyPosition == 0) {
+                        var node = selectPrimary(x.getPartitions());
+                        var result = run(x.getConnection(node.getNodeId()).sync(), command, args, 0);
+                        var address = (InetSocketAddress) new DemoClusterSocketAddressResolver(p.seedEndpoints())
+                                .resolve(node.getUri());
+                        return new OperationResult(result.success(), result.type(), result.value(),
+                                result.valueLength(),
+                                result.ttlSeconds(), result.errorCode(),
+                                address.getHostString() + ":" + address.getPort() + " / " + node.getNodeId());
+                    }
                     var s = x.sync();
                     return run(s, command, args, keyPosition);
                 } finally {
@@ -63,6 +73,20 @@ public class LettuceRedisOperationAdapter implements RedisOperationPort {
             return new OperationResult(false, null, null, 0, -1, e.getClass().getSimpleName());
         }
     }
+    static RedisClusterNode selectPrimary(Iterable<RedisClusterNode> nodes) {
+        RedisClusterNode selected = null;
+        for (var node : nodes) {
+            if (!node.is(NodeFlag.MASTER) || !node.isConnected() || node.is(NodeFlag.FAIL)
+                    || node.is(NodeFlag.EVENTUAL_FAIL) || node.is(NodeFlag.HANDSHAKE) || node.is(NodeFlag.NOADDR))
+                continue;
+            if (selected == null || node.getNodeId().compareTo(selected.getNodeId()) < 0)
+                selected = node;
+        }
+        if (selected == null)
+            throw new IllegalStateException("CLUSTER_PRIMARY_UNAVAILABLE");
+        return selected;
+    }
+
     private static io.lettuce.core.resource.NettyCustomizer responseLimit() {
         return new io.lettuce.core.resource.NettyCustomizer() {
             @Override

@@ -1,5 +1,10 @@
 # Architecture Decision Records
 
+- [ADR-034 命令目录按行协调](ADR-034-console-row-locking.md)
+- [ADR-033 Cluster 无 Key 只读命令自动路由](ADR-033-console-keyless-reads.md)
+
+- [ADR-032 Console 手动分组与独立命令策略](ADR-032-flat-console-catalog.md)
+
 - [ADR-031 Console 命令树与逐次确认](ADR-031-console-command-tree.md)
 
 - [ADR-027 治理预检可跳过与可暂停](ADR-027-governance-optional-preflight.md)

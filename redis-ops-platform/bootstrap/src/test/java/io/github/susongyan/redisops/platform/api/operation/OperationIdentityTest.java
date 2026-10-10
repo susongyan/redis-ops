@@ -9,6 +9,18 @@ import static org.mockito.Mockito.*;
 
 class OperationIdentityTest {
     @Test
+    void operatorCanSubmitEnabledCommandDefinition() {
+        var catalog = mock(io.github.susongyan.redisops.platform.application.operation.CommandCatalogService.class);
+        var controller = new CommandCatalogController(catalog, mock(IdempotencyService.class));
+        var request = new MockHttpServletRequest();
+        request.setUserPrincipal(() -> "user:7");
+        request.addUserRole("OPERATOR");
+        var body = new io.github.susongyan.redisops.platform.application.operation.CommandCatalogService.Definition(
+                "PING", "未分组", "READ", "LOW", true, "[]", 0, "NO_KEY", "DIRECT", 4096, "test");
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> controller.create("new-key", body, request));
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> controller.update(1, 0, "edit-key", body, request));
+    }
+    @Test
     void actorHeaderCannotOverrideAuthenticatedRequesterApproverOrExecutor() {
         var service = mock(RedisOperationService.class);
         var controller = new RedisOperationController(service, mock(IdempotencyService.class));

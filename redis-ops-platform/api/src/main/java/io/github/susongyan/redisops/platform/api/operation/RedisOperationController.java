@@ -28,8 +28,6 @@ public class RedisOperationController {
     @PutMapping("/api/v1/operation-commands/{id}")
     ApiResponse<?> updateCommand(@PathVariable long id, @RequestHeader("Idempotency-Key") String key,
             @RequestHeader("If-Match") long version, @RequestBody CommandUpdate b, HttpServletRequest r) {
-        if (b.enabled && !r.isUserInRole("ADMIN"))
-            throw new org.springframework.security.access.AccessDeniedException("COMMAND_ENABLE_REQUIRES_ADMIN");
         var operator = operator(r);
         var result = idempotency.execute(operator, key, "OPERATION_COMMAND_UPDATE", b,
                 () -> service.updateCommand(id, version, b.enabled, b.riskLevel, b.approvalPolicy, b.maxValueBytes,

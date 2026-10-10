@@ -36,10 +36,21 @@ class DatabaseCommandAdmissionTest {
         verifyNoInteractions(redis);
     }
     @Test
-    void clusterKeylessRoutingIsRejectedWithoutRedisAccess() {
+    void clusterKeylessReadIsAdmittedWithoutTypeProbe() {
         cluster(ClusterMode.CLUSTER);
         when(repo.commands(true, true)).thenReturn(List.of(command(0)));
-        assertThrows(IllegalArgumentException.class, () -> service.preview(1, 0, "ECHO", List.of("hello")));
+        assertEquals("ECHO", service.preview(1, 0, "ECHO", List.of("hello")).command());
+        verifyNoInteractions(redis);
+    }
+    @Test
+    void clusterKeylessWriteRemainsRejected() {
+        cluster(ClusterMode.CLUSTER);
+        var write = new OperationCommand(2L, "CUSTOM", 1, "CUSTOM", "WRITE", "LOW", true, "[]", 0,
+                "NO_KEY", "CONFIRM", 4096, "[\"key\"]", "CREATE_ALLOWED", false, "test", "ops", 0,
+                Instant.now(), Instant.now());
+        when(repo.commands(true, true)).thenReturn(List.of(write));
+        assertEquals("CLUSTER_NODE_TARGET_REQUIRED", assertThrows(IllegalArgumentException.class,
+                () -> service.preview(1, 0, "CUSTOM", List.of())).getMessage());
         verifyNoInteractions(redis);
     }
     @Test
@@ -71,12 +82,12 @@ class DatabaseCommandAdmissionTest {
         verifyNoInteractions(redis);
     }
     @Test
-    void newCommandsDefaultDisabledAndNamesAreNotHardcoded() {
+    void operatorsCanCreateEnabledCommandsAndNamesAreNotHardcoded() {
         var catalog = new CommandCatalogService(repo, audit, json);
         when(repo.commands(true, true)).thenReturn(List.of());
         when(repo.createCommand(any())).thenAnswer(call -> {
             OperationCommand c = call.getArgument(0);
-            assertFalse(c.enabled());
+            assertTrue(c.enabled());
             assertEquals("CUSTOM.DO", c.commandName());
             return command(0);
         });

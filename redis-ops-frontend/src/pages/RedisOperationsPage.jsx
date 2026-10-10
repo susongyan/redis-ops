@@ -7,7 +7,7 @@ import {commandTree,matchCommand,commandSyntax,commandSuggestions} from '../comm
 
 function output(operation){
   if(!operation.resultJson)return operation.status
-  try{const r=JSON.parse(operation.resultJson);return r.success?(r.type==='null'?'(nil)':r.value??operation.status):'错误：'+(r.errorCode||operation.status)}catch{return operation.status}
+  try{const r=JSON.parse(operation.resultJson);const text=r.success?(r.type==='null'?'(nil)':r.value??operation.status):'错误：'+(r.errorCode||operation.status);return (r.executionNode?`执行节点：${r.executionNode}（单节点结果，非集群汇总）\n`:'')+text}catch{return operation.status}
 }
 export default function RedisOperationsPage(){
   const [clusters,setClusters]=useState([]),[commands,setCommands]=useState([]),[rows,setRows]=useState([])
@@ -81,7 +81,7 @@ export default function RedisOperationsPage(){
       </div></div>
     </Card>
     <Collapse items={[{key:'help',label:'命令帮助',children:<Tree treeData={commandTree(commands)} onSelect={(_,info)=>{if(!['CATEGORY','FAMILY','WILDCARD'].includes(info.node.nodeKind)&&!busy&&!pending)setLine(info.node.commandName+' ')}}/>},{key:'history',label:'操作记录',children:<Table size="small" rowKey="id" dataSource={rows} scroll={{x:900}} pagination={false} columns={[{title:'时间',dataIndex:'createdAt'},{title:'命令',dataIndex:'commandName'},{title:'状态',dataIndex:'status'},{title:'操作者',render:(_,r)=>actorLabel(r.operatorName,r.operatorSnapshot)},{title:'编号',dataIndex:'operationNo'}]}/>} ]}/>
-    <Alert type="info" showIcon message="执行提示" description="一次执行一条命令。当前不支持 Cluster 无 Key 命令、跨请求事务或订阅；超时不代表操作未生效。当前页面的命令及结果离开后清除。"/>
+    <Alert type="info" showIcon message="执行提示" description="一次执行一条命令。Cluster 有 Key 命令按 Key 路由；已启用且配置为「只读 + 无 Key」的命令自动选择一个健康主节点执行，不广播，结果不代表集群汇总。Cluster 无 Key 的写入或管理类命令暂不支持。不支持跨请求事务或订阅；超时不代表操作未生效。当前页面的命令及结果离开后清除。"/>
     <Modal title={pending?.preview.action==='DANGER_CONFIRM'?'确认高危操作':'确认执行操作'} open={!!pending} onCancel={cancel} onOk={confirm} confirmLoading={busy} closable={!busy} maskClosable={false} okText="确认并执行" cancelText="取消" destroyOnHidden>
       <p>目标：{pending?.target}</p><p>命令：{pending?.preview.command} · 风险：{pending?.preview.riskLevel}</p><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',maxHeight:160,overflow:'auto'}}>{pending?.line}</pre>
       <Form form={form} layout="vertical">{pending?.preview.action==='DANGER_CONFIRM'&&<><Alert type="warning" showIcon message="请核实目标与影响范围，此操作可能无法撤销。"/><Form.Item name="targetName" label="输入集群名称确认" rules={[{required:true},{validator:(_,value)=>value===pending?.clusterName?Promise.resolve():Promise.reject(new Error('集群名称不一致'))}]}><Input autoComplete="off"/></Form.Item><Form.Item name="reason" label="操作原因（请勿填写 Key、value 或密码）" rules={[{required:true,whitespace:true,max:512}]}><Input.TextArea maxLength={512}/></Form.Item></>}</Form>

@@ -10,6 +10,10 @@ public interface RedisOperationPort {
     }
 
     record OperationResult(boolean success, String type, String value, long valueLength, long ttlSeconds,
-            String errorCode) {
+            String errorCode, String executionNode) {
+        public OperationResult(boolean success, String type, String value, long valueLength, long ttlSeconds,
+                String errorCode) {
+            this(success, type, value, valueLength, ttlSeconds, errorCode, null);
+        }
     }
 }

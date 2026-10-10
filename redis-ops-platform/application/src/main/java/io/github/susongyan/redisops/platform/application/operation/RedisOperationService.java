@@ -50,13 +50,12 @@ public class RedisOperationService {
     public OperationCommand updateCommand(long id, long version, boolean enabled, String riskLevel,
             String approvalPolicy, int maxValueBytes, List<String> allowedDataTypes, String missingKeyPolicy,
             boolean blockedByDefault, String changeReason, String operator) {
-        repo.lockCatalog();
         var current = repo.commands(true, true).stream().filter(x -> x.id().equals(id)).findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("COMMAND_NOT_FOUND"));
         if (maxValueBytes < 0 || maxValueBytes > 1024 * 1024)
             throw new IllegalArgumentException("INVALID_VALUE_LIMIT");
         if (!Set.of("LOW", "MEDIUM", "HIGH").contains(riskLevel)
-                || !Set.of("DIRECT", "CONFIRM", "DANGER_CONFIRM", "INHERIT", "DENY").contains(approvalPolicy)
+                || !Set.of("DIRECT", "CONFIRM", "DANGER_CONFIRM", "DENY").contains(approvalPolicy)
                 || !Set.of("CREATE_ALLOWED", "EXISTING_REQUIRED").contains(missingKeyPolicy))
             throw new IllegalArgumentException("INVALID_COMMAND_POLICY");
         if (enabled && (blockedByDefault || "WILDCARD".equals(current.nodeKind()))
@@ -85,7 +84,7 @@ public class RedisOperationService {
             throw new IllegalArgumentException("CLUSTER_DB_MUST_BE_ZERO");
         var decision = definition(command, args);
         var d = decision.definition();
-        if (c.mode().name().equals("CLUSTER") && d.keyPosition() == 0)
+        if (c.mode().name().equals("CLUSTER") && d.keyPosition() == 0 && !"READ".equals(d.accessMode()))
             throw new IllegalArgumentException("CLUSTER_NODE_TARGET_REQUIRED");
         validate(d, args);
         validateType(clusterId, db, d, args);
@@ -102,7 +101,6 @@ public class RedisOperationService {
         String number = "OP-" + digest(operator + "\n" + key).substring(0, 40);
         String argumentDigest = digest(toJson(args));
         var created = persisted(() -> {
-            repo.lockCatalog();
             var existing = repo.findByNumber(number);
             if (existing.isPresent()) {
                 var x = existing.get();
@@ -185,7 +183,6 @@ public class RedisOperationService {
         final RedisOperation requested = x;
         final OperationCommand[] selected = new OperationCommand[1];
         x = persisted(() -> {
-            repo.lockCatalog();
             var fresh = get(requested.id());
             if (fresh.version() != requested.version()
                     || !Set.of("READY", "APPROVED", "CONFIRMED").contains(fresh.status()))
@@ -201,7 +198,7 @@ public class RedisOperationService {
         }
         String result = toJson(r);
         var summary = new RedisOperationPort.OperationResult(r.success(), r.type(), null, r.valueLength(),
-                r.ttlSeconds(), r.errorCode());
+                r.ttlSeconds(), r.errorCode(), r.executionNode());
         String status = r.success() ? "SUCCEEDED" : "UNKNOWN";
         final RedisOperation claimed = x;
         var saved = persisted(() -> {
