@@ -81,6 +81,7 @@ public class ValidationService {
         return validations.findLatestRun(id);
     }
     public PageResult<ValidationDifference> differences(long taskId, int page, int size) {
+        get(taskId);
         return validations.findLatestRun(taskId).map(run -> validations.findDifferences(run.id(), page, size))
                 .orElse(new PageResult<>(List.of(), 0, page, size));
     }

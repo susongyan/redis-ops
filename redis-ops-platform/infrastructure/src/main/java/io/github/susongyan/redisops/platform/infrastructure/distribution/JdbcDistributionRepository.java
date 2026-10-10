@@ -39,15 +39,20 @@ public class JdbcDistributionRepository implements DistributionRepository {
         return get(Objects.requireNonNull(key.getKey()).longValue());
     }
     public DistributionTask get(long id) {
-        return jdbc.query("SELECT " + COLUMNS + " FROM key_distribution_task WHERE id=?", this::row, id).stream()
+        return jdbc
+                .query("SELECT " + COLUMNS + " FROM key_distribution_task WHERE id=? AND deleted_at IS NULL", this::row,
+                        id)
+                .stream()
                 .findFirst()
                 .orElseThrow(() -> BusinessException.notFound("keyDistribution", id));
     }
     public PageResult<DistributionTask> list(int page, int size) {
         return new PageResult<>(
-                jdbc.query("SELECT " + COLUMNS + " FROM key_distribution_task ORDER BY id DESC LIMIT ? OFFSET ?",
+                jdbc.query("SELECT " + COLUMNS
+                        + " FROM key_distribution_task WHERE deleted_at IS NULL ORDER BY id DESC LIMIT ? OFFSET ?",
                         this::row, size, Math.multiplyExact(page - 1, size)),
-                jdbc.queryForObject("SELECT COUNT(*) FROM key_distribution_task", Long.class), page, size);
+                jdbc.queryForObject("SELECT COUNT(*) FROM key_distribution_task WHERE deleted_at IS NULL", Long.class),
+                page, size);
     }
     @Transactional
     public DistributionTask control(long id, long version, String action) {
@@ -75,7 +80,7 @@ public class JdbcDistributionRepository implements DistributionRepository {
         jdbc.queryForList("SELECT cluster_id FROM key_distribution_runtime WHERE cluster_id=? FOR UPDATE",
                 task.clusterId());
         if (jdbc.update(
-                "UPDATE key_distribution_task SET status=?,reason=NULL,version=version+1 WHERE id=? AND version=?",
+                "UPDATE key_distribution_task SET status=?,reason=NULL,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL",
                 next, id, version) != 1)
             throw new BusinessException("CONCURRENT_MODIFICATION", "task changed");
         jdbc.update(
@@ -86,7 +91,7 @@ public class JdbcDistributionRepository implements DistributionRepository {
     @Transactional
     public Optional<Lease> claim(String owner) {
         var tasks = jdbc.query("SELECT " + COLUMNS
-                + " FROM key_distribution_task WHERE status IN ('QUEUED','RUNNING') AND NOT EXISTS (SELECT 1 FROM key_distribution_runtime r WHERE r.cluster_id=key_distribution_task.cluster_id AND r.owner IS NOT NULL AND r.lease_until>=CURRENT_TIMESTAMP(3)) ORDER BY id LIMIT 32",
+                + " FROM key_distribution_task WHERE deleted_at IS NULL AND status IN ('QUEUED','RUNNING') AND NOT EXISTS (SELECT 1 FROM key_distribution_runtime r WHERE r.cluster_id=key_distribution_task.cluster_id AND r.owner IS NOT NULL AND r.lease_until>=CURRENT_TIMESTAMP(3)) ORDER BY id LIMIT 32",
                 this::row);
         for (var task : tasks) {
             jdbc.update("INSERT IGNORE INTO key_distribution_runtime(cluster_id) VALUES(?)", task.clusterId());
@@ -95,7 +100,7 @@ public class JdbcDistributionRepository implements DistributionRepository {
                     task.id(), owner, task.clusterId()) != 1)
                 continue;
             if (jdbc.update(
-                    "UPDATE key_distribution_task SET status='RUNNING',version=version+1 WHERE id=? AND status IN ('QUEUED','RUNNING')",
+                    "UPDATE key_distribution_task SET status='RUNNING',version=version+1 WHERE id=? AND deleted_at IS NULL AND status IN ('QUEUED','RUNNING')",
                     task.id()) != 1) {
                 jdbc.update(
                         "UPDATE key_distribution_runtime SET owner=NULL,task_id=NULL,lease_until=NULL WHERE cluster_id=? AND owner=?",

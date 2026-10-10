@@ -27,6 +27,7 @@ export async function request(path, options={}) {
 }
 
 export const api={
+  deleteExecutionRecord:(type,id,version)=>request(`/api/v1/execution-records/${type}/${id}`,{method:'DELETE',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)}}),
   distributionPreview:(data,signal)=>request('/api/v1/key-distributions/preview',{method:'POST',body:JSON.stringify(data),signal,cache:'no-store'}),
   createDistribution:data=>request('/api/v1/key-distributions/tasks',{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:JSON.stringify(data)}),
   distributionTasks:(page=1)=>request(`/api/v1/key-distributions/tasks?page=${page}&size=20`),

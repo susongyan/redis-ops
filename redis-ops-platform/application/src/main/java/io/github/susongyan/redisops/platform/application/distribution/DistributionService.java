@@ -87,6 +87,7 @@ public class DistributionService implements DisposableBean {
     }
     public PageResult<DistributionCounter.Entry> groups(long id, int page, int size) {
         page(page, size);
+        repository.get(id);
         return repository.groups(id, page, size);
     }
     public DistributionTask control(long id, long version, String action) {

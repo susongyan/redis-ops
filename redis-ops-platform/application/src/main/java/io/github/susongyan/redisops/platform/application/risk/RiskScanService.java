@@ -48,6 +48,7 @@ public class RiskScanService {
         return scans.findTasks();
     }
     public Optional<RiskScanRun> latest(long id) {
+        get(id);
         return scans.latestRun(id);
     }
     public List<RiskScanCheckpoint> checkpoints(long taskId) {
@@ -64,6 +65,7 @@ public class RiskScanService {
         }
     }
     public PageResult<RiskFinding> findings(long id, int p, int s, String riskType) {
+        get(id);
         return scans.latestRun(id).map(x -> scans.findings(x.id(), p, s, riskType))
                 .orElse(new PageResult<>(List.of(), 0, p, s));
     }

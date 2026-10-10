@@ -9,15 +9,16 @@ public interface AnalysisRunMapper {
     @Options(useGeneratedKeys = true, keyProperty = "id")
     void insert(Row row);
 
-    @Select("SELECT id,request_id requestId,analysis_type analysisType,resource_type resourceType,resource_id resourceId,protocol,provider,status,summary,confidence,CAST(evidence_json AS CHAR) evidenceJson,CAST(recommendations_json AS CHAR) recommendationsJson,created_at createdAt FROM analysis_run WHERE id=#{id}")
+    @Select("SELECT id,request_id requestId,analysis_type analysisType,resource_type resourceType,resource_id resourceId,protocol,provider,status,summary,confidence,CAST(evidence_json AS CHAR) evidenceJson,CAST(recommendations_json AS CHAR) recommendationsJson,created_at createdAt,version FROM analysis_run WHERE id=#{id} AND deleted_at IS NULL")
     Row find(long id);
 
-    @Select("<script>SELECT id,request_id requestId,analysis_type analysisType,resource_type resourceType,resource_id resourceId,protocol,provider,status,summary,confidence,CAST(evidence_json AS CHAR) evidenceJson,CAST(recommendations_json AS CHAR) recommendationsJson,created_at createdAt FROM analysis_run WHERE (#{resourceType} IS NULL OR resource_type=#{resourceType}) AND (#{resourceId} IS NULL OR resource_id=#{resourceId}) ORDER BY created_at DESC,id DESC LIMIT #{size} OFFSET #{offset}</script>")
+    @Select("<script>SELECT id,request_id requestId,analysis_type analysisType,resource_type resourceType,resource_id resourceId,protocol,provider,status,summary,confidence,CAST(evidence_json AS CHAR) evidenceJson,CAST(recommendations_json AS CHAR) recommendationsJson,created_at createdAt,version FROM analysis_run WHERE deleted_at IS NULL AND (#{resourceType} IS NULL OR resource_type=#{resourceType}) AND (#{resourceId} IS NULL OR resource_id=#{resourceId}) ORDER BY created_at DESC,id DESC LIMIT #{size} OFFSET #{offset}</script>")
     List<Row> findPage(@Param("resourceType") String resourceType, @Param("resourceId") String resourceId,
             @Param("offset") int offset, @Param("size") int size);
 
     class Row {
         public Long id;
+        public long version;
         public String requestId, analysisType, resourceType, resourceId, protocol, provider, status, summary;
         public double confidence;
         public String evidenceJson, recommendationsJson;

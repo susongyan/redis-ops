@@ -25,13 +25,13 @@ public interface ValidationMapper {
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id")
     void insertTask(TaskRow row);
-    @Select("SELECT " + TASK_COLUMNS + " FROM validation_task WHERE id=#{id}")
+    @Select("SELECT " + TASK_COLUMNS + " FROM validation_task WHERE id=#{id} AND deleted_at IS NULL")
     ValidationTask findTask(long id);
-    @Select("SELECT " + TASK_COLUMNS + " FROM validation_task ORDER BY id DESC")
+    @Select("SELECT " + TASK_COLUMNS + " FROM validation_task WHERE deleted_at IS NULL ORDER BY id DESC")
     List<ValidationTask> findTasks();
     @Update("""
             UPDATE validation_task SET status=#{row.status},last_error=#{row.lastError},version=version+1
-            WHERE id=#{row.id} AND version=#{version}
+            WHERE id=#{row.id} AND version=#{version} AND deleted_at IS NULL
             """)
     int updateTask(@Param("row") TaskRow row, @Param("version") long version);
 

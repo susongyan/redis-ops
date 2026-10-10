@@ -86,6 +86,10 @@ try {
  // Check actor writes/reads on the disposable restored schema, never on the snapshot source.
  command('javac',['-cp',classpath,'-d',run,resolve('scripts/fixtures/ActorSnapshotDatabase.java')]);
  command('java',['-cp',`${run}:${classpath}`,'ActorSnapshotDatabase'],{env:{...process.env,BASELINE_DB_PASSWORD:password,BASELINE_JDBC_URL:`jdbc:mysql://127.0.0.1:${port}/restored?serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false`}});
+ if(version>=37){
+  command('javac',['-cp',classpath,'-d',run,resolve('scripts/fixtures/ExecutionRecordDatabase.java')]);
+  console.log(command('java',['-cp',`${run}:${classpath}`,'ExecutionRecordDatabase'],{env:{...process.env,BASELINE_DB_PASSWORD:password,BASELINE_JDBC_URL:`jdbc:mysql://127.0.0.1:${port}/restored?serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false`}}).trim());
+ }
  for(const p of migrations)if(!readFileSync(p).equals(migrationSources.get(p)))throw Error(`Migration changed during generation: ${p}`);
  writeFileSync(join(output,'redis-governance-init.sql'),combined);
  writeFileSync(join(output,'schema.sql'),ddl);

@@ -47,7 +47,7 @@ public class MyBatisAnalysisRunRepository implements AnalysisRunRepository {
                             new TypeReference<List<AnalysisRecommendation>>() {
                             }),
                     row.createdAt);
-            return new AnalysisRun(row.id, request, result);
+            return new AnalysisRun(row.id, request, result, row.version);
         } catch (Exception e) {
             throw new IllegalStateException("analysis run data is invalid", e);
         }
