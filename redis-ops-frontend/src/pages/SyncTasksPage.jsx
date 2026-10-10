@@ -612,10 +612,9 @@ export default function SyncTasksPage() {
       </div>,
     },
     {
-      title: '操作', width: 100,
+      title: '操作', fixed: 'right', width: 100, align: 'center',
       render: (_, task) => (
         <Space direction="vertical" size={4}>
-          <Button size="small" onClick={() => show(task)}>管理</Button>
           <Button size="small" type="text" icon={<SettingOutlined />} onClick={() => openTuning(task)}>参数</Button>
         </Space>
       ),

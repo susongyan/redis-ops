@@ -1,3 +1,4 @@
+import IconActionButton from '../components/IconActionButton.jsx'
 import {useEffect,useState} from 'react'
 import {Alert,Button,Card,Collapse,Empty,Form,Input,InputNumber,Modal,Select,Space,Spin,Switch,Table,Tag,message} from 'antd'
 import {api} from '../api.js'
@@ -33,12 +34,12 @@ export default function CommandCatalogPage(){
         {title:'风险',dataIndex:'riskLevel',render:v=>label(risks,v)},
         {title:'执行确认',dataIndex:'approvalPolicy',render:v=>label(actions,v)},
         {title:'状态',dataIndex:'enabled',render:v=><Tag color={v?'green':'default'}>{v?'已启用':'已禁用'}</Tag>},
-        {title:'操作',render:(_,r)=><Space><Button onClick={()=>edit(r)}>编辑</Button><Button danger onClick={()=>deletion(r)}>删除</Button></Space>}
+        {title:'操作',fixed:'right',width:96,align:'center',render:(_,r)=><Space><IconActionButton action="edit" onClick={()=>edit(r)}/><IconActionButton action="delete" onClick={()=>deletion(r)}/></Space>}
       ]}/>}))}/>:<Empty description="没有匹配的命令分组"/>}</Spin>
     </Card>
     <Modal title="管理分组" open={groupsOpen} onCancel={()=>setGroupsOpen(false)} footer={null} width={600}>
       <p>分组仅用于归类展示，不影响命令执行策略。</p><Button type="primary" onClick={()=>edit(null,true)}>新增分组</Button>
-      <Table rowKey="id" dataSource={groups} pagination={{pageSize:8}} columns={[{title:'分组名称',dataIndex:'commandName'},{title:'命令数',render:(_,r)=>rows.filter(c=>c.parentId===r.id).length},{title:'操作',render:(_,r)=><Space wrap><Button onClick={()=>edit(r,true)}>重命名</Button><Button danger onClick={()=>deletion(r)}>删除</Button></Space>}]}/>
+      <Table rowKey="id" dataSource={groups} scroll={{x:500}} pagination={{pageSize:8}} columns={[{title:'分组名称',dataIndex:'commandName'},{title:'命令数',render:(_,r)=>rows.filter(c=>c.parentId===r.id).length},{title:'操作',fixed:'right',width:96,align:'center',render:(_,r)=><Space wrap><IconActionButton action="edit" label="重命名" onClick={()=>edit(r,true)}/><IconActionButton action="delete" onClick={()=>deletion(r)}/></Space>}]}/>
     </Modal>
     <Modal title={(editing?'编辑':'新增')+(isGroup?'分组':'命令')} open={open} onCancel={()=>!saving&&setOpen(false)} onOk={save} confirmLoading={saving} width={760} destroyOnHidden>
       <Form form={form} layout="vertical">
@@ -61,7 +62,7 @@ export default function CommandCatalogPage(){
               <Form.Item name={[field.name,'required']} label="必填" valuePropName="checked"><Switch/></Form.Item>
               <Form.Item name={[field.name,'variadic']} label="可重复" valuePropName="checked"><Switch/></Form.Item>
               <Form.Item name={[field.name,'literal']} label="固定值（可选）"><Input/></Form.Item>
-              <Button danger onClick={()=>remove(field.name)}>删除</Button>
+              <IconActionButton action="delete" label="删除参数" onClick={()=>remove(field.name)}/>
             </div>)}
             <Button disabled={fields.length>=31} onClick={()=>add({name:'',type:'TEXT',required:true,variadic:false})}>添加参数</Button>
           </>}</Form.List>

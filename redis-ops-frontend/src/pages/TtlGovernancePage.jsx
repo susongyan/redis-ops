@@ -88,14 +88,13 @@ export default function TtlGovernancePage() {
     <Card title="TTL 治理" extra={<Button type="primary" onClick={() => { form.resetFields(); form.setFieldsValue({ databaseNo: 0, includePattern: '*', targetTtlSeconds: 86400, scanRatePerSecond: 500, maxKeys: 100000 }); setOpen(true) }}>新建治理任务</Button>}>
       <Alert type="info" showIcon message="安全门禁" description="可预检后审批执行，或填写原因并确认跳过预检直接执行。所有执行保留限速和数量限制，可暂停或取消。" />
       <Table loading={loading} style={{ marginTop: 16 }} rowKey="id" dataSource={tasks} scroll={{ x: 1100 }} columns={[
-        { title: '任务', dataIndex: 'taskNo' },
+        { title: '任务', dataIndex: 'taskNo', render: (v,row) => <Button type="link" onClick={()=>show(row.id)}>{v}</Button> },
         { title: '集群', dataIndex: 'clusterId', render: value => clusters.find(cluster => cluster.id === value)?.name || `#${value}` },
         { title: '目标 TTL', dataIndex: 'targetTtlSeconds', render: value => `${value}s` },
         { title: '范围', dataIndex: 'includePattern', ellipsis: true },
         { title: '状态', dataIndex: 'status', render: value => <Tag color={statusColor[value]}>{statusLabel[value] || value}</Tag> },
         { title: '审批', dataIndex: 'approvalStatus', render: value => <Tag color={value === 'APPROVED' ? 'green' : 'default'}>{value}</Tag> },
-        { title: '创建时间', dataIndex: 'createdAt', render: formatTime },
-        { title: '操作', fixed: 'right', render: (_, row) => <Button size="small" onClick={() => show(row.id)}>详情</Button> }
+        { title: '创建时间', dataIndex: 'createdAt', render: formatTime }
       ]} pagination={false} />
     </Card>
 

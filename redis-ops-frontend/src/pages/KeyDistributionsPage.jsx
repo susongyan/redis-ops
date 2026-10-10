@@ -4,6 +4,7 @@ import { api } from '../api.js'
 import { randomUuid } from '../uuid.js'
 import { byteLength, classifySample } from '../distributionRules.js'
 import { distributionCsv, exportableDistribution, loadDistributionExport } from '../distributionExport.js'
+import DeleteExecutionRecordButton from '../components/DeleteExecutionRecordButton.jsx'
 import ScanReadNotice from '../components/ScanReadNotice.jsx'
 
 const newRule = () => ({ id: randomUuid().replaceAll('-', ''), name: '业务分组', prefix: '', kind: 'SEGMENTS', delimiter: ':', segments: 1 })
@@ -179,7 +180,7 @@ export default function KeyDistributionsPage() {
         { title: '集群 / DB', render: (_, t) => `${clusters.find(c => c.id === t.clusterId)?.name || t.clusterId} / ${t.spec.database}` },
         { title: '状态', render: (_, t) => <Tag>{statusNames[t.status] || t.status}</Tag> }, { title: '观测次数', dataIndex: 'observed' },
         { title: '已完成分片', render: (_, t) => `${t.completedShards}/${t.totalShards}` }, { title: '原因', dataIndex: 'reason' },
-        { title: '操作', render: (_, t) => <Space>{['QUEUED', 'RUNNING'].includes(t.status) && <Button onClick={() => control(t, 'pause')}>暂停</Button>}{t.status === 'PAUSED' && <Button onClick={() => control(t, 'resume')}>恢复</Button>}{['QUEUED', 'RUNNING', 'PAUSED'].includes(t.status) && <Button onClick={() => control(t, 'cancel')}>取消</Button>}</Space> }
+        { title: '操作', fixed: 'right', width: 160, align: 'center', render: (_, t) => <Space wrap>{['QUEUED', 'RUNNING'].includes(t.status) && <Button size="small" onClick={() => control(t, 'pause')}>暂停</Button>}{t.status === 'PAUSED' && <Button size="small" onClick={() => control(t, 'resume')}>恢复</Button>}{['QUEUED', 'RUNNING', 'PAUSED'].includes(t.status) && <Button size="small" danger onClick={() => control(t, 'cancel')}>取消</Button>}<DeleteExecutionRecordButton type="KEY_DISTRIBUTION" record={t} onDeleted={id=>{if(selected?.id===id)setSelected(null);api.distributionTasks(page).then(r=>{setTasks(r);if(!r.items.length&&page>1)setPage(page-1)}).catch(e=>message.error(e.message))}}/></Space> }
       ]} />
     </Card>
     <Drawer title={`分布结果 #${selected?.id || ''}`} extra={<Button loading={exporting} disabled={!exportableDistribution(selected)} onClick={exportCsv}>导出 CSV</Button>} open={!!selected} onClose={() => setSelected(null)} width="min(900px, 100vw)">

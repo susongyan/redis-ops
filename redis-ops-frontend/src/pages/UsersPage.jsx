@@ -26,7 +26,7 @@ export default function UsersPage(){
       {title:'显示名称',render:(_,r)=>r.user.displayName},{title:'角色',render:(_,r)=>r.user.role==='ADMIN'?'管理员':'运维用户'},
       {title:'状态',render:(_,r)=><Tag>{r.user.status==='ACTIVE'?'启用':'禁用'}</Tag>},
       {title:'最近登录',render:(_,r)=>r.user.lastLoginAt?new Date(r.user.lastLoginAt).toLocaleString():'尚未登录'},
-      {title:'操作',render:(_,r)=><Space><Button onClick={()=>open('edit',r)}>编辑授权</Button><Button onClick={()=>open('reset',r)}>重置密码</Button></Space>}
+      {title:'操作',fixed:'right',width:220,align:'center',render:(_,r)=><Space><Button onClick={()=>open('edit',r)}>编辑授权</Button><Button onClick={()=>open('reset',r)}>重置密码</Button></Space>}
     ]}/>
     <Modal title={edit?.mode==='create'?'添加本地用户':edit?.mode==='reset'?'重置临时密码':'编辑用户授权'} open={!!edit} onCancel={()=>{setEdit(null);form.resetFields()}} onOk={save} confirmLoading={busy} destroyOnClose>
       <Form form={form} layout="vertical">
