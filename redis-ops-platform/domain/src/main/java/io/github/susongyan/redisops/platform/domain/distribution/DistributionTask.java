@@ -4,5 +4,17 @@ import java.time.Instant;
 
 public record DistributionTask(long id, long clusterId, DistributionSpec spec, String status, String reason,
         long version, long observed, int completedShards, int totalShards, long elapsedMillis,
-        Instant createdAt, Instant updatedAt, boolean capacityReached) {
+        Instant createdAt, Instant updatedAt, boolean capacityReached,
+        java.util.List<DistributionScanPort.Shard> scanNodes) {
+    public DistributionTask(long id, long clusterId, DistributionSpec spec, String status, String reason,
+            long version, long observed, int completedShards, int totalShards, long elapsedMillis,
+            Instant createdAt, Instant updatedAt, boolean capacityReached) {
+        this(id, clusterId, spec, status, reason, version, observed, completedShards, totalShards, elapsedMillis,
+                createdAt, updatedAt, capacityReached, java.util.List.of());
+    }
+    public DistributionTask withScanNodes(java.util.List<DistributionScanPort.Shard> nodes) {
+        return new DistributionTask(id, clusterId, spec, status, reason, version, observed, completedShards,
+                totalShards,
+                elapsedMillis, createdAt, updatedAt, capacityReached, java.util.List.copyOf(nodes));
+    }
 }

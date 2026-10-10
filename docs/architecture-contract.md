@@ -42,6 +42,7 @@ Sync Worker ── PSYNC / RDB / RESP ──► Source Redis / Target Redis
 5. **Key 分布分析。** 按 ADR-017，由 Platform 自有任务、租约和聚合器按需执行，只统计 SCAN
    观测次数，不占用 Sync Worker 或高频 Collector；只持久化有界分组，不保存原始样本集合。
    游标和聚合 checkpoint 在同一 MySQL 事务内提交，超限页整体丢弃，拓扑变化停止并保留不完整结果。
+6. **分析读取节点。** 按 ADR-035，风险扫描、Key 分布分析/预览和治理 Dry Run 自动优先健康副本，无副本时使用该分片 Master；逐 Key 元数据查询固定在所选节点。治理执行与同步验证仍走主节点，旧游标不可迁移到新扫描节点。
 
 ## 3. 数据事实与一致性契约
 

@@ -17,10 +17,10 @@ CREATED → DRY_RUN → AWAITING_APPROVAL → APPROVED → RUNNING → COMPLETED
                                       ↘ CANCELLED
 ```
 
-- Dry Run 为只读扫描，不修改 Redis；当前复用校验接口，会读取类型/TTL/内存及部分内容摘要。
+- Dry Run 自动优先健康副本，无可用副本时扫描 Master，不需要配置。只读取 Key 及类型/TTL/内存，不读取内容摘要；详情提示实际读取节点和复制延迟。副本观测用于估算，正式执行仍在 Master 重新扫描校验。
 - 只有 Dry Run 完成并进入 `AWAITING_APPROVAL` 后才能审批。
 - 执行阶段使用 `EXPIRE`，每次写入前重新确认 TTL 仍为 `-1`；期间已被业务设置 TTL 的 Key 会跳过。
-- 支持 Cluster 分 master 扫描、数据库游标 checkpoint、限速、最大 Key 数、暂停、恢复和取消。
+- 支持 Cluster 按主分片选择读取节点、数据库游标 checkpoint、限速、最大 Key 数、暂停、恢复和取消。Dry Run 游标绑定读取节点身份，恢复时节点/拓扑不同则停止，需重新预检；APPLY 不复用副本游标。
 - 任务、运行、分片游标和成功/跳过/失败统计均写入 MySQL。
 - 所有创建、Dry Run、审批、开始、暂停和取消动作写入审计；请求继续使用 `Idempotency-Key` 与 `If-Match`。
 - 页面入口为 `#/ttlGovernance`，展示任务状态、审批状态、运行统计和分片进度。

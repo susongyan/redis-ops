@@ -73,7 +73,9 @@ public class DistributionService implements DisposableBean {
         }
     }
     public DistributionTask get(long id) {
-        return repository.get(id);
+        var task = repository.get(id);
+        return task.withScanNodes(repository.checkpoint(id).map(c -> c.cursors().stream()
+                .map(DistributionCheckpoint.Cursor::shard).toList()).orElse(List.of()));
     }
     private void page(int page, int size) {
         if (page < 1 || page > 1_000_000 || size < 1 || size > 100)
@@ -100,7 +102,11 @@ public class DistributionService implements DisposableBean {
         repository.cleanup(30);
     }
     public record Preview(List<String> samples, long observed, long oversized, long binary, boolean limited,
-            int totalShards, int visitedShards) {
+            int totalShards, int visitedShards, List<DistributionScanPort.Shard> scanNodes) {
+        public Preview(List<String> samples, long observed, long oversized, long binary, boolean limited,
+                int totalShards, int visitedShards) {
+            this(samples, observed, oversized, binary, limited, totalShards, visitedShards, List.of());
+        }
     }
     public Preview preview(long cluster, int db) {
         validateCluster(cluster, db);
@@ -190,7 +196,7 @@ public class DistributionService implements DisposableBean {
                     && !topology.fingerprint().equals(redis.topology(cluster, db, until).fingerprint()))
                 throw new IllegalStateException("SCAN_TOPOLOGY_UNSTABLE");
             return new Preview(List.copyOf(samples), observed, oversized, binary, limit || !all(done), done.length,
-                    visited);
+                    visited, topology.shards());
         } catch (BusinessException e) {
             throw e;
         } catch (RuntimeException e) {

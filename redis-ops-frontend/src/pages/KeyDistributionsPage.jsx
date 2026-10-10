@@ -4,6 +4,7 @@ import { api } from '../api.js'
 import { randomUuid } from '../uuid.js'
 import { byteLength, classifySample } from '../distributionRules.js'
 import { distributionCsv, exportableDistribution, loadDistributionExport } from '../distributionExport.js'
+import ScanReadNotice from '../components/ScanReadNotice.jsx'
 
 const newRule = () => ({ id: randomUuid().replaceAll('-', ''), name: '业务分组', prefix: '', kind: 'SEGMENTS', delimiter: ':', segments: 1 })
 const statusNames = { QUEUED: '排队', RUNNING: '运行中', PAUSED: '已暂停', COMPLETED: '遍历完成', INCOMPLETE: '不完整', FAILED: '失败', CANCELLED: '已取消' }
@@ -112,6 +113,7 @@ export default function KeyDistributionsPage() {
     catch (e) { message.error(e.message) }
   }
   return <div className="distribution-page">
+    <ScanReadNotice />
     <Alert type="info" showIcon message="Key 前缀／业务归属分布" description="只统计 SCAN 观测次数，不读取 value、不作精确去重，不是实时一致性快照。规则和容量决定分组；Top-K 的区间只表示算法误差，不包含 SCAN 重复或数据变化误差。" />
     <Card title="新建分布分析">
       <Steps current={step} onChange={goToStep} size="small" items={[{ title: '选择范围', description: '预览可跳过' }, { title: '配置规则', description: '本地预览归类' }, { title: '确认执行', description: '设置扫描预算' }]} />
@@ -123,7 +125,7 @@ export default function KeyDistributionsPage() {
         <Button onClick={() => { contextVersion.current++; previewRequest.current?.abort(); setSamples([]); setManual(''); setPreviewMeta(null); setExpires(0) }}>清除样本</Button></Space>
       <p className="muted">各分片轮转扫描，最多 1,000 个 Key / 256 KiB / 15 秒。非随机样本，不代表全量分布；五分钟自动清除，离开页面不保留。</p>
       <Input.TextArea aria-label="手动示例 Key" rows={3} maxLength={262144} placeholder="也可手动输入示例 Key，每行一个，仅当前浏览器计算，不发送后端" value={manual} onChange={e => { if (byteLength(e.target.value) > 256 * 1024) return message.warning('样本超过 256 KiB'); setManual(e.target.value); setExpires(Date.now() + 300000) }} />
-      {previewMeta && <p>采样观测 {previewMeta.observed} 次，访问 {previewMeta.visitedShards}/{previewMeta.totalShards} 个分片；超长 {previewMeta.oversized}，二进制 {previewMeta.binary}。{previewMeta.limited ? '已达到采样预算' : '采样遍历结束'}</p>}
+      {previewMeta && <><ScanReadNotice nodes={previewMeta.scanNodes || []} /><p>采样观测 {previewMeta.observed} 次，访问 {previewMeta.visitedShards}/{previewMeta.totalShards} 个分片；超长 {previewMeta.oversized}，二进制 {previewMeta.binary}。{previewMeta.limited ? '已达到采样预算' : '采样遍历结束'}</p></>}
     </Card>}
     {step === 1 && <Card title="2. 归类规则（按顺序首次匹配）" extra={<Button disabled={rules.length >= 32} onClick={() => setRules([...rules, newRule()])}>添加规则</Button>}>
       {!previewRows.length && <Alert type="info" showIcon message="当前没有样本，可直接配置规则继续，也可返回上一步采样或输入示例。" />}
@@ -184,6 +186,7 @@ export default function KeyDistributionsPage() {
       {selected && <><Alert type={selected.status === 'COMPLETED' ? 'info' : 'warning'} message={`${statusNames[selected.status]} · ${selected.reason || 'SCAN 观测统计，非精确 Key 数'}`} />
         <p className="muted">任务结束后可导出全部已保留分组（不限当前页）；文件包含分组与规则信息，请仅分享给授权研发人员。</p>
         <p>观测 {selected.observed} 次；完成分片 {selected.completedShards}/{selected.totalShards}；有效执行 {Math.round(selected.elapsedMillis/1000)} 秒。</p>
+        <ScanReadNotice nodes={selected.scanNodes || []} />
         <p>{selected.spec.scanCount == null ? `旧版参数：${selected.spec.keysPerSecond} Key/s（仅供历史查看，请新建任务使用批次参数）` : `任务参数：SCAN COUNT ${selected.spec.scanCount}；最小间隔 ${selected.spec.scanIntervalMillis} ms（慢响应保护可自动增大间隔）`}</p>
         <p>{selected.spec.mode === 'TOP_K' ? '候选分组数上限' : '最多统计分组数'}：{selected.spec.capacity}；{selected.capacityReached ? '已占满；固定容量模式后续新增分组进入“分组超限”桶' : '未占满'}。</p>
         <p className="muted">{selected.spec.mode === 'TOP_K' ? '按估计次数排序，默认前 20 项。上下界仅对本次观测流有效；未展示项的合计不作精确余数推断。' : '固定容量分组，不是 Top-K；超限新分组计入独立系统桶。'}</p>

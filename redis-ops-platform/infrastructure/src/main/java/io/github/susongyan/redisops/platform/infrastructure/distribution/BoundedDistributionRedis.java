@@ -6,7 +6,6 @@ import java.io.*;
 import java.net.*;
 import java.nio.*;
 import java.nio.charset.*;
-import java.security.*;
 import java.util.*;
 import java.util.concurrent.*;
 import org.springframework.stereotype.Component;
@@ -44,53 +43,15 @@ public class BoundedDistributionRedis implements DistributionScanPort {
                     endpoint = (host.contains(":") ? "[" + host + "]" : host) + ":" + text(values.get(1));
                 }
             }
-            try (Wire wire = new Wire(endpoint, profile, profile.mode() != ClusterMode.CLUSTER, database,
-                    deadlineNanos)) {
-                if (profile.mode() != ClusterMode.CLUSTER) {
-                    String info = text(wire.command("INFO", "server"));
-                    String runId = Arrays.stream(info.split("\\r?\\n")).filter(s -> s.startsWith("run_id:")).findFirst()
-                            .orElseThrow();
-                    return new Topology(hash(endpoint + runId), List.of(new Shard("default", endpoint)));
-                }
-                String nodes = text(wire.command("CLUSTER", "NODES"));
-                List<Shard> shards = new ArrayList<>();
-                List<String> signatures = new ArrayList<>();
-                BitSet coveredSlots = new BitSet(16384);
-                for (String line : nodes.split("\\r?\\n")) {
-                    String[] fields = line.trim().split(" +");
-                    if (fields.length < 8)
-                        throw new IOException("SCAN_INVALID_TOPOLOGY");
-                    Set<String> flags = new HashSet<>(Arrays.asList(fields[2].split(",")));
-                    if (flags.contains("fail") || flags.contains("fail?") || flags.contains("handshake")
-                            || flags.contains("noaddr") || !"connected".equals(fields[7]))
-                        throw new IOException("SCAN_TOPOLOGY_UNSTABLE");
-                    if (!flags.contains("master"))
-                        continue;
-                    if (Arrays.stream(fields).skip(8).anyMatch(s -> s.startsWith("[")))
-                        throw new IOException("SCAN_TOPOLOGY_UNSTABLE");
-                    for (int i = 8; i < fields.length; i++) {
-                        if (!fields[i].matches("[0-9]{1,5}(?:-[0-9]{1,5})?"))
-                            throw new IOException("SCAN_INVALID_TOPOLOGY");
-                        String[] range = fields[i].split("-");
-                        int from = Integer.parseInt(range[0]), to = Integer.parseInt(range[range.length - 1]);
-                        if (from < 0 || to < from || to >= 16384
-                                || coveredSlots.nextSetBit(from) >= 0 && coveredSlots.nextSetBit(from) <= to)
-                            throw new IOException("SCAN_TOPOLOGY_UNSTABLE");
-                        coveredSlots.set(from, to + 1);
-                    }
-                    String address = fields[1].split("[@,]", 2)[0];
-                    shards.add(new Shard(fields[0], address));
-                    signatures.add(fields[0] + "|" + address + "|"
-                            + String.join(" ", Arrays.copyOfRange(fields, 8, fields.length)));
-                    if (shards.size() > limits.shards())
-                        throw new IOException("SCAN_SHARD_LIMIT");
-                }
-                shards.sort(Comparator.comparing(Shard::id));
-                if (coveredSlots.cardinality() != 16384)
-                    throw new IOException("SCAN_TOPOLOGY_UNSTABLE");
-                Collections.sort(signatures);
-                return new Topology(hash(String.join("\n", signatures)), shards);
-            }
+            var topology = ReplicaScanSelection.select(endpoint, profile.mode() == ClusterMode.CLUSTER,
+                    (address, command) -> {
+                        try (Wire wire = new Wire(address, profile, false, 0, deadlineNanos)) {
+                            return wire.command(command);
+                        }
+                    });
+            if (topology.shards().size() > limits.shards())
+                throw new IOException("SCAN_SHARD_LIMIT");
+            return topology;
         } catch (Exception e) {
             if (System.nanoTime() >= deadlineNanos)
                 throw new IllegalStateException("SCAN_BUDGET_LIMIT");
@@ -106,12 +67,48 @@ public class BoundedDistributionRedis implements DistributionScanPort {
         if (!cursor.matches("[0-9]{1,20}") || count < 1 || count > limits.scanCount())
             throw new IllegalArgumentException("INVALID_SCAN_ARGUMENT");
         try (var profile = profiles.get(clusterId);
-                Wire wire = new Wire(shard.endpoint(), profile, true, database, deadlineNanos)) {
+                Wire wire = new Wire(shard.endpoint(), profile, false, 0, deadlineNanos)) {
+            wire.target(shard, profile.mode() == ClusterMode.CLUSTER, database);
             wire.send("SCAN", cursor, "COUNT", String.valueOf(Math.min(count, limits.scanCount())));
-            return wire.reader().scan();
+            var page = wire.reader().scan();
+            if (shard.runId() != null)
+                wire.target(shard, profile.mode() == ClusterMode.CLUSTER, database);
+            return page;
         } catch (Exception e) {
             if (System.nanoTime() >= deadlineNanos)
                 throw new IllegalStateException("SCAN_BUDGET_LIMIT");
+            throw safe(e);
+        }
+    }
+    @Override
+    public Metadata metadata(long clusterId, int database, Shard shard, byte[] key) {
+        if (key == null || key.length > limits.keyBytes())
+            throw new IllegalArgumentException("SCAN_KEY_LIMIT");
+        try (var profile = profiles.get(clusterId);
+                Wire wire = new Wire(shard.endpoint(), profile, false, 0, Long.MAX_VALUE)) {
+            wire.target(shard, profile.mode() == ClusterMode.CLUSTER, database);
+            String type = text(wire.keyCommand("TYPE", key));
+            if ("none".equals(type))
+                return new Metadata(type, 0, -2);
+            long ttl = ((Number) wire.keyCommand("TTL", key)).longValue();
+            Object memory = wire.keyCommand("MEMORY", key);
+            wire.target(shard, profile.mode() == ClusterMode.CLUSTER, database);
+            return new Metadata(type, memory instanceof Number n ? n.longValue() : 0, ttl);
+        } catch (Exception e) {
+            throw safe(e);
+        }
+    }
+    @Override
+    public long count(long clusterId, int database, Topology topology) {
+        long total = 0;
+        try (var profile = profiles.get(clusterId)) {
+            for (Shard shard : topology.shards())
+                try (Wire wire = new Wire(shard.endpoint(), profile, false, 0, Long.MAX_VALUE)) {
+                    wire.target(shard, profile.mode() == ClusterMode.CLUSTER, database);
+                    total = Math.addExact(total, ((Number) wire.command("DBSIZE")).longValue());
+                }
+            return total;
+        } catch (Exception e) {
             throw safe(e);
         }
     }
@@ -127,10 +124,6 @@ public class BoundedDistributionRedis implements DistributionScanPort {
         if (value instanceof String s)
             return s;
         throw new IOException("SCAN_INVALID_METADATA");
-    }
-    private static String hash(String text) throws NoSuchAlgorithmException {
-        return HexFormat.of()
-                .formatHex(MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)));
     }
     private final class Wire implements AutoCloseable {
         private static final ScheduledThreadPoolExecutor DEADLINES = new ScheduledThreadPoolExecutor(1, r -> {
@@ -218,8 +211,41 @@ public class BoundedDistributionRedis implements DistributionScanPort {
             send(values);
             return reader().metadata();
         }
+        void target(Shard shard, boolean cluster, int database) throws IOException {
+            var role = command("ROLE");
+            String expected = "replica".equals(shard.role()) ? "slave" : "master";
+            if (!(role instanceof List<?> values) || values.isEmpty() || !expected.equals(text(values.get(0))))
+                throw new IOException("SCAN_TOPOLOGY_UNSTABLE");
+            if ("slave".equals(expected)) {
+                if (values.size() < 4 || !"connected".equals(text(values.get(3))))
+                    throw new IOException("SCAN_TOPOLOGY_UNSTABLE");
+                var replication = ReplicaScanSelection.info(text(command("INFO", "replication")));
+                if (!"up".equals(replication.get("master_link_status"))
+                        || !"0".equals(replication.get("master_sync_in_progress")))
+                    throw new IOException("SCAN_TOPOLOGY_UNSTABLE");
+            }
+            if (shard.runId() != null && !shard.runId().equals(
+                    ReplicaScanSelection.info(text(command("INFO", "server"))).get("run_id")))
+                throw new IOException("SCAN_TOPOLOGY_UNSTABLE");
+            if (cluster && "slave".equals(expected) && !"OK".equals(command("READONLY")))
+                throw new IOException("SCAN_TOPOLOGY_UNSTABLE");
+            if (database != 0 && !"OK".equals(command("SELECT", String.valueOf(database))))
+                throw new IOException("SCAN_DATABASE_UNAVAILABLE");
+        }
+        Object keyCommand(String name, byte[] key) throws IOException {
+            if (!Set.of("TYPE", "TTL", "MEMORY").contains(name))
+                throw new IOException("SCAN_COMMAND_DENIED");
+            var args = new ArrayList<byte[]>();
+            args.add(name.getBytes(StandardCharsets.US_ASCII));
+            if ("MEMORY".equals(name))
+                args.add("USAGE".getBytes(StandardCharsets.US_ASCII));
+            args.add(key);
+            write(args);
+            return reader().metadata();
+        }
         void send(String... values) throws IOException {
-            if (!Set.of("SCAN", "ROLE", "INFO", "CLUSTER", "SENTINEL", "SELECT").contains(values[0]))
+            if (!Set.of("SCAN", "ROLE", "INFO", "CLUSTER", "SENTINEL", "SELECT", "READONLY", "DBSIZE")
+                    .contains(values[0]))
                 throw new IOException("SCAN_COMMAND_DENIED");
             List<byte[]> args = Arrays.stream(values).map(s -> s.getBytes(StandardCharsets.UTF_8)).toList();
             write(args);

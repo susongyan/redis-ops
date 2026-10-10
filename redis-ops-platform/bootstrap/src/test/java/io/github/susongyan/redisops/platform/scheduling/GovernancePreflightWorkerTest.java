@@ -7,6 +7,7 @@ import io.github.susongyan.redisops.platform.application.governance.*;
 import io.github.susongyan.redisops.platform.domain.governance.*;
 import io.github.susongyan.redisops.platform.domain.job.*;
 import io.github.susongyan.redisops.platform.domain.validation.RedisValidationPort;
+import io.github.susongyan.redisops.platform.domain.scan.ReadOnlyScanPort;
 import java.time.*;
 import java.util.*;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,15 +16,19 @@ import org.junit.jupiter.api.Test;
 class GovernancePreflightWorkerTest {
     final JobRepository jobs = mock(JobRepository.class);
     final RedisValidationPort redis = mock(RedisValidationPort.class);
+    final ReadOnlyScanPort reads = mock(ReadOnlyScanPort.class);
+    final ReadOnlyScanPort.Shard replica = new ReadOnlyScanPort.Shard("s1", "replica:6379", "replica", "run", "node");
+    final ReadOnlyScanPort.Topology topology = new ReadOnlyScanPort.Topology("fingerprint", List.of(replica));
+    final String checkpointId = topology.checkpointId(replica);
     final TtlGovernanceService ttlService = mock(TtlGovernanceService.class);
     final CleanupGovernanceService cleanupService = mock(CleanupGovernanceService.class);
     final TtlGovernanceRepository ttlRepo = mock(TtlGovernanceRepository.class);
     final CleanupGovernanceRepository cleanupRepo = mock(CleanupGovernanceRepository.class);
     final AlertService alerts = mock(AlertService.class);
-    final TtlGovernanceJobWorker ttlWorker = new TtlGovernanceJobWorker(jobs, ttlService, ttlRepo, redis, alerts,
+    final TtlGovernanceJobWorker ttlWorker = new TtlGovernanceJobWorker(jobs, ttlService, ttlRepo, redis, reads, alerts,
             "test");
     final CleanupGovernanceJobWorker cleanupWorker = new CleanupGovernanceJobWorker(jobs, cleanupService, cleanupRepo,
-            redis, alerts, "test");
+            redis, reads, alerts, "test");
     TtlGovernanceTask ttl(TtlGovernanceStatus status, long version) {
         return new TtlGovernanceTask(1L, "TTL-1", 10, 0, "*", 60, 100000, 1000, status,
                 status == TtlGovernanceStatus.RUNNING ? TtlApprovalStatus.APPROVED : TtlApprovalStatus.PENDING,
@@ -42,6 +47,11 @@ class GovernancePreflightWorkerTest {
     @BeforeEach
     void setup() {
         when(jobs.renew(anyLong(), anyString(), any())).thenReturn(true);
+        when(reads.topology(10, 0)).thenReturn(topology);
+        when(reads.scan(eq(10L), eq(0), eq(replica), anyString(), eq(200)))
+                .thenReturn(new ReadOnlyScanPort.Page("0", List.of(new byte[]{1})));
+        when(reads.metadata(eq(10L), eq(0), eq(replica), any()))
+                .thenReturn(new ReadOnlyScanPort.Metadata("string", 1, -1));
         when(redis.scanShards(10, 0)).thenReturn(List.of(new RedisValidationPort.ScanShard("s1")));
         when(redis.scan(eq(10L), eq(0), eq("s1"), anyString(), eq(200)))
                 .thenReturn(new RedisValidationPort.ScanPage("0",
@@ -75,6 +85,8 @@ class GovernancePreflightWorkerTest {
         cleanupWorker.poll();
         verify(redis, never()).applyTtlIfUnchanged(anyLong(), anyInt(), any(), anyLong(), anyLong());
         verify(redis, never()).unlinkIfPresent(anyLong(), anyInt(), any());
+        verifyNoInteractions(redis);
+        verify(reads, times(2)).scan(10, 0, replica, "0", 200);
         verify(ttlService)
                 .saveProgress(argThat(r -> r.candidateKeys() == 1 && r.status() == TtlGovernanceStatus.DRY_RUN), any());
         verify(cleanupService)
@@ -85,7 +97,7 @@ class GovernancePreflightWorkerTest {
         job("DRY_RUN", false, 0);
         ttlWorker.poll();
         cleanupWorker.poll();
-        verifyNoInteractions(redis);
+        verifyNoInteractions(redis, reads);
         verify(ttlService, never()).transition(anyLong(), anyLong(), any(), any());
         verify(cleanupService, never()).transition(anyLong(), anyLong(), any(), any(), any());
         verify(ttlService, never()).completeRun(any(), anyLong(), anyBoolean());
@@ -98,13 +110,17 @@ class GovernancePreflightWorkerTest {
                 TtlGovernanceStatus.DRY_RUN, 100, 7, 3, 0, 4, 0, Instant.EPOCH, null, null)));
         when(cleanupRepo.latestRun(1)).thenReturn(Optional.of(new CleanupGovernanceRun(9L, 1, "CRUN-4",
                 TtlGovernanceStatus.DRY_RUN, 100, 7, 7, 0, 0, 0, Instant.EPOCH, null, null)));
-        when(ttlRepo.checkpoint(9, "s1")).thenReturn(
-                Optional.of(new TtlGovernanceCheckpoint(9, "s1", "42", 7, TtlGovernanceStatus.RUNNING, Instant.EPOCH)));
-        when(cleanupRepo.checkpoint(9, "s1")).thenReturn(Optional
-                .of(new CleanupGovernanceCheckpoint(9, "s1", "42", 7, TtlGovernanceStatus.RUNNING, Instant.EPOCH)));
+        var ttlCheckpoint = new TtlGovernanceCheckpoint(9, checkpointId, "42", 7, TtlGovernanceStatus.RUNNING,
+                Instant.EPOCH);
+        var cleanupCheckpoint = new CleanupGovernanceCheckpoint(9, checkpointId, "42", 7, TtlGovernanceStatus.RUNNING,
+                Instant.EPOCH);
+        when(ttlRepo.checkpoints(9)).thenReturn(List.of(ttlCheckpoint));
+        when(cleanupRepo.checkpoints(9)).thenReturn(List.of(cleanupCheckpoint));
+        when(ttlRepo.checkpoint(9, checkpointId)).thenReturn(Optional.of(ttlCheckpoint));
+        when(cleanupRepo.checkpoint(9, checkpointId)).thenReturn(Optional.of(cleanupCheckpoint));
         ttlWorker.poll();
         cleanupWorker.poll();
-        verify(redis, times(2)).scan(10, 0, "s1", "42", 200);
+        verify(reads, times(2)).scan(10, 0, replica, "42", 200);
         verify(ttlService).saveProgress(argThat(r -> r.id() == 9 && r.scannedKeys() == 8), any());
         verify(cleanupService).saveProgress(argThat(r -> r.id() == 9 && r.scannedKeys() == 8), any());
     }
@@ -122,6 +138,7 @@ class GovernancePreflightWorkerTest {
         verify(redis, times(2)).scan(10, 0, "s1", "0", 200);
         verify(redis).applyTtlIfUnchanged(eq(10L), eq(0), any(), eq(-1L), eq(60L));
         verify(redis).unlinkIfPresent(eq(10L), eq(0), any());
+        verifyNoInteractions(reads);
         verify(ttlService).saveProgress(argThat(r -> r.scannedKeys() == 1 && r.appliedKeys() == 1), any());
         verify(cleanupService).saveProgress(argThat(r -> r.scannedKeys() == 1 && r.deletedKeys() == 1), any());
     }
@@ -138,6 +155,18 @@ class GovernancePreflightWorkerTest {
         verify(cleanupService).saveProgress(any(), any());
         verify(ttlService, never()).transition(anyLong(), anyLong(), any(), any());
         verify(cleanupService, never()).transition(anyLong(), anyLong(), any(), any(), any());
+    }
+    @Test
+    void changedReplicaCannotReusePreflightCursor() {
+        job("DRY_RUN", true, 1);
+        when(ttlRepo.latestRun(1))
+                .thenReturn(Optional.of(new TtlGovernanceRun(9L, 1, "TRUN-4", TtlGovernanceStatus.DRY_RUN,
+                        100, 7, 3, 0, 4, 0, Instant.EPOCH, null, null)));
+        when(ttlRepo.checkpoints(9)).thenReturn(List.of(new TtlGovernanceCheckpoint(9, "old-node", "42", 7,
+                TtlGovernanceStatus.RUNNING, Instant.EPOCH)));
+        ttlWorker.poll();
+        verify(reads, never()).scan(anyLong(), anyInt(), any(), anyString(), anyInt());
+        verify(ttlService).transition(1, 1, TtlGovernanceStatus.FAILED, TtlApprovalStatus.PENDING);
     }
     @Test
     void legacyPayloadIsNotSilentlyUpgradedToCurrentVersion() {

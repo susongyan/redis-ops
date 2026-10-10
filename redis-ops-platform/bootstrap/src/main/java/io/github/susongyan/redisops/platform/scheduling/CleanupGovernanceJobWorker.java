@@ -5,6 +5,7 @@ import io.github.susongyan.redisops.platform.application.governance.CleanupGover
 import io.github.susongyan.redisops.platform.domain.governance.*;
 import io.github.susongyan.redisops.platform.domain.job.*;
 import io.github.susongyan.redisops.platform.domain.validation.*;
+import io.github.susongyan.redisops.platform.domain.scan.ReadOnlyScanPort;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -23,15 +24,18 @@ public class CleanupGovernanceJobWorker {
     private final CleanupGovernanceService service;
     private final CleanupGovernanceRepository repository;
     private final RedisValidationPort redis;
+    private final ReadOnlyScanPort reads;
     private final AlertService alerts;
     private final String owner;
     public CleanupGovernanceJobWorker(JobRepository jobs, CleanupGovernanceService service,
-            CleanupGovernanceRepository repository, RedisValidationPort redis, AlertService alerts,
+            CleanupGovernanceRepository repository, RedisValidationPort redis, ReadOnlyScanPort reads,
+            AlertService alerts,
             @Value("${platform.jobs.instance-id:${HOSTNAME:local-platform}}") String instance) {
         this.jobs = jobs;
         this.service = service;
         this.repository = repository;
         this.redis = redis;
+        this.reads = reads;
         this.alerts = alerts;
         owner = instance + "-cleanup";
     }
@@ -67,12 +71,20 @@ public class CleanupGovernanceJobWorker {
         CleanupGovernanceTask task = service.get(id);
         if (!command.accepts(task.version(), task.status()))
             return;
+        var topology = apply ? null : reads.topology(task.clusterId(), task.databaseNo());
+        var targets = apply
+                ? redis.scanShards(task.clusterId(), task.databaseNo()).stream()
+                        .map(s -> new ReadOnlyScanPort.Shard(s.id(), "")).toList()
+                : topology.shards();
         var run = repository.latestRun(id).orElse(null);
         if (run == null || (!command.resume() && !run.runNo().equals("CRUN-" + jobId))
                 || run.status() != command.phase())
             run = save(new CleanupGovernanceRun(null, id,
                     "CRUN-" + jobId, command.phase(),
-                    redis.countKeys(task.clusterId(), task.databaseNo()), 0, 0, 0, 0, 0, Instant.now(), null, null));
+                    apply
+                            ? redis.countKeys(task.clusterId(), task.databaseNo())
+                            : reads.count(task.clusterId(), task.databaseNo(), topology),
+                    0, 0, 0, 0, 0, Instant.now(), null, null));
         long scanned = run.scannedKeys(), candidates = run.candidateKeys(), deleted = run.deletedKeys(),
                 skipped = run.skippedKeys(), failed = run.failedKeys();
         var probe = new io.github.susongyan.redisops.platform.domain.validation.ValidationTask(null, "cleanup-probe",
@@ -80,8 +92,22 @@ public class CleanupGovernanceJobWorker {
                 task.clusterId(), task.clusterId(), task.databaseNo(), task.databaseNo(), ValidationStrictness.REPORT,
                 "[]", "[]", "cleanup", ValidationSamplingMode.COUNT, 1, null, 0, 64L * 1024 * 1024, 1, 1024, 1,
                 ValidationTaskStatus.CREATED, null, 0, Instant.now(), Instant.now());
-        for (var shard : redis.scanShards(task.clusterId(), task.databaseNo())) {
-            var checkpoint = repository.checkpoint(run.id(), shard.id()).orElse(null);
+        if (!apply) {
+            Set<String> expected = new HashSet<>();
+            for (var shard : targets)
+                expected.add(topology.checkpointId(shard));
+            var saved = repository.checkpoints(run.id());
+            if (saved.isEmpty() && scanned == 0) {
+                for (String target : expected)
+                    repository.saveCheckpoint(new CleanupGovernanceCheckpoint(run.id(), target, "0", 0,
+                            TtlGovernanceStatus.RUNNING, Instant.now()));
+            } else if (!expected
+                    .equals(new HashSet<>(saved.stream().map(CleanupGovernanceCheckpoint::shardId).toList())))
+                throw new IllegalStateException("SCAN_TOPOLOGY_UNSTABLE");
+        }
+        for (var shard : targets) {
+            String shardId = apply ? shard.id() : topology.checkpointId(shard);
+            var checkpoint = repository.checkpoint(run.id(), shardId).orElse(null);
             if (checkpoint != null && checkpoint.status() == TtlGovernanceStatus.COMPLETED)
                 continue;
             String cursor = checkpoint == null ? "0" : checkpoint.cursor();
@@ -90,28 +116,42 @@ public class CleanupGovernanceJobWorker {
                 if (!command.accepts(task.version(), task.status())
                         || !jobs.renew(jobId, lease, Duration.ofMinutes(10)))
                     return;
-                var page = redis.scan(task.clusterId(), task.databaseNo(), shard.id(), cursor, 200);
-                cursor = page.nextCursor();
+                if (!apply && !topology.fingerprint()
+                        .equals(reads.topology(task.clusterId(), task.databaseNo()).fingerprint()))
+                    throw new IllegalStateException("SCAN_TOPOLOGY_UNSTABLE");
+                ReadOnlyScanPort.Page page;
+                if (apply) {
+                    var primaryPage = redis.scan(task.clusterId(), task.databaseNo(), shard.id(), cursor, 200);
+                    page = new ReadOnlyScanPort.Page(primaryPage.nextCursor(), primaryPage.keys().stream()
+                            .map(RedisValidationPort.ValidationKey::bytes).toList());
+                } else
+                    page = reads.scan(task.clusterId(), task.databaseNo(), shard, cursor, 200);
+                cursor = page.cursor();
                 for (var key : page.keys()) {
                     if (scanned >= task.impactLimit())
                         break;
-                    String name = new String(key.bytes(), StandardCharsets.UTF_8);
+                    if (key == null)
+                        continue;
+                    String name = new String(key, StandardCharsets.UTF_8);
                     if (!matches(task.includePattern(), name))
                         continue;
                     scanned++;
-                    if (redis.inspect(task.clusterId(), task.databaseNo(), key.bytes(), probe).isEmpty()) {
+                    boolean missing = apply
+                            ? redis.inspect(task.clusterId(), task.databaseNo(), key, probe).isEmpty()
+                            : "none".equals(reads.metadata(task.clusterId(), task.databaseNo(), shard, key).type());
+                    if (missing) {
                         skipped++;
                         continue;
                     }
                     candidates++;
                     if (apply) {
-                        if (redis.unlinkIfPresent(task.clusterId(), task.databaseNo(), key.bytes()))
+                        if (redis.unlinkIfPresent(task.clusterId(), task.databaseNo(), key))
                             deleted++;
                         else
                             skipped++;
                     }
                 }
-                var savedCheckpoint = new CleanupGovernanceCheckpoint(run.id(), shard.id(), cursor, scanned,
+                var savedCheckpoint = new CleanupGovernanceCheckpoint(run.id(), shardId, cursor, scanned,
                         "0".equals(cursor) ? TtlGovernanceStatus.COMPLETED : TtlGovernanceStatus.RUNNING,
                         Instant.now());
                 if (!jobs.renew(jobId, lease, Duration.ofMinutes(10)))
@@ -126,6 +166,8 @@ public class CleanupGovernanceJobWorker {
         task = service.get(id);
         if (!command.accepts(task.version(), task.status()) || !jobs.renew(jobId, lease, Duration.ofMinutes(10)))
             return;
+        if (!apply && !topology.fingerprint().equals(reads.topology(task.clusterId(), task.databaseNo()).fingerprint()))
+            throw new IllegalStateException("SCAN_TOPOLOGY_UNSTABLE");
         service.completeRun(new CleanupGovernanceRun(run.id(), run.taskId(), run.runNo(), TtlGovernanceStatus.COMPLETED,
                 run.plannedKeys(), scanned, candidates, deleted, skipped, failed, run.startedAt(), Instant.now(),
                 null), command.version(), apply);

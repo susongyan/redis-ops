@@ -10,15 +10,16 @@ import java.security.*;
 import java.time.Instant;
 import java.util.*;
 import org.springframework.stereotype.Service;
+import io.github.susongyan.redisops.platform.domain.scan.ReadOnlyScanPort;
 import org.springframework.transaction.annotation.Transactional;
 @Service
 public class RiskScanService {
     private final RiskScanRepository scans;
     private final ClusterRepository clusters;
     private final JobRepository jobs;
-    private final RedisValidationPort redis;
+    private final ReadOnlyScanPort redis;
     private final AlertService alerts;
-    public RiskScanService(RiskScanRepository s, ClusterRepository c, JobRepository j, RedisValidationPort r,
+    public RiskScanService(RiskScanRepository s, ClusterRepository c, JobRepository j, ReadOnlyScanPort r,
             AlertService a) {
         scans = s;
         clusters = c;
@@ -95,63 +96,98 @@ public class RiskScanService {
     }
     @Transactional
     public void execute(long id) {
+        try {
+            executeScan(id);
+        } catch (RuntimeException error) {
+            String code = error.getMessage();
+            if (code == null || !code.matches("SCAN_[A-Z_]{1,40}"))
+                code = "SCAN_FAILED";
+            var task = get(id);
+            if (task.status() == RiskScanStatus.RUNNING) {
+                final String failure = code;
+                scans.latestRun(id).ifPresent(run -> scans.saveRun(new RiskScanRun(run.id(), id, run.runNo(),
+                        RiskScanStatus.FAILED, run.plannedKeys(), run.scannedKeys(), run.findingCount(),
+                        run.startedAt(), Instant.now(), failure)));
+                scans.updateTask(new RiskScanTask(task.id(), task.taskNo(), task.clusterId(), task.databaseNo(),
+                        task.includePattern(), task.checkLargeKey(), task.checkNoTtl(), task.largeKeyThresholdBytes(),
+                        task.scanRatePerSecond(), task.maxFindings(), RiskScanStatus.FAILED, task.version(),
+                        task.createdAt(),
+                        Instant.now()), task.version());
+            }
+            throw new IllegalStateException(code);
+        }
+    }
+    private void executeScan(long id) {
         RiskScanTask t = get(id);
-        if (t.status() == RiskScanStatus.CANCELLED)
+        if (t.status() != RiskScanStatus.RUNNING)
             return;
+        var topology = redis.topology(t.clusterId(), t.databaseNo());
         RiskScanRun run = scans.latestRun(id).filter(value -> value.status() == RiskScanStatus.RUNNING)
                 .orElseGet(() -> scans
                         .saveRun(new RiskScanRun(null, id, "SRUN-" + UUID.randomUUID().toString().substring(0, 12),
-                                RiskScanStatus.RUNNING, redis.countKeys(t.clusterId(), t.databaseNo()), 0, 0,
+                                RiskScanStatus.RUNNING, redis.count(t.clusterId(), t.databaseNo(), topology), 0, 0,
                                 Instant.now(), null, null)));
         long scanned = run.scannedKeys();
         long findings = run.findingCount();
-        ValidationTask probe = new ValidationTask(null, "probe", null, t.clusterId(), t.clusterId(), t.databaseNo(),
-                t.databaseNo(), ValidationStrictness.REPORT, "[]", "[]", "risk", ValidationSamplingMode.COUNT, 1, null,
-                0, t.largeKeyThresholdBytes(), 1, 1024, 1, ValidationTaskStatus.CREATED, null, 0, Instant.now(),
-                Instant.now());
-        for (var shard : redis.scanShards(t.clusterId(), t.databaseNo())) {
-            RiskScanCheckpoint checkpoint = scans.checkpoint(run.id(), shard.id())
-                    .orElse(new RiskScanCheckpoint(run.id(), shard.id(), "0", 0, RiskScanStatus.RUNNING,
+        var savedTargets = scans.checkpoints(run.id());
+        Set<String> expected = new HashSet<>();
+        for (var shard : topology.shards())
+            expected.add(topology.checkpointId(shard));
+        if (savedTargets.isEmpty() && scanned == 0) {
+            for (String target : expected)
+                scans.saveCheckpoint(new RiskScanCheckpoint(run.id(), target, "0", 0,
+                        RiskScanStatus.RUNNING, Instant.now()));
+        } else if (!expected.equals(new HashSet<>(savedTargets.stream().map(RiskScanCheckpoint::shardId).toList())))
+            throw new IllegalStateException("SCAN_TOPOLOGY_UNSTABLE");
+        for (var shard : topology.shards()) {
+            String shardId = topology.checkpointId(shard);
+            RiskScanCheckpoint checkpoint = scans.checkpoint(run.id(), shardId)
+                    .orElse(new RiskScanCheckpoint(run.id(), shardId, "0", 0, RiskScanStatus.RUNNING,
                             Instant.now()));
+            if (checkpoint.status() == RiskScanStatus.COMPLETED)
+                continue;
             String cursor = checkpoint.cursor();
             do {
                 long pageStartedAt = System.nanoTime();
                 if (get(id).status() == RiskScanStatus.CANCELLED) {
-                    scans.saveCheckpoint(new RiskScanCheckpoint(run.id(), shard.id(), cursor, checkpoint.scannedKeys(),
+                    scans.saveCheckpoint(new RiskScanCheckpoint(run.id(), shardId, cursor, checkpoint.scannedKeys(),
                             RiskScanStatus.CANCELLED, Instant.now()));
                     scans.saveRun(new RiskScanRun(run.id(), id, run.runNo(), RiskScanStatus.CANCELLED,
                             run.plannedKeys(), scanned,
                             findings, run.startedAt(), Instant.now(), null));
                     return;
                 }
-                var page = redis.scan(t.clusterId(), t.databaseNo(), shard.id(), cursor, 200);
-                cursor = page.nextCursor();
+                if (!topology.fingerprint().equals(redis.topology(t.clusterId(), t.databaseNo()).fingerprint()))
+                    throw new IllegalStateException("SCAN_TOPOLOGY_UNSTABLE");
+                var page = redis.scan(t.clusterId(), t.databaseNo(), shard, cursor, 200);
+                cursor = page.cursor();
                 List<RiskFinding> batch = new ArrayList<>();
                 for (var key : page.keys()) {
                     if (findings + batch.size() >= t.maxFindings())
                         break;
-                    if (!glob(t.includePattern(), new String(key.bytes(), StandardCharsets.UTF_8)))
+                    if (key == null)
+                        continue;
+                    if (!glob(t.includePattern(), new String(key, StandardCharsets.UTF_8)))
                         continue;
                     scanned++;
-                    var value = redis.inspect(t.clusterId(), t.databaseNo(), key.bytes(), probe);
-                    if (value.isEmpty())
+                    var inspected = redis.metadata(t.clusterId(), t.databaseNo(), shard, key);
+                    if ("none".equals(inspected.type()))
                         continue;
-                    var inspected = value.get();
-                    String keyName = new String(key.bytes(), StandardCharsets.UTF_8);
-                    String keyHash = hash(key.bytes());
+                    String keyName = new String(key, StandardCharsets.UTF_8);
+                    String keyHash = hash(key);
                     if (t.checkLargeKey() && inspected.size() >= t.largeKeyThresholdBytes()
                             && findings + batch.size() < t.maxFindings())
                         batch.add(new RiskFinding(null, run.id(), "LARGE_KEY",
                                 level(inspected.size(), t.largeKeyThresholdBytes()), keyName, keyHash, inspected.type(),
-                                inspected.size(), null, inspected.ttlSeconds(), shard.id(), Instant.now()));
+                                inspected.size(), null, inspected.ttlSeconds(), shardId, Instant.now()));
                     if (t.checkNoTtl() && inspected.ttlSeconds() == -1 && findings + batch.size() < t.maxFindings())
                         batch.add(new RiskFinding(null, run.id(), "NO_TTL", RiskLevel.MEDIUM, keyName, keyHash,
                                 inspected.type(),
-                                inspected.size(), null, -1L, shard.id(), Instant.now()));
+                                inspected.size(), null, -1L, shardId, Instant.now()));
                 }
                 scans.saveFindings(batch);
                 findings += batch.size();
-                checkpoint = new RiskScanCheckpoint(run.id(), shard.id(), cursor,
+                checkpoint = new RiskScanCheckpoint(run.id(), shardId, cursor,
                         checkpoint.scannedKeys() + page.keys().size(),
                         "0".equals(cursor) ? RiskScanStatus.COMPLETED : RiskScanStatus.RUNNING, Instant.now());
                 scans.saveCheckpoint(checkpoint);
@@ -161,6 +197,8 @@ public class RiskScanService {
                 rateLimit(page.keys().size(), t.scanRatePerSecond(), pageStartedAt);
             } while (!"0".equals(cursor) && findings < t.maxFindings());
         }
+        if (!topology.fingerprint().equals(redis.topology(t.clusterId(), t.databaseNo()).fingerprint()))
+            throw new IllegalStateException("SCAN_TOPOLOGY_UNSTABLE");
         scans.saveRun(new RiskScanRun(run.id(), id, run.runNo(), RiskScanStatus.COMPLETED, run.plannedKeys(), scanned,
                 findings,
                 run.startedAt(), Instant.now(), null));

@@ -9,8 +9,7 @@
   Standalone 采集指定节点；Sentinel 先解析当前主节点；Cluster 读取各可用 master 后做集群级聚合。
   `GET /api/v1/collector/clusters/{clusterId}/nodes` 同时提供当前采样主节点的连接数、内存和
   Ops/s 明细；Prometheus 仍只使用 `cluster_id` 标签，避免节点高基数标签污染时序库。
-- 风险扫描通过 `SCAN` 和现有只读检查通道识别大 Key 与无 TTL Key；Cluster 按当前 master
-  分片扫描并持久化各分片 cursor，意外重试可从 checkpoint 恢复。结果按企业内部安全契约保存
+- 风险扫描通过有界 `SCAN` 和 TYPE/TTL/MEMORY USAGE 识别大 Key 与无 TTL Key；每个主分片自动优先健康副本，无可用副本时扫描 Master，不需要配置。扫描与逐 Key 查询固定在同一节点，不读取内容摘要。持久化完整目标清单和身份绑定 cursor，仅在节点身份与拓扑一致时恢复；节点变化停止并显示固定失败原因。结果按企业内部安全契约保存
   受控页面可见的原始 Key、类型、大小、TTL、节点与风险级别，不进入日志、指标、审计、异步
   payload 或外部通知；页面提供任务、进度、取消与分页结果。
 - 告警规则按“规则 + 资源”收敛为 `OPEN → ACKNOWLEDGED → RESOLVED`。当前 Collector 不可用和

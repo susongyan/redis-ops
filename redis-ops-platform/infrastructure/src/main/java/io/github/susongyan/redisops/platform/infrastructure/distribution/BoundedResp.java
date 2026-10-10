@@ -63,7 +63,12 @@ public final class BoundedResp {
             throw new IOException("SCAN_INVALID_RESP");
     }
     private byte[] bulk(int allocationLimit, boolean discard) throws IOException {
+        return bulk(allocationLimit, discard, false);
+    }
+    private byte[] bulk(int allocationLimit, boolean discard, boolean nullable) throws IOException {
         long length = number();
+        if (nullable && length == -1)
+            return null;
         if (length < 0 || length > limits.responseBytes() - consumed - 2)
             throw new IOException("SCAN_RESPONSE_LIMIT");
         if (length > allocationLimit && !discard)
@@ -108,7 +113,7 @@ public final class BoundedResp {
         return switch (marker) {
             case '+' -> line();
             case ':' -> number();
-            case '$' -> bulk(256 * 1024, false);
+            case '$' -> bulk(256 * 1024, false, true);
             case '*' -> {
                 long size = number();
                 if (size < 0 || size > 1024)

@@ -12,6 +12,34 @@ import org.junit.jupiter.api.Test;
 
 class DistributionSocketTest {
     @Test
+    void promotedReplicaIsRejectedBeforeScan() throws Exception {
+        try (var server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            var failure = new AtomicReference<Throwable>();
+            Thread peer = new Thread(() -> {
+                try (var socket = server.accept()) {
+                    socket.setSoTimeout(2000);
+                    new BoundedResp(socket.getInputStream(), () -> {
+                    }).metadata(); // ROLE only
+                    socket.getOutputStream().write("*1\r\n$6\r\nmaster\r\n".getBytes(StandardCharsets.US_ASCII));
+                    assertEquals(-1, socket.getInputStream().read());
+                } catch (Throwable e) {
+                    failure.set(e);
+                }
+            });
+            peer.setDaemon(true);
+            peer.start();
+            String endpoint = "127.0.0.1:" + server.getLocalPort();
+            var redis = new BoundedDistributionRedis(id -> new RedisConnectionProfile(id, ClusterMode.STANDALONE,
+                    List.of(endpoint), null, null, "NONE", null));
+            var shard = new DistributionScanPort.Shard("primary", endpoint, "replica", "a".repeat(40), "replica");
+            var error = assertThrows(IllegalStateException.class, () -> redis.scan(1, 0, shard, "42", 200));
+            assertEquals("SCAN_TOPOLOGY_UNSTABLE", error.getMessage());
+            peer.join(2500);
+            assertFalse(peer.isAlive());
+            assertNull(failure.get());
+        }
+    }
+    @Test
     void blockedReadHonorsCommandDeadline() throws Exception {
         exercise(false);
     }

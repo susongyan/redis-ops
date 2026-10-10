@@ -1,4 +1,5 @@
 import { Alert, Descriptions, Divider, Drawer, Space, Statistic, Table, Tag, Typography } from 'antd'
+import ScanReadNotice, { scanTargetLabel } from './ScanReadNotice.jsx'
 
 export const governanceLabels = { CREATED: '待预检', DRY_RUN: '预检中', DRY_RUN_PAUSED: '预检已暂停', AWAITING_APPROVAL: '待审批', APPROVED: '已审批', RUNNING: '执行中', PAUSED: '执行已暂停', COMPLETED: '已完成', CANCELLED: '已取消', FAILED: '失败' }
 export const governanceColors = { DRY_RUN: 'processing', DRY_RUN_PAUSED: 'orange', AWAITING_APPROVAL: 'gold', APPROVED: 'blue', RUNNING: 'processing', PAUSED: 'orange', COMPLETED: 'success', FAILED: 'error' }
@@ -24,6 +25,7 @@ export default function GovernanceTaskDrawer({ detail, clusters, kind, actions, 
         {task.approvalNote && <Descriptions.Item label="授权说明" span={2}>{task.approvalNote}</Descriptions.Item>}
       </Descriptions>
       <Divider />
+      <ScanReadNotice governance checkpoints={detail.checkpoints || []} />
       <Typography.Title level={5}>{preflight ? '预检统计' : '最近一次运行统计'}</Typography.Title>
       <Typography.Paragraph type="secondary">{preflight ? '预检只读，不修改 Redis。统计仅代表已检查范围，不保证覆盖全部 Key。' : '正式执行从头扫描并使用独立计数。任务刚提交时，下面可能仍显示上一轮预检统计。'}</Typography.Paragraph>
       {run ? <>
@@ -43,7 +45,7 @@ export default function GovernanceTaskDrawer({ detail, clusters, kind, actions, 
         {run.errorCode && <Alert type="error" showIcon message={run.errorCode} style={{ marginBottom: 16 }} />}
         <Typography.Title level={5}>分片进度</Typography.Title>
         <Table size="small" rowKey="shardId" pagination={false} dataSource={detail.checkpoints || []} scroll={{ x: 540 }} columns={[
-          { title: '分片', dataIndex: 'shardId', render: value => <span style={{ overflowWrap: 'anywhere' }}>{value}</span> },
+          { title: '扫描节点 / 分片', dataIndex: 'shardId', render: value => <span style={{ overflowWrap: 'anywhere' }}>{scanTargetLabel(value)}</span> },
           { title: 'Cursor', dataIndex: 'cursor' },
           { title: '累计匹配检查', dataIndex: 'scannedKeys' },
           { title: '状态', dataIndex: 'status', render: value => <Tag color={governanceColors[value]}>{governanceLabels[value] || value}</Tag> }

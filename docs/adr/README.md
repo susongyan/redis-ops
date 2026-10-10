@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-035 分析扫描自动优先副本](ADR-035-replica-advisory-scans.md)
 - [ADR-034 命令目录按行协调](ADR-034-console-row-locking.md)
 - [ADR-033 Cluster 无 Key 只读命令自动路由](ADR-033-console-keyless-reads.md)
 
