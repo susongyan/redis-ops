@@ -37,7 +37,7 @@ chmod 600 conf/redis-ops.env
 必须配置：
 
 ```bash
-DB_URL='jdbc:mysql://mysql.example.internal:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC'
+DB_URL='jdbc:mysql://mysql.example.internal:3306/redis_governance?useUnicode=true&characterEncoding=utf8'
 SYNC_DB_USERNAME='redis_ops_sync'
 SYNC_DB_PASSWORD='...'
 REDIS_OPS_CREDENTIAL_KEYS='v1:...'

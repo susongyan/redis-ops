@@ -44,7 +44,8 @@ frontend → REST API
 
 ## 3. 数据、状态与安全
 
-- MySQL 事务状态使用 UTC `Instant` 语义；JDBC 连接必须使用 `serverTimezone=UTC`。
+- 领域与 API 层时间使用 UTC `Instant` 语义；JDBC URL 不携带会话时区参数，会话时区跟随
+  数据库服务器，`DATETIME` 列按会话壁钟单标签读写（见 ADR-037）。
 - 新 schema 只能通过递增 Flyway migration 新增；已发布 migration 不得修改或重编号。
 - 核心可变资源使用 `version` 乐观锁；HTTP 写接口使用 `If-Match` 和 `Idempotency-Key`。
 - 同步任务的控制意图由 Platform 写入；Sync Worker 通过租约领取。目标 Redis checkpoint 和
