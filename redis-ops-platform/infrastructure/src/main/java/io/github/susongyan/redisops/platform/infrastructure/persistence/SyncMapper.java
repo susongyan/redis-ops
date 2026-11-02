@@ -6,14 +6,20 @@ import java.util.List;
 
 @Mapper
 public interface SyncMapper {
+    // Timezone convention (see ADR-037): every DATETIME column in the shared schema is
+    // written with one label — the database session wall clock, and the session timezone
+    // is whatever the database server itself uses (JDBC URLs carry no override).
+    // CURRENT_TIMESTAMP defaults, lease/heartbeat math and Java Instant parameters all
+    // agree on that single label, so timestamps are read as-is; mixing deployments whose
+    // database servers run different timezones would silently shift reads.
     String TASK_COLUMNS = "id,task_no,relation_id,source_cluster_id,target_cluster_id,purpose,sync_mode,status,tool_type,"
             +
             "source_db,target_db,CAST(include_patterns_json AS CHAR) include_patterns_json," +
             "CAST(exclude_patterns_json AS CHAR) exclude_patterns_json," +
-            "CAST(command_policy_json AS CHAR) command_policy_json,rate_limit_ops,bandwidth_limit_bytes_per_second,"
+            "CAST(command_policy_json AS CHAR) command_policy_json,reset_mode,rate_limit_ops,bandwidth_limit_bytes_per_second,"
             +
             "spool_limit_bytes,full_apply_concurrency,full_apply_pipeline_size,desired_action,write_fenced,"
-            + "write_fence_note,blocked_reason,full_sync_epoch," +
+            + "write_fence_note,blocked_reason,assigned_worker,full_sync_epoch," +
             "last_rpo_seconds,last_error,version,created_at,updated_at,finished_at";
     String SWITCH_COLUMNS = "id,relation_id,old_primary_cluster_id,old_standby_cluster_id,stopped_task_id,reverse_task_id,status,operator_id AS operator,source_write_fenced,source_fence_note,last_error,version,created_at,updated_at,confirmed_at,CAST(operator_snapshot AS CHAR) operatorSnapshot";
     @Insert("""
@@ -40,10 +46,10 @@ public interface SyncMapper {
     SyncTask findLatestTask(long relationId);
     @Update("""
             UPDATE sync_task SET status=#{row.status},desired_action=#{row.desiredAction},write_fenced=#{row.writeFenced},
-              write_fence_note=#{row.writeFenceNote},blocked_reason=#{row.blockedReason},full_sync_epoch=#{row.fullSyncEpoch},
+              write_fence_note=#{row.writeFenceNote},blocked_reason=#{row.blockedReason},assigned_worker=#{row.assignedWorker},full_sync_epoch=#{row.fullSyncEpoch},
               rate_limit_ops=#{row.rateLimitOps},bandwidth_limit_bytes_per_second=#{row.bandwidthLimitBytesPerSecond},
               spool_limit_bytes=#{row.spoolLimitBytes},full_apply_concurrency=#{row.fullApplyConcurrency},
-              full_apply_pipeline_size=#{row.fullApplyPipelineSize},last_rpo_seconds=#{row.lastRpoSeconds},
+              full_apply_pipeline_size=#{row.fullApplyPipelineSize},reset_mode=#{row.resetMode},last_rpo_seconds=#{row.lastRpoSeconds},
               last_error=#{row.lastError},
               finished_at=#{row.finishedAt},version=version+1
             WHERE id=#{row.id} AND version=#{version}
@@ -51,8 +57,12 @@ public interface SyncMapper {
     int updateTask(@Param("row") TaskRow row, @Param("version") long version);
     @Insert("INSERT INTO sync_task_event(task_id,from_status,to_status,operator_id,message,operator_snapshot) VALUES(#{taskId},#{fromStatus},#{toStatus},#{operator},#{message},#{operatorSnapshot})")
     void insertEvent(EventRow row);
+
+    @Update("UPDATE sync_task SET spool_cleanup_requested_at=CURRENT_TIMESTAMP(3) WHERE id=#{taskId}")
+    int requestSpoolCleanup(@Param("taskId") long taskId);
     @Select("""
-            SELECT id,task_id,from_status,to_status,operator_id AS operator,message,created_at,CAST(operator_snapshot AS CHAR) operatorSnapshot
+            SELECT id,task_id,from_status,to_status,operator_id AS operator,message,created_at,
+            CAST(operator_snapshot AS CHAR) operatorSnapshot
             FROM sync_task_event WHERE task_id=#{taskId}
             ORDER BY created_at DESC,id DESC LIMIT #{limit} OFFSET #{offset}
             """)
@@ -124,10 +134,11 @@ public interface SyncMapper {
               t.status,t.tool_type,t.source_db,t.target_db,
               CAST(t.include_patterns_json AS CHAR) include_patterns_json,
               CAST(t.exclude_patterns_json AS CHAR) exclude_patterns_json,
-              CAST(t.command_policy_json AS CHAR) command_policy_json,t.rate_limit_ops,
+              CAST(t.command_policy_json AS CHAR) command_policy_json,t.reset_mode,t.rate_limit_ops,
               t.bandwidth_limit_bytes_per_second,t.spool_limit_bytes,t.full_apply_concurrency,
               t.full_apply_pipeline_size,t.desired_action,t.write_fenced,t.write_fence_note,t.blocked_reason,
-              t.full_sync_epoch,t.last_rpo_seconds,t.last_error,t.version,t.created_at,t.updated_at,t.finished_at
+              t.full_sync_epoch,t.last_rpo_seconds,t.last_error,t.version,
+              t.created_at,t.updated_at,t.finished_at
             FROM sync_task t
             JOIN sync_runtime r ON r.task_id=t.id
             WHERE r.lease_owner IS NOT NULL AND r.lease_until<CURRENT_TIMESTAMP(3)
@@ -136,8 +147,8 @@ public interface SyncMapper {
             """)
     List<SyncTask> findExpiredRecoverableTasks(@Param("limit") int limit);
     @Select("""
-            SELECT task_id,runtime_id,lease_owner,lease_until,fencing_generation,phase,heartbeat_at,
-              spool_bytes,target_fence_generation,fence_published_at,takeover_count,recovery_action,last_error,
+            SELECT task_id,runtime_id,lease_owner,lease_until,fencing_generation,phase,
+              heartbeat_at,spool_bytes,target_fence_generation,fence_published_at,takeover_count,recovery_action,last_error,
               started_at,updated_at
             FROM sync_runtime WHERE task_id=#{taskId}
             """)
@@ -157,9 +168,37 @@ public interface SyncMapper {
             </script>
             """)
     List<SyncWorkerAssignment> findWorkerAssignments(@Param("taskIds") List<Long> taskIds);
+    // Column order must match the SyncWorkerInstance constructor: MyBatis maps this record by
+    // constructor argument types in column order (no arg-name-based mapping configured).
+    @Select("SELECT instance_name,worker_ip,worker_port,version,started_at,heartbeat_at,"
+            + "heartbeat_at>=DATE_SUB(CURRENT_TIMESTAMP(3),INTERVAL #{staleSeconds} SECOND) online "
+            + "FROM sync_worker_registry ORDER BY instance_name")
+    List<SyncWorkerInstance> findWorkers(@Param("staleSeconds") long staleSeconds);
+    @Select("SELECT instance_name,worker_ip,worker_port,version,started_at,heartbeat_at,"
+            + "heartbeat_at>=DATE_SUB(CURRENT_TIMESTAMP(3),INTERVAL #{staleSeconds} SECOND) online "
+            + "FROM sync_worker_registry WHERE instance_name=#{instanceName}")
+    SyncWorkerInstance findWorker(@Param("instanceName") String instanceName,
+            @Param("staleSeconds") long staleSeconds);
+    // Column order matches the SyncWorkerRuntimeRow constructor (positional MyBatis mapping).
+    @Select("SELECT r.task_id,t.task_no,t.status,r.lease_owner,r.phase,r.spool_bytes,r.lease_until,"
+            + "r.updated_at,"
+            + "t.assigned_worker FROM sync_runtime r JOIN sync_task t ON t.id=r.task_id"
+            // Terminal tasks never release their runtime owner, so lease_owner alone would list
+            // long-dead runs. Only statuses that still occupy a worker slot count: active states
+            // plus PAUSED/BLOCKED (their runners stay alive and hold concurrency quota).
+            + " WHERE r.lease_owner IS NOT NULL"
+            + " AND t.status IN ('STARTING','FULL_SYNCING','INCR_SYNCING','CAUGHT_UP','RESUMING','PAUSED','BLOCKED')"
+            + " ORDER BY r.lease_owner,r.task_id")
+    List<SyncWorkerRuntimeRow> findWorkerRuntimes();
+    // Time math stays DB-side (DATE_SUB on CURRENT_TIMESTAMP) so staleness always compares
+    // against the same clock that wrote the columns.
+    @Delete("DELETE FROM sync_worker_registry WHERE heartbeat_at<DATE_SUB(CURRENT_TIMESTAMP(3),"
+            + "INTERVAL #{retentionSeconds} SECOND)")
+    int purgeOfflineWorkers(@Param("retentionSeconds") long retentionSeconds);
     @Select("""
             SELECT id,task_id,channel_id,source_node_id,slot_ranges,replication_id,received_offset,applied_offset,
-              status,last_heartbeat_at,updated_at FROM sync_channel_checkpoint WHERE task_id=#{taskId} ORDER BY id
+              status,last_heartbeat_at,updated_at
+              FROM sync_channel_checkpoint WHERE task_id=#{taskId} ORDER BY id
             """)
     List<SyncChannelCheckpoint> findChannels(long taskId);
     @Insert("""
@@ -230,8 +269,8 @@ public interface SyncMapper {
         public int sourceDb, targetDb, fullApplyConcurrency, fullApplyPipelineSize;
         public boolean writeFenced;
         public String taskNo, purpose, syncMode, status, toolType, includePatternsJson,
-                excludePatternsJson, commandPolicyJson, desiredAction, writeFenceNote, blockedReason, fullSyncEpoch,
-                lastError;
+                excludePatternsJson, commandPolicyJson, resetMode, desiredAction, writeFenceNote, blockedReason,
+                assignedWorker, fullSyncEpoch, lastError;
         public java.time.Instant finishedAt;
         static TaskRow from(SyncTask x) {
             var r = new TaskRow();
@@ -249,6 +288,7 @@ public interface SyncMapper {
             r.includePatternsJson = x.includePatternsJson();
             r.excludePatternsJson = x.excludePatternsJson();
             r.commandPolicyJson = x.commandPolicyJson();
+            r.resetMode = x.resetMode();
             r.rateLimitOps = x.rateLimitOps();
             r.bandwidthLimitBytesPerSecond = x.bandwidthLimitBytesPerSecond();
             r.spoolLimitBytes = x.spoolLimitBytes();
@@ -258,6 +298,7 @@ public interface SyncMapper {
             r.writeFenced = x.writeFenced();
             r.writeFenceNote = x.writeFenceNote();
             r.blockedReason = x.blockedReason();
+            r.assignedWorker = x.assignedWorker();
             r.fullSyncEpoch = x.fullSyncEpoch();
             r.lastRpoSeconds = x.lastRpoSeconds();
             r.lastError = x.lastError();

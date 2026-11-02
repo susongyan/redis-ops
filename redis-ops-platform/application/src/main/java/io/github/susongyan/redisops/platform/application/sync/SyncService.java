@@ -12,6 +12,7 @@ import io.github.susongyan.redisops.platform.domain.job.JobRepository;
 import io.github.susongyan.redisops.platform.domain.relation.*;
 import io.github.susongyan.redisops.platform.domain.sync.*;
 import io.github.susongyan.redisops.sync.contract.SyncCommandPolicy;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,10 +30,16 @@ public class SyncService {
     private final JobRepository jobs;
     private final AuditRepository audits;
     private final ObjectMapper json;
+    private final long workerHeartbeatStaleSeconds;
+    private final long workerRegistryRetentionSeconds;
+    private final WorkerLoadPort workerLoads;
 
     public SyncService(SyncRepository sync, ClusterRelationRepository relations,
             ClusterRelationService relationService, ClusterRepository clusters,
-            JobRepository jobs, AuditRepository audits, ObjectMapper json) {
+            JobRepository jobs, AuditRepository audits, ObjectMapper json,
+            @Value("${sync.worker.heartbeat-stale-seconds:60}") long workerHeartbeatStaleSeconds,
+            @Value("${sync.worker.registry-retention-seconds:1800}") long workerRegistryRetentionSeconds,
+            WorkerLoadPort workerLoads) {
         this.sync = sync;
         this.relations = relations;
         this.relationService = relationService;
@@ -40,6 +47,9 @@ public class SyncService {
         this.jobs = jobs;
         this.audits = audits;
         this.json = json;
+        this.workerHeartbeatStaleSeconds = workerHeartbeatStaleSeconds;
+        this.workerRegistryRetentionSeconds = workerRegistryRetentionSeconds;
+        this.workerLoads = workerLoads;
     }
 
     @Transactional
@@ -105,7 +115,9 @@ public class SyncService {
                 1, 10_000, "fullApplyPipelineSize");
         var commandPolicy = new SyncCommandPolicy(Boolean.TRUE.equals(allowDestructiveCommands),
                 allowSafeSplit == null || allowSafeSplit, additionalBlockedCommands,
-                policyVersion);
+                policyVersion == null || policyVersion.isBlank()
+                        ? SyncCommandPolicy.TRANSACTION_VERSION
+                        : policyVersion);
         var task = newTask(relationId, source, target, actualPurpose, actualSourceDb, actualTargetDb,
                 toJson(actualIncludes), toJson(actualExcludes), toJson(commandPolicy), ops, bandwidth, spool,
                 concurrency, pipelineSize);
@@ -143,6 +155,59 @@ public class SyncService {
         return sync.findWorkerAssignments(taskIds.stream().distinct().toList());
     }
 
+    /** Worker heartbeat registry with computed liveness; exposed for the assignment UI. */
+    public List<SyncWorkerInstance> workers() {
+        return sync.findWorkers(workerHeartbeatStaleSeconds);
+    }
+
+    /** Live leases across all workers, for the worker page's per-instance task list. */
+    public List<SyncWorkerRuntimeRow> workerRuntimes() {
+        return sync.findWorkerRuntimes();
+    }
+
+    /**
+     * Pulls the machine snapshot live from the worker's /actuator/workerload. On-demand only —
+     * nothing is stored. Offline workers are still worth a try; their JVM may simply have lost
+     * DB access while still serving actuator.
+     */
+    public WorkerLoad workerLoad(String instanceName) {
+        String name = normalizeWorker(instanceName);
+        var worker = sync.findWorker(name, workerHeartbeatStaleSeconds)
+                .orElseThrow(() -> new BusinessException("SYNC_WORKER_NOT_FOUND", "worker 实例不存在：" + name));
+        if (worker.workerIp() == null || worker.workerPort() == null)
+            throw new BusinessException("WORKER_ADDRESS_UNREPORTED", "该 worker 未上报 ip/端口，无法获取负载");
+        try {
+            return workerLoads.fetch(worker.workerIp(), worker.workerPort());
+        } catch (RuntimeException error) {
+            throw new BusinessException("WORKER_LOAD_UNAVAILABLE", "获取 worker 负载失败：" + error.getMessage());
+        }
+    }
+
+    /**
+     * Drops registry rows whose last heartbeat is older than the retention window. Purely cosmetic
+     * garbage collection — a purged instance is already claim-stealable (missing row and stale
+     * heartbeat mean the same thing to the worker claim escape hatch) and re-registers itself with
+     * the same stable name if it ever comes back.
+     */
+    public int purgeOfflineWorkers() {
+        return sync.purgeOfflineWorkers(workerRegistryRetentionSeconds);
+    }
+
+    private static String normalizeWorker(String instanceName) {
+        return instanceName == null || instanceName.isBlank() ? null : instanceName.trim();
+    }
+
+    private void requireOnlineWorker(String instanceName) {
+        if (instanceName.length() > 128)
+            throw new BusinessException("WORKER_UNAVAILABLE", "worker instance name is too long: " + instanceName);
+        var worker = sync.findWorker(instanceName, workerHeartbeatStaleSeconds)
+                .orElseThrow(() -> new BusinessException("WORKER_UNAVAILABLE",
+                        "worker instance is not registered: " + instanceName));
+        if (!worker.online())
+            throw new BusinessException("WORKER_UNAVAILABLE",
+                    "worker instance heartbeat is stale: " + instanceName);
+    }
+
     public void appendEngineEvent(long id, String message, String engine) {
         get(id);
         sync.appendTaskEvent(id, engine, message);
@@ -165,13 +230,20 @@ public class SyncService {
     }
 
     @Transactional
-    public SyncTask requestPrecheck(long id, long version, String operator, String requestKey) {
+    public SyncTask requestPrecheck(long id, long version, String workerInstance, String operator,
+            String requestKey) {
         var old = get(id);
         if (!(old.status() == SyncTaskStatus.CREATED || old.status() == SyncTaskStatus.FAILED ||
                 old.status() == SyncTaskStatus.BLOCKED || old.status() == SyncTaskStatus.READY))
             throw invalid("precheck is not allowed from " + old.status());
-        var updated = replace(old, SyncTaskStatus.CHECKING, SyncAction.PRECHECK.name(), false, null, null, null, null);
-        update(updated, version, operator, "precheck requested");
+        String worker = normalizeWorker(workerInstance);
+        if (worker != null)
+            requireOnlineWorker(worker);
+        var updated = replace(old, SyncTaskStatus.CHECKING, SyncAction.PRECHECK.name(), false, null, null, null, null)
+                .withAssignedWorker(worker);
+        update(updated, version, operator, worker == null
+                ? "precheck requested; worker assignment cleared"
+                : "precheck requested; assigned to worker " + worker);
         enqueue(SyncAction.PRECHECK, id, requestKey, Map.of("taskId", id));
         audit(operator, "SYNC_PRECHECK_REQUEST", "SYNC_TASK", id);
         return get(id);
@@ -179,23 +251,32 @@ public class SyncService {
 
     @Transactional
     public SyncTask requestStart(long id, long version, boolean writeFenced, String writeFenceNote,
-            boolean allowTargetFlush, String confirmationTaskNo, String operator, String requestKey) {
+            String resetMode, boolean allowTargetFlush, String workerInstance, String operator, String requestKey) {
         var old = get(id);
         if (old.status() != SyncTaskStatus.READY)
             throw invalid("task must be READY");
         var report = sync.findLatestPrecheck(id).orElseThrow(() -> invalid("a successful precheck is required"));
         if (!report.validAt(Instant.now()))
             throw invalid("precheck report is missing, failed or older than 10 minutes");
-        if (!writeFenced || writeFenceNote == null || writeFenceNote.isBlank())
-            throw invalid("writeFenced=true and writeFenceNote are required");
-        if (!allowTargetFlush || !old.taskNo().equals(confirmationTaskNo))
-            throw invalid("target flush requires allowTargetFlush=true and exact confirmationTaskNo");
+        String mode = resetMode == null || resetMode.isBlank()
+                ? SyncTask.RESET_MODE_PRESERVE
+                : resetMode.trim().toUpperCase(Locale.ROOT);
+        boolean flush = SyncTask.RESET_MODE_FLUSH.equals(mode);
+        if (flush && !allowTargetFlush)
+            throw invalid("FLUSH reset mode requires allowTargetFlush=true");
+        // null keeps the assignment chosen at precheck time; an explicit value re-assigns (validated).
+        String worker = normalizeWorker(workerInstance);
+        if (worker != null)
+            requireOnlineWorker(worker);
+        String assigned = worker != null ? worker : old.assignedWorker();
         String epoch = UUID.randomUUID().toString();
-        var updated = replace(old, SyncTaskStatus.STARTING, SyncAction.START.name(), true, writeFenceNote, null, epoch,
-                null);
-        update(updated, version, operator, "full sync start confirmed; target reset authorized");
+        var updated = replace(old, SyncTaskStatus.STARTING, SyncAction.START.name(), writeFenced, writeFenceNote,
+                null, epoch, null).withResetMode(mode).withAssignedWorker(assigned);
+        update(updated, version, operator, flush
+                ? "full sync start confirmed; target reset authorized"
+                : "full sync start confirmed; target data preserved");
         enqueue(SyncAction.START, id, requestKey,
-                Map.of("taskId", id, "allowTargetFlush", true, "fullSyncEpoch", epoch));
+                Map.of("taskId", id, "resetMode", mode, "allowTargetFlush", flush, "fullSyncEpoch", epoch));
         audit(operator, "SYNC_START_REQUEST", "SYNC_TASK", id);
         return get(id);
     }
@@ -224,16 +305,47 @@ public class SyncService {
     }
 
     @Transactional
+    public SyncTask requestRestartFull(long id, long version, String resetMode, boolean allowTargetFlush,
+            Boolean writeFenced, String writeFenceNote, String operator, String requestKey) {
+        var old = get(id);
+        if (old.status() != SyncTaskStatus.BLOCKED)
+            throw invalid("task must be BLOCKED");
+        String mode = resetMode == null || resetMode.isBlank()
+                ? SyncTask.RESET_MODE_PRESERVE
+                : resetMode.trim().toUpperCase(Locale.ROOT);
+        boolean flush = SyncTask.RESET_MODE_FLUSH.equals(mode);
+        if (flush && !allowTargetFlush)
+            throw invalid("FLUSH reset mode requires allowTargetFlush=true");
+        // null keeps the current source-fence choice; an explicit value overrides it.
+        boolean fenced = writeFenced == null ? old.writeFenced() : writeFenced;
+        String fenceNote = writeFenced == null ? old.writeFenceNote() : writeFenceNote;
+        String epoch = UUID.randomUUID().toString();
+        var updated = replace(old, SyncTaskStatus.RESUMING, SyncAction.RESTART_FULL.name(), fenced, fenceNote,
+                null, epoch, null).withResetMode(mode);
+        update(updated, version, operator, flush
+                ? "full resync restart confirmed; target reset authorized"
+                : "full resync restart confirmed; target data preserved");
+        enqueue(SyncAction.RESTART_FULL, id, requestKey,
+                Map.of("taskId", id, "resetMode", mode, "allowTargetFlush", flush, "fullSyncEpoch", epoch));
+        audit(operator, "SYNC_RESTART_FULL_REQUEST", "SYNC_TASK", id);
+        return get(id);
+    }
+
+    @Transactional
     public SyncTask requestFinish(long id, long version, boolean sourceWriteFenced, String note,
             String operator, String requestKey) {
         var old = get(id);
         if (!(old.status() == SyncTaskStatus.CAUGHT_UP || old.status() == SyncTaskStatus.INCR_SYNCING))
             throw invalid("task must be caught up or incrementally syncing");
-        if (!sourceWriteFenced || note == null || note.isBlank())
-            throw invalid("sourceWriteFenced=true and a fence note are required");
+        if (!sourceWriteFenced)
+            throw invalid("sourceWriteFenced=true is required");
+        boolean noted = note != null && !note.isBlank();
         update(replace(old, SyncTaskStatus.STOPPING, SyncAction.FINISH.name(), old.writeFenced(),
-                old.writeFenceNote(), null, null, null), version, operator, "final offset drain requested: " + note);
-        enqueue(SyncAction.FINISH, id, requestKey, Map.of("taskId", id, "sourceWriteFenced", true, "note", note));
+                old.writeFenceNote(), null, null, null), version, operator,
+                noted ? "final offset drain requested: " + note : "final offset drain requested");
+        enqueue(SyncAction.FINISH, id, requestKey, noted
+                ? Map.of("taskId", id, "sourceWriteFenced", true, "note", note)
+                : Map.of("taskId", id, "sourceWriteFenced", true));
         return get(id);
     }
 
@@ -245,6 +357,23 @@ public class SyncService {
         update(replace(old, SyncTaskStatus.CANCELLED, SyncAction.CANCEL.name(), old.writeFenced(),
                 old.writeFenceNote(), null, null, "cancelled by operator"), version, operator, "cancel requested");
         enqueue(SyncAction.CANCEL, id, requestKey, Map.of("taskId", id));
+        return get(id);
+    }
+
+    /**
+     * Asks every worker to delete its local spool directory for this task. No async job is involved:
+     * the marker column is picked up by each worker's retention sweep, so all copies are reclaimed
+     * regardless of which instance happened to run the task. Idempotent by design (the marker write
+     * is a plain UPDATE and becomes inert once no directory is left anywhere).
+     */
+    @Transactional
+    public SyncTask requestSpoolCleanup(long id, String operator) {
+        var old = get(id);
+        if (!(old.status() == SyncTaskStatus.FINISHED || old.status() == SyncTaskStatus.CANCELLED
+                || old.status() == SyncTaskStatus.FAILED))
+            throw invalid("task must be FINISHED, CANCELLED or FAILED to clean up spool");
+        sync.requestSpoolCleanup(id, operator);
+        audit(operator, "SYNC_SPOOL_CLEANUP_REQUEST", "SYNC_TASK", id);
         return get(id);
     }
 
@@ -265,10 +394,12 @@ public class SyncService {
         var changed = new SyncTask(old.id(), old.taskNo(), old.relationId(), old.sourceClusterId(),
                 old.targetClusterId(),
                 old.purpose(), old.syncMode(), old.status(), old.toolType(), old.sourceDb(), old.targetDb(),
-                old.includePatternsJson(), old.excludePatternsJson(), old.commandPolicyJson(), ops, bytes, spool,
+                old.includePatternsJson(), old.excludePatternsJson(), old.commandPolicyJson(), old.resetMode(),
+                ops, bytes, spool,
                 concurrency, pipelineSize,
                 SyncAction.RATE_LIMIT.name(),
-                old.writeFenced(), old.writeFenceNote(), old.blockedReason(), old.fullSyncEpoch(), old.lastRpoSeconds(),
+                old.writeFenced(), old.writeFenceNote(), old.blockedReason(), old.assignedWorker(),
+                old.fullSyncEpoch(), old.lastRpoSeconds(),
                 old.lastError(), old.version(), old.createdAt(), Instant.now(), old.finishedAt());
         update(changed, version, operator, "sync limits updated");
         if (runnerActive(old.status()))
@@ -292,12 +423,12 @@ public class SyncService {
                     changed.targetClusterId(), changed.purpose(), changed.syncMode(), changed.status(),
                     changed.toolType(),
                     changed.sourceDb(), changed.targetDb(), changed.includePatternsJson(),
-                    changed.excludePatternsJson(), changed.commandPolicyJson(),
+                    changed.excludePatternsJson(), changed.commandPolicyJson(), changed.resetMode(),
                     changed.rateLimitOps(), changed.bandwidthLimitBytesPerSecond(), changed.spoolLimitBytes(),
                     changed.fullApplyConcurrency(), changed.fullApplyPipelineSize(),
                     changed.desiredAction(), changed.writeFenced(), changed.writeFenceNote(), changed.blockedReason(),
-                    changed.fullSyncEpoch(), rpo, changed.lastError(), changed.version(), changed.createdAt(),
-                    changed.updatedAt(), changed.finishedAt());
+                    changed.assignedWorker(), changed.fullSyncEpoch(), rpo, changed.lastError(), changed.version(),
+                    changed.createdAt(), changed.updatedAt(), changed.finishedAt());
         update(changed, version, engine, message);
         if (target == SyncTaskStatus.FINISHED)
             completeDrain(id);
@@ -451,18 +582,21 @@ public class SyncService {
                 "SYNC-" + UUID.randomUUID().toString().replace("-", "").substring(0, 20).toUpperCase(),
                 relationId, source, target, purpose, SyncMode.FULL_AND_INCREMENTAL, SyncTaskStatus.CREATED,
                 "NATIVE_JAVA",
-                sourceDb, targetDb, includes, excludes, commandPolicy, ops, bandwidth, spool, fullApplyConcurrency,
+                sourceDb, targetDb, includes, excludes, commandPolicy, SyncTask.RESET_MODE_PRESERVE, ops, bandwidth,
+                spool, fullApplyConcurrency,
                 fullApplyPipelineSize, null, false, null, null, null,
-                null, null, 0, now, now, null);
+                null, null, null, 0, now, now, null);
     }
 
     private SyncTask replace(SyncTask old, SyncTaskStatus status, String desired, boolean fenced, String fenceNote,
             String blocked, String epoch, String error) {
         return new SyncTask(old.id(), old.taskNo(), old.relationId(), old.sourceClusterId(), old.targetClusterId(),
                 old.purpose(), old.syncMode(), status, old.toolType(), old.sourceDb(), old.targetDb(),
-                old.includePatternsJson(), old.excludePatternsJson(), old.commandPolicyJson(), old.rateLimitOps(),
+                old.includePatternsJson(), old.excludePatternsJson(), old.commandPolicyJson(), old.resetMode(),
+                old.rateLimitOps(),
                 old.bandwidthLimitBytesPerSecond(), old.spoolLimitBytes(), old.fullApplyConcurrency(),
                 old.fullApplyPipelineSize(), desired, fenced, fenceNote, blocked,
+                old.assignedWorker(),
                 epoch == null ? old.fullSyncEpoch() : epoch, old.lastRpoSeconds(), error, old.version(),
                 old.createdAt(),
                 Instant.now(), status.terminal() ? Instant.now() : null);

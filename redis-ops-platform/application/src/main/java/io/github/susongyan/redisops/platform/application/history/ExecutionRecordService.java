@@ -28,10 +28,11 @@ public class ExecutionRecordService {
             throw new BusinessException("RECORD_REFERENCED", "关联同步任务的校验记录需要保留");
         if (snapshot.executing())
             throw new BusinessException("RECORD_EXECUTING", "后台执行尚未结束，请稍后重试");
+        int purged = records.purgeDetails(type, id);
         if (!records.delete(type, id, version))
             throw new BusinessException("CONCURRENT_MODIFICATION", "记录已变更，请刷新后重试");
         audits.append(operator, "EXECUTION_RECORD_DELETE", type.name(), Long.toString(id), "SUCCESS",
                 AuditDetails.change("删除只读执行记录", AuditDetails.fields("类型", type, "记录 ID", id,
-                        "状态", snapshot.status(), "版本", version), Map.of(), null));
+                        "状态", snapshot.status(), "版本", version, "清理明细行", purged), Map.of(), null));
     }
 }

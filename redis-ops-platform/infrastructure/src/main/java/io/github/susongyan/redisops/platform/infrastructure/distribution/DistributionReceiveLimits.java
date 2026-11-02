@@ -30,4 +30,11 @@ public record DistributionReceiveLimits(int responseBytes, int keyBytes, int ele
     public static DistributionReceiveLimits defaults() {
         return new DistributionReceiveLimits(1048576, 4096, 5000, 256, 5000, 2000, 3000);
     }
+    /**
+     * COUNT is only a hint — Redis may return more per page — so the hint must keep headroom under the
+     * hard element cap, otherwise a page that overshoots trips SCAN_ELEMENT_LIMIT and kills the task.
+     */
+    public int scanCountHint() {
+        return Math.min(scanCount, elements * 4 / 5);
+    }
 }

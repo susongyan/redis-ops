@@ -40,6 +40,41 @@ class DistributionSocketTest {
         }
     }
     @Test
+    void scanCountHintKeepsHeadroomUnderElementCap() throws Exception {
+        try (var server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            var failure = new AtomicReference<Throwable>();
+            Thread peer = new Thread(() -> {
+                try (var socket = server.accept()) {
+                    socket.setSoTimeout(2000);
+                    new BoundedResp(socket.getInputStream(), () -> {
+                    }).metadata(); // ROLE
+                    socket.getOutputStream().write("*1\r\n$6\r\nmaster\r\n".getBytes(StandardCharsets.US_ASCII));
+                    @SuppressWarnings("unchecked")
+                    List<byte[]> scan = (List<byte[]>) new BoundedResp(socket.getInputStream(), () -> {
+                    }).metadata(); // SCAN cursor COUNT n
+                    // COUNT is a hint — the wire value must stay under the receiver's hard element cap
+                    assertEquals("4000", new String(scan.get(3), StandardCharsets.US_ASCII));
+                    socket.getOutputStream()
+                            .write("*2\r\n$1\r\n0\r\n*1\r\n$3\r\nkey\r\n".getBytes(StandardCharsets.US_ASCII));
+                } catch (Throwable e) {
+                    failure.set(e);
+                }
+            });
+            peer.setDaemon(true);
+            peer.start();
+            String endpoint = "127.0.0.1:" + server.getLocalPort();
+            var redis = new BoundedDistributionRedis(id -> new RedisConnectionProfile(id, ClusterMode.STANDALONE,
+                    List.of(endpoint), null, null, "NONE", null));
+            // task-52 shape: the requested COUNT equals both the scan-count ceiling and the element cap
+            var page = redis.scan(1, 0, new DistributionScanPort.Shard("node", endpoint), "0", 5000);
+            assertEquals("0", page.cursor());
+            assertEquals(1, page.keys().size());
+            peer.join(2500);
+            assertFalse(peer.isAlive());
+            assertNull(failure.get());
+        }
+    }
+    @Test
     void blockedReadHonorsCommandDeadline() throws Exception {
         exercise(false);
     }

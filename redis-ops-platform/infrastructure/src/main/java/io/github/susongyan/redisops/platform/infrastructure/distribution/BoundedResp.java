@@ -8,6 +8,9 @@ import io.github.susongyan.redisops.platform.domain.distribution.DistributionSca
 /** Strict, allocation-bounded RESP2 receiver. No server text is included in failures. */
 public final class BoundedResp {
     public static final int MAX_RESPONSE = 1024 * 1024, MAX_KEY = 4096, MAX_ELEMENTS = 5000;
+    // precompiled: number() runs once per bulk-string header, i.e. thousands of times per page
+    private static final java.util.regex.Pattern NUMBER = java.util.regex.Pattern.compile("-?[0-9]{1,18}"),
+            CURSOR = java.util.regex.Pattern.compile("[0-9]{1,20}");
     private final InputStream input;
     private final Runnable checkDeadline;
     private final DistributionReceiveLimits limits;
@@ -47,7 +50,7 @@ public final class BoundedResp {
     }
     private long number() throws IOException {
         String text = line();
-        if (!text.matches("-?[0-9]{1,18}"))
+        if (!NUMBER.matcher(text).matches())
             throw new IOException("SCAN_INVALID_RESP");
         try {
             return Long.parseLong(text);
@@ -90,7 +93,7 @@ public final class BoundedResp {
         marker('$');
         byte[] rawCursor = bulk(32, false);
         String cursor = new String(rawCursor, StandardCharsets.US_ASCII);
-        if (!cursor.matches("[0-9]{1,20}"))
+        if (!CURSOR.matcher(cursor).matches())
             throw new IOException("SCAN_INVALID_CURSOR");
         marker('*');
         long count = number();

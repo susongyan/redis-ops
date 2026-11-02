@@ -74,6 +74,7 @@ public final class AuditDetails {
     public static Map<String, Object> sync(SyncTask t) {
         return fields("任务号", t.taskNo(), "源集群 ID", t.sourceClusterId(), "目标集群 ID", t.targetClusterId(),
                 "源 DB", t.sourceDb(), "目标 DB", t.targetDb(), "状态", t.status(), "控制动作", t.desiredAction(),
+                "目标重置模式", t.resetMode(),
                 "操作速率上限", t.rateLimitOps(), "带宽上限", t.bandwidthLimitBytesPerSecond(), "Spool 上限", t.spoolLimitBytes(),
                 "全量写入并发", t.fullApplyConcurrency(), "Pipeline 大小", t.fullApplyPipelineSize());
     }

@@ -19,5 +19,7 @@ public interface AssetRepository {
     void restartDiscovery(long runId);
     void completeDiscovery(long runId, long clusterId, List<RedisNode> nodes);
     void failDiscovery(long runId, String errorMessage);
+    void touchDiscovery(long runId);
+    List<DiscoveryRun> findStaleDiscoveries(java.time.Instant threshold);
     List<DiscoveryRun> findDiscoveries(long clusterId);
 }

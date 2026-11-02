@@ -34,7 +34,9 @@ public class TtlGovernanceController {
     }
     @GetMapping("/api/v1/ttl-governance-tasks/{id}")
     ApiResponse<Detail> get(@PathVariable long id, HttpServletRequest request) {
-        return response(new Detail(service.get(id), service.latest(id).orElse(null), service.checkpoints(id)), request);
+        var runs = service.runs(id).stream().map(r -> new RunDetail(r, service.runCheckpoints(r.id()))).toList();
+        return response(new Detail(service.get(id), service.latest(id).orElse(null), service.checkpoints(id), runs),
+                request);
     }
     @PostMapping("/api/v1/ttl-governance-tasks/{id}/dry-run")
     ApiResponse<TtlGovernanceTask> dryRun(@PathVariable long id, @RequestHeader("Idempotency-Key") String key,
@@ -88,7 +90,10 @@ public class TtlGovernanceController {
             @Min(1) long targetTtlSeconds, @Min(1) @Max(100000) Integer scanRatePerSecond,
             @Min(1) @Max(10000000) Long maxKeys) {
     }
-    record Detail(TtlGovernanceTask task, TtlGovernanceRun latestRun, List<TtlGovernanceCheckpoint> checkpoints) {
+    record RunDetail(TtlGovernanceRun run, List<TtlGovernanceCheckpoint> checkpoints) {
+    }
+    record Detail(TtlGovernanceTask task, TtlGovernanceRun latestRun, List<TtlGovernanceCheckpoint> checkpoints,
+            List<RunDetail> runs) {
     }
     private static String operator(HttpServletRequest request) {
         String value = request.getUserPrincipal().getName();

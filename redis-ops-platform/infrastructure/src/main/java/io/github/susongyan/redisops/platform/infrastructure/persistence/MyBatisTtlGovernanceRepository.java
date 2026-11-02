@@ -30,6 +30,12 @@ public class MyBatisTtlGovernanceRepository implements TtlGovernanceRepository {
     public List<TtlGovernanceTask> findTasks() {
         return mapper.tasks();
     }
+    public Optional<TtlGovernanceTask> findActiveTaskForCluster(long clusterId) {
+        return Optional.ofNullable(mapper.findActiveTaskForCluster(clusterId));
+    }
+    public List<TtlGovernanceTask> findStaleQueuedTasks(int minutes) {
+        return mapper.findStaleQueuedTasks(minutes);
+    }
     public boolean updateTask(TtlGovernanceTask t, long version) {
         var r = new TtlGovernanceMapper.TaskRow();
         r.id = t.id();
@@ -62,6 +68,21 @@ public class MyBatisTtlGovernanceRepository implements TtlGovernanceRepository {
     public Optional<TtlGovernanceRun> latestRun(long id) {
         return Optional.ofNullable(mapper.latestRun(id));
     }
+    public List<TtlGovernanceRun> findRuns(long taskId) {
+        return mapper.findRuns(taskId);
+    }
+    public Optional<TtlGovernanceRun> findRecentlyActiveRun(long taskId, int seconds) {
+        return Optional.ofNullable(mapper.findRecentlyActiveRun(taskId, seconds));
+    }
+    public List<TtlGovernanceRun> findStaleRuns(int minutes) {
+        return mapper.findStaleRuns(minutes);
+    }
+    public boolean failRun(long id, java.time.Instant completedAt, String errorCode) {
+        return mapper.failRun(id, completedAt, errorCode) == 1;
+    }
+    public void touchRun(long id) {
+        mapper.touchRun(id);
+    }
     public TtlGovernanceCheckpoint saveCheckpoint(TtlGovernanceCheckpoint x) {
         var r = new TtlGovernanceMapper.CheckpointRow();
         r.runId = x.runId();
@@ -77,5 +98,8 @@ public class MyBatisTtlGovernanceRepository implements TtlGovernanceRepository {
     }
     public List<TtlGovernanceCheckpoint> checkpoints(long runId) {
         return mapper.checkpoints(runId);
+    }
+    public void finalizeCheckpoints(long runId, TtlGovernanceStatus status) {
+        mapper.finalizeCheckpoints(runId, status.name());
     }
 }

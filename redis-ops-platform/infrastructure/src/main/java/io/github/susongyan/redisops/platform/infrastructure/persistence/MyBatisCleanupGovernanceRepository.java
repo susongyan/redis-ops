@@ -30,6 +30,12 @@ public class MyBatisCleanupGovernanceRepository implements CleanupGovernanceRepo
     public List<CleanupGovernanceTask> findTasks() {
         return mapper.tasks();
     }
+    public Optional<CleanupGovernanceTask> findActiveTaskForCluster(long clusterId) {
+        return Optional.ofNullable(mapper.findActiveTaskForCluster(clusterId));
+    }
+    public List<CleanupGovernanceTask> findStaleQueuedTasks(int minutes) {
+        return mapper.findStaleQueuedTasks(minutes);
+    }
     public boolean updateTask(CleanupGovernanceTask x, long version) {
         var r = new CleanupGovernanceMapper.TaskRow();
         r.id = x.id();
@@ -63,6 +69,21 @@ public class MyBatisCleanupGovernanceRepository implements CleanupGovernanceRepo
     public Optional<CleanupGovernanceRun> latestRun(long id) {
         return Optional.ofNullable(mapper.latestRun(id));
     }
+    public List<CleanupGovernanceRun> findRuns(long taskId) {
+        return mapper.findRuns(taskId);
+    }
+    public Optional<CleanupGovernanceRun> findRecentlyActiveRun(long taskId, int seconds) {
+        return Optional.ofNullable(mapper.findRecentlyActiveRun(taskId, seconds));
+    }
+    public List<CleanupGovernanceRun> findStaleRuns(int minutes) {
+        return mapper.findStaleRuns(minutes);
+    }
+    public boolean failRun(long id, java.time.Instant completedAt, String errorCode) {
+        return mapper.failRun(id, completedAt, errorCode) == 1;
+    }
+    public void touchRun(long id) {
+        mapper.touchRun(id);
+    }
     public CleanupGovernanceCheckpoint saveCheckpoint(CleanupGovernanceCheckpoint x) {
         var r = new CleanupGovernanceMapper.CheckpointRow();
         r.runId = x.runId();
@@ -78,5 +99,8 @@ public class MyBatisCleanupGovernanceRepository implements CleanupGovernanceRepo
     }
     public List<CleanupGovernanceCheckpoint> checkpoints(long id) {
         return mapper.checkpoints(id);
+    }
+    public void finalizeCheckpoints(long runId, TtlGovernanceStatus status) {
+        mapper.finalizeCheckpoints(runId, status.name());
     }
 }

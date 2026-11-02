@@ -13,6 +13,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 @Component
 public class BoundedDistributionRedis implements DistributionScanPort {
+    /** Keys per pipelined batch: keeps the reply drain of one chunk well inside {@code commandMillis}. */
+    private static final int PIPELINE_KEYS = 256;
     private final RedisConnectionProfileProvider profiles;
     private final DistributionReceiveLimits limits;
     public BoundedDistributionRedis(RedisConnectionProfileProvider profiles) {
@@ -69,7 +71,7 @@ public class BoundedDistributionRedis implements DistributionScanPort {
         try (var profile = profiles.get(clusterId);
                 Wire wire = new Wire(shard.endpoint(), profile, false, 0, deadlineNanos)) {
             wire.target(shard, profile.mode() == ClusterMode.CLUSTER, database);
-            wire.send("SCAN", cursor, "COUNT", String.valueOf(Math.min(count, limits.scanCount())));
+            wire.send("SCAN", cursor, "COUNT", String.valueOf(Math.min(count, limits.scanCountHint())));
             var page = wire.reader().scan();
             if (shard.runId() != null)
                 wire.target(shard, profile.mode() == ClusterMode.CLUSTER, database);
@@ -79,6 +81,176 @@ public class BoundedDistributionRedis implements DistributionScanPort {
                 throw new IllegalStateException("SCAN_BUDGET_LIMIT");
             throw safe(e);
         }
+    }
+    @Override
+    public Session open(long clusterId, int database, Shard shard) {
+        return new SessionConnection(clusterId, database, shard);
+    }
+    /** One pinned connection per shard; reconnects lazily after the idle deadline closed the socket. */
+    private final class SessionConnection implements Session {
+        private final RedisConnectionProfile profile;
+        private final int database;
+        private final Shard shard;
+        private Wire wire;
+        SessionConnection(long clusterId, int database, Shard shard) {
+            this.shard = shard;
+            this.database = database;
+            try {
+                profile = profiles.get(clusterId);
+                connect();
+            } catch (Exception e) {
+                close();
+                throw safe(asIo(e));
+            }
+        }
+        private void connect() throws IOException {
+            wire = new Wire(shard.endpoint(), profile, false, 0, Long.MAX_VALUE);
+            wire.target(shard, profile.mode() == ClusterMode.CLUSTER, database);
+        }
+        @Override
+        public Metadata metadata(byte[] key) {
+            if (key == null || key.length > limits.keyBytes())
+                throw new IllegalArgumentException("SCAN_KEY_LIMIT");
+            try {
+                return inspect(key);
+            } catch (Exception stale) { // idle deadline or dropped socket: re-pin once and retry
+                try {
+                    closeWire();
+                    connect();
+                    return inspect(key);
+                } catch (Exception e) {
+                    closeWire();
+                    throw safe(asIo(e instanceof Exception && e != stale ? e : stale));
+                }
+            }
+        }
+        private Metadata inspect(byte[] key) throws IOException {
+            String type = text(wire.keyCommand("TYPE", key));
+            if ("none".equals(type))
+                return new Metadata(type, 0, -2);
+            long ttl = ((Number) wire.keyCommand("TTL", key)).longValue();
+            Object memory = wire.keyCommand("MEMORY", key);
+            return new Metadata(type, memory instanceof Number n ? n.longValue() : 0, ttl);
+        }
+        @Override
+        public List<Metadata> metadataBatch(List<byte[]> keys) {
+            for (byte[] key : keys)
+                if (key == null || key.length > limits.keyBytes())
+                    throw new IllegalArgumentException("SCAN_KEY_LIMIT");
+            if (keys.isEmpty())
+                return List.of();
+            try {
+                return inspectBatch(keys);
+            } catch (Exception stale) { // idle deadline or dropped socket: re-pin once and retry
+                try {
+                    closeWire();
+                    connect();
+                    return inspectBatch(keys);
+                } catch (Exception e) {
+                    closeWire();
+                    throw safe(asIo(e instanceof Exception && e != stale ? e : stale));
+                }
+            }
+        }
+        /** Chunked two-phase pipeline: TYPE for every key, then TTL+MEMORY only for keys still present. */
+        private List<Metadata> inspectBatch(List<byte[]> keys) throws IOException {
+            Metadata[] metadata = new Metadata[keys.size()];
+            for (int from = 0; from < keys.size(); from += PIPELINE_KEYS) {
+                var part = keys.subList(from, Math.min(keys.size(), from + PIPELINE_KEYS));
+                for (byte[] key : part)
+                    wire.keyCommandQueue("TYPE", key);
+                String[] types = new String[part.size()];
+                for (int i = 0; i < part.size(); i++)
+                    types[i] = text(wire.reply());
+                for (int i = 0; i < part.size(); i++) {
+                    if ("none".equals(types[i])) {
+                        metadata[from + i] = new Metadata(types[i], 0, -2);
+                        continue;
+                    }
+                    wire.keyCommandQueue("TTL", part.get(i));
+                    wire.keyCommandQueue("MEMORY", part.get(i));
+                }
+                for (int i = 0; i < part.size(); i++) {
+                    if (metadata[from + i] != null)
+                        continue;
+                    long ttl = ((Number) wire.reply()).longValue();
+                    Object memory = wire.reply();
+                    metadata[from + i] = new Metadata(types[i],
+                            memory instanceof Number n ? n.longValue() : 0, ttl);
+                }
+            }
+            return Arrays.asList(metadata);
+        }
+        @Override
+        public List<Long> ttlBatch(List<byte[]> keys) {
+            for (byte[] key : keys)
+                if (key == null || key.length > limits.keyBytes())
+                    throw new IllegalArgumentException("SCAN_KEY_LIMIT");
+            if (keys.isEmpty())
+                return List.of();
+            try {
+                return readTtls(keys);
+            } catch (Exception stale) { // idle deadline or dropped socket: re-pin once and retry
+                try {
+                    closeWire();
+                    connect();
+                    return readTtls(keys);
+                } catch (Exception e) {
+                    closeWire();
+                    throw safe(asIo(e instanceof Exception && e != stale ? e : stale));
+                }
+            }
+        }
+        /** Single-phase TTL pipeline: one command per key instead of the three metadata reads. */
+        private List<Long> readTtls(List<byte[]> keys) throws IOException {
+            Long[] ttls = new Long[keys.size()];
+            for (int from = 0; from < keys.size(); from += PIPELINE_KEYS) {
+                var part = keys.subList(from, Math.min(keys.size(), from + PIPELINE_KEYS));
+                for (byte[] key : part)
+                    wire.keyCommandQueue("TTL", key);
+                for (int i = 0; i < part.size(); i++)
+                    ttls[from + i] = ((Number) wire.reply()).longValue();
+            }
+            return Arrays.asList(ttls);
+        }
+        @Override
+        public Page scan(String cursor, int count) {
+            if (!cursor.matches("[0-9]{1,20}") || count < 1)
+                throw new IllegalArgumentException("INVALID_SCAN_ARGUMENT");
+            try {
+                return scanPage(cursor, count);
+            } catch (Exception stale) { // idle deadline or dropped socket: re-pin once and retry
+                try {
+                    closeWire();
+                    connect();
+                    return scanPage(cursor, count);
+                } catch (Exception e) {
+                    closeWire();
+                    throw safe(asIo(e instanceof Exception && e != stale ? e : stale));
+                }
+            }
+        }
+        private Page scanPage(String cursor, int count) throws IOException {
+            wire.send("SCAN", cursor, "COUNT", String.valueOf(Math.min(count, limits.scanCountHint())));
+            return wire.reader().scan();
+        }
+        @Override
+        public void close() {
+            closeWire();
+            if (profile != null)
+                profile.close(); // wipes the decrypted password; reconnects need it, so only on final close
+        }
+        private void closeWire() {
+            if (wire != null)
+                try {
+                    wire.close();
+                } catch (IOException ignored) {
+                }
+            wire = null;
+        }
+    }
+    private static IOException asIo(Exception error) {
+        return error instanceof IOException io ? io : new IOException("SCAN_CONNECTION_FAILED", error);
     }
     @Override
     public Metadata metadata(long clusterId, int database, Shard shard, byte[] key) {
@@ -161,6 +333,7 @@ public class BoundedDistributionRedis implements DistributionScanPort {
                         || uri.getRawFragment() != null || !uri.getPath().isEmpty())
                     throw new IOException("SCAN_INVALID_ENDPOINT");
                 socket.connect(new InetSocketAddress(uri.getHost(), uri.getPort()), limits.connectMillis());
+                socket.setTcpNoDelay(true); // pipelined chunks flush per command; Nagle would serialize them
                 input = new BufferedInputStream(new FilterInputStream(socket.getInputStream()) {
                     @Override
                     public int read(byte[] b, int off, int len) throws IOException {
@@ -233,6 +406,11 @@ public class BoundedDistributionRedis implements DistributionScanPort {
                 throw new IOException("SCAN_DATABASE_UNAVAILABLE");
         }
         Object keyCommand(String name, byte[] key) throws IOException {
+            keyCommandQueue(name, key);
+            return reply();
+        }
+        /** Write one key command without reading its reply, for pipelined batches. */
+        void keyCommandQueue(String name, byte[] key) throws IOException {
             if (!Set.of("TYPE", "TTL", "MEMORY").contains(name))
                 throw new IOException("SCAN_COMMAND_DENIED");
             var args = new ArrayList<byte[]>();
@@ -241,6 +419,8 @@ public class BoundedDistributionRedis implements DistributionScanPort {
                 args.add("USAGE".getBytes(StandardCharsets.US_ASCII));
             args.add(key);
             write(args);
+        }
+        Object reply() throws IOException {
             return reader().metadata();
         }
         void send(String... values) throws IOException {

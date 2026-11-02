@@ -1,5 +1,6 @@
 package io.github.susongyan.redisops.platform.domain.scan;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /** Bounded, node-pinned advisory reads. */
@@ -34,8 +35,35 @@ public interface ReadOnlyScanPort {
     }
     record Metadata(String type, long size, long ttlSeconds) {
     }
+    /** Reusable per-shard inspection session: one pinned connection for many metadata reads. */
+    interface Session extends AutoCloseable {
+        Metadata metadata(byte[] key);
+        /** Pipelined counterpart of {@link #metadata}; the result is positionally aligned with {@code keys}. */
+        default List<Metadata> metadataBatch(List<byte[]> keys) {
+            List<Metadata> values = new ArrayList<>(keys.size());
+            for (byte[] key : keys)
+                values.add(metadata(key));
+            return values;
+        }
+        /** Pipelined TTL-only read; positionally aligned with {@code keys}, -2 when the key is absent. */
+        default List<Long> ttlBatch(List<byte[]> keys) {
+            List<Long> values = new ArrayList<>(keys.size());
+            for (Metadata metadata : metadataBatch(keys))
+                values.add(metadata.ttlSeconds());
+            return values;
+        }
+        /** Cursor scan over the shard this session is pinned to. */
+        default Page scan(String cursor, int count) {
+            throw new UnsupportedOperationException("SCAN_SESSION_UNAVAILABLE");
+        }
+        @Override
+        void close();
+    }
     Topology topology(long clusterId, int database);
     Page scan(long clusterId, int database, Shard shard, String cursor, int count);
+    default Session open(long clusterId, int database, Shard shard) {
+        throw new UnsupportedOperationException("SCAN_SESSION_UNAVAILABLE");
+    }
     default Topology topology(long clusterId, int database, long deadlineNanos) {
         return topology(clusterId, database);
     }

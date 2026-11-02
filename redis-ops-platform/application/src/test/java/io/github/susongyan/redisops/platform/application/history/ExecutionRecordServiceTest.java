@@ -19,9 +19,23 @@ class ExecutionRecordServiceTest {
             when(records.lock(type, 1)).thenReturn(new Snapshot(2, state, false, false));
             when(records.delete(type, 1, 2)).thenReturn(true);
             service.delete(type, 1, 2, "user:7");
+            verify(records).purgeDetails(type, 1);
             verify(audits).append(eq("user:7"), eq("EXECUTION_RECORD_DELETE"), eq(type.name()), eq("1"), eq("SUCCESS"),
                     argThat(json -> json.contains("状态") && !json.contains("password") && !json.contains("keyName")));
         }
+    }
+
+    @Test
+    void deletePurgesDetailsInTransactionBeforeSoftDeletingTheTask() {
+        when(records.lock(Type.RISK_SCAN, 1)).thenReturn(new Snapshot(2, "COMPLETED", false, false));
+        when(records.purgeDetails(Type.RISK_SCAN, 1)).thenReturn(42);
+        when(records.delete(Type.RISK_SCAN, 1, 2)).thenReturn(true);
+        service.delete(Type.RISK_SCAN, 1, 2, "user:7");
+        org.mockito.InOrder order = inOrder(records);
+        order.verify(records).purgeDetails(Type.RISK_SCAN, 1);
+        order.verify(records).delete(Type.RISK_SCAN, 1, 2);
+        verify(audits).append(eq("user:7"), eq("EXECUTION_RECORD_DELETE"), eq("RISK_SCAN"), eq("1"), eq("SUCCESS"),
+                argThat(json -> json.contains("清理明细行")));
     }
     @Test
     void rejectsActivePausedQueuedAndDraftStates() {
@@ -32,6 +46,7 @@ class ExecutionRecordServiceTest {
                         assertThrows(BusinessException.class, () -> service.delete(type, 1, 2, "user:7")).code());
             }
         verify(records, never()).delete(any(), anyLong(), anyLong());
+        verify(records, never()).purgeDetails(any(), anyLong());
         verifyNoInteractions(audits);
     }
     @Test
@@ -46,6 +61,7 @@ class ExecutionRecordServiceTest {
         assertEquals("RECORD_REFERENCED",
                 assertThrows(BusinessException.class, () -> service.delete(Type.VALIDATION, 1, 2, "user:7")).code());
         verify(records, never()).delete(any(), anyLong(), anyLong());
+        verify(records, never()).purgeDetails(any(), anyLong());
         verifyNoInteractions(audits);
     }
     @Test

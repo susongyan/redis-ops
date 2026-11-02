@@ -33,7 +33,9 @@ public class CleanupGovernanceController {
     }
     @GetMapping("/api/v1/cleanup-governance-tasks/{id}")
     ApiResponse<Detail> get(@PathVariable long id, HttpServletRequest request) {
-        return response(new Detail(service.get(id), service.latest(id).orElse(null), service.checkpoints(id)), request);
+        var runs = service.runs(id).stream().map(r -> new RunDetail(r, service.runCheckpoints(r.id()))).toList();
+        return response(
+                new Detail(service.get(id), service.latest(id).orElse(null), service.checkpoints(id), runs), request);
     }
     @PostMapping("/api/v1/cleanup-governance-tasks/{id}/dry-run")
     ApiResponse<CleanupGovernanceTask> dryRun(@PathVariable long id, @RequestHeader("Idempotency-Key") String key,
@@ -86,8 +88,10 @@ public class CleanupGovernanceController {
     }
     record Approval(@NotBlank String note) {
     }
+    record RunDetail(CleanupGovernanceRun run, List<CleanupGovernanceCheckpoint> checkpoints) {
+    }
     record Detail(CleanupGovernanceTask task, CleanupGovernanceRun latestRun,
-            List<CleanupGovernanceCheckpoint> checkpoints) {
+            List<CleanupGovernanceCheckpoint> checkpoints, List<RunDetail> runs) {
     }
     private static String operator(HttpServletRequest request) {
         String value = request.getUserPrincipal().getName();

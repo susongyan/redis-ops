@@ -37,8 +37,9 @@ public class ValidationController {
                 x -> x.id().toString(), rid -> service.get(Long.parseLong(rid))), request);
     }
     @GetMapping("/api/v1/validation-tasks")
-    ApiResponse<List<ValidationTask>> list(HttpServletRequest request) {
-        return wrap(service.list(), request);
+    ApiResponse<List<Detail>> list(HttpServletRequest request) {
+        return wrap(service.list().stream()
+                .map(task -> new Detail(task, service.latestRun(task.id()).orElse(null))).toList(), request);
     }
     @GetMapping("/api/v1/validation-tasks/{id}")
     ApiResponse<Detail> get(@PathVariable long id, HttpServletRequest request) {
