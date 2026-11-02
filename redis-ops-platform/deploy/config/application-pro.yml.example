@@ -4,7 +4,7 @@ spring:
   application:
     name: redis-ops-platform
   datasource:
-    url: "jdbc:mysql://REPLACE_MYSQL_HOST:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC"
+    url: "jdbc:mysql://REPLACE_MYSQL_HOST:3306/redis_governance?useUnicode=true&characterEncoding=utf8"
     username: redis_ops_platform
     password: "REPLACE_PLATFORM_PASSWORD"
   flyway:
