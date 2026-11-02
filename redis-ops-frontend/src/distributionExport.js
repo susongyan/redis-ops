@@ -7,6 +7,19 @@ export function csvCell(value) {
   return `"${text.replaceAll('"', '""')}"`
 }
 
+// 文件名片段只保留安全字符：非法字符（Windows 保留 + # 引号等）、空白与连字符折叠为 _（连字符留作分段分隔），中文保留
+export const safeFilePart = value => String(value ?? '').replace(/[\s\\/:*?"<>|#-]+/g, '_')
+
+// 时间戳直接取字符串字面量（后端序列化即本地墙钟），不做时区换算；解析失败返回空串
+export const fileStamp = iso => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(iso || ''))
+  return m ? `${m[1]}${m[2]}${m[3]}-${m[4]}${m[5]}` : ''
+}
+
+export const distributionFileName = (task, clusterName = '') =>
+  ['distribution', safeFilePart(clusterName || `cluster${task?.clusterId ?? task?.spec?.clusterId ?? ''}`),
+    task?.spec?.database ? `db${task.spec.database}` : '', fileStamp(task?.createdAt)].filter(Boolean).join('-') + '.csv'
+
 export async function loadDistributionExport(api, id) {
   const task = await api.distributionTask(id)
   if (!exportableDistribution(task)) throw new Error('请等待任务结束后导出，避免分页期间结果变化')

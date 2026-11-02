@@ -14,6 +14,7 @@ import {
   Modal,
   Popconfirm,
   Progress,
+  Radio,
   Row,
   Select,
   Space,
@@ -28,9 +29,10 @@ import {
   SettingOutlined,
 } from '@ant-design/icons'
 import { api } from '../api.js'
-import { syncWorkerStatus } from '../syncWorkerStatus.js'
+import { syncWorkerStatus, workerRegistryStatus, syncWorkerOptions, workerAddress, workerHealthUrl } from '../syncWorkerStatus.js'
 import { previewSyncKeys } from '../syncKeyRules.js'
 
+const timeText = value => (value ? new Date(value).toLocaleString() : '—')
 const editableFullApplyStatuses = new Set(['CREATED', 'CHECKING', 'READY', 'FAILED', 'BLOCKED'])
 const terminalStatuses = new Set(['FINISHED', 'CANCELLED'])
 const statusMeta = {
@@ -101,6 +103,13 @@ function TipLabel({ label, tip }) {
 
 export default function SyncTasksPage() {
   const [rows, setRows] = useState([])
+  // 列表筛选；支持 #/syncTasks?taskNo=…&worker=… 直达（从 Worker 页跳转过来）
+  const [filters, setFilters] = useState(() => {
+    const params = new URLSearchParams(window.location.hash.split('?')[1] || '')
+    return { keyword: params.get('taskNo') || '', worker: params.get('worker') || '', statuses: [] }
+  })
+  // ?taskNo= 跳转时列表就绪后自动打开该任务详情
+  const focusTaskNoRef = useRef(new URLSearchParams(window.location.hash.split('?')[1] || '').get('taskNo'))
   const [relations, setRelations] = useState([])
   const [clusters, setClusters] = useState([])
   const [idcs, setIdcs] = useState([])
@@ -118,7 +127,10 @@ export default function SyncTasksPage() {
   const channelSignatureRef = useRef('')
   const metricSignatureRef = useRef('')
   const [startTask, setStartTask] = useState(null)
+  const [precheckTask, setPrecheckTask] = useState(null)
+  const [registry, setRegistry] = useState([])
   const [finishTask, setFinishTask] = useState(null)
+  const [restartTask, setRestartTask] = useState(null)
   const [capabilities, setCapabilities] = useState(null)
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false)
   const [capabilityLoading, setCapabilityLoading] = useState(false)
@@ -127,7 +139,11 @@ export default function SyncTasksPage() {
   const [form] = Form.useForm()
   const [tuningForm] = Form.useForm()
   const [startForm] = Form.useForm()
+  const [precheckForm] = Form.useForm()
   const [finishForm] = Form.useForm()
+  const [restartForm] = Form.useForm()
+  const startResetMode = Form.useWatch('resetMode', startForm) || 'PRESERVE'
+  const restartResetMode = Form.useWatch('resetMode', restartForm) || 'PRESERVE'
   const relationId = Form.useWatch('relationId', form)
   const selectedSourceClusterId = Form.useWatch('sourceClusterId', form)
   const selectedTargetClusterId = Form.useWatch('targetClusterId', form)
@@ -258,6 +274,11 @@ export default function SyncTasksPage() {
       setRelations(relationRows)
       setClusters(clusterPage.items)
       setIdcs(idcRows)
+      try {
+        setRegistry(await api.syncWorkers())
+      } catch {
+        setRegistry([])
+      }
     } catch (error) {
       message.error(error.message)
     }
@@ -265,6 +286,29 @@ export default function SyncTasksPage() {
 
   useEffect(() => {
     load()
+  }, [])
+
+  useEffect(() => {
+    const taskNo = focusTaskNoRef.current
+    if (!taskNo || !rows.length) return
+    const task = rows.find(row => row.taskNo === taskNo)
+    if (task) {
+      focusTaskNoRef.current = null
+      show(task)
+    }
+  }, [rows, filters])
+
+  // 同页 hash 查询串变化（如 Worker 页再次跳转过来）也要重放筛选
+  useEffect(() => {
+    const apply = () => {
+      const page = window.location.hash.replace(/^#\/?/, '').split('?')[0]
+      if (page !== 'syncTasks') return
+      const params = new URLSearchParams(window.location.hash.split('?')[1] || '')
+      focusTaskNoRef.current = params.get('taskNo')
+      setFilters({ keyword: params.get('taskNo') || '', worker: params.get('worker') || '', statuses: [] })
+    }
+    window.addEventListener('hashchange', apply)
+    return () => window.removeEventListener('hashchange', apply)
   }, [])
 
   const [workers, setWorkers] = useState({})
@@ -288,8 +332,12 @@ export default function SyncTasksPage() {
   const renderWorker = (taskId, compact = false) => {
     const worker = workers[taskId]
     const state = syncWorkerStatus(worker, workersUnavailable)
+    // Port lives in the registry (keyed by instance name), the lease row only carries the IP.
+    const registered = worker?.leaseOwner && registry.find(entry => entry.instanceName === worker.leaseOwner)
+    const address = workerAddress({ workerIp: worker?.workerIp, workerPort: registered?.workerPort })
+    const healthUrl = workerHealthUrl({ workerIp: worker?.workerIp, workerPort: registered?.workerPort })
     if (compact) return <div className="sync-list-stack">
-      <div className="sync-list-primary">{worker?.leaseOwner ? worker.workerIp || 'IP 未上报' : '暂无执行 Worker'}</div>
+      <div className="sync-list-primary">{worker?.leaseOwner ? address || 'IP 未上报' : '暂无执行 Worker'}</div>
       {worker?.leaseOwner && <Tooltip title={worker.leaseOwner}><span className="sync-list-ellipsis muted">{worker.leaseOwner}</span></Tooltip>}
       <Tooltip title={`最近心跳：${worker?.heartbeatAt ? new Date(worker.heartbeatAt).toLocaleString() : '未上报'}；租约状态不代表机器健康，过期显示的是上次执行者。`}>
         <span><Tag color={state.color}>{state.label}</Tag></span>
@@ -298,7 +346,9 @@ export default function SyncTasksPage() {
     return <Space direction="vertical" size={2} style={{ maxWidth: 280 }}>
       <Tooltip title="任务租约状态，不代表机器健康；过期时展示的是上次执行者。"><Tag color={state.color}>{state.label}</Tag></Tooltip>
       <span style={{ overflowWrap: 'anywhere' }}>{worker?.leaseOwner || '—'}</span>
-      <span className="muted">机器 IP：{worker?.leaseOwner ? worker.workerIp || '未上报' : '—'}</span>
+      <span className="muted">机器：{worker?.leaseOwner
+        ? (healthUrl ? <a href={healthUrl} target="_blank" rel="noreferrer">{address}</a> : address || '未上报')
+        : '—'}</span>
       <span className="muted">心跳：{worker?.heartbeatAt ? new Date(worker.heartbeatAt).toLocaleString() : '—'}</span>
     </Space>
   }
@@ -312,6 +362,7 @@ export default function SyncTasksPage() {
         const tasks = await api.syncTasks()
         setRows(tasks)
         await refreshWorkers(tasks)
+        api.syncWorkers().then(setRegistry).catch(() => setRegistry([]))
         if (detail?.task?.id) applyDetailSnapshot(await api.syncTask(detail.task.id))
       } catch {
         setWorkersUnavailable(true)
@@ -484,7 +535,7 @@ export default function SyncTasksPage() {
 
   const openStart = (task) => {
     startForm.resetFields()
-    startForm.setFieldsValue({ confirmationTaskNo: '' })
+    startForm.setFieldsValue({ resetMode: 'PRESERVE', workerInstance: task.assignedWorker || undefined })
     setStartTask(task)
   }
 
@@ -492,13 +543,53 @@ export default function SyncTasksPage() {
     try {
       const values = await startForm.validateFields()
       await api.startSyncTask(startTask.id, startTask.version, {
+        resetMode: values.resetMode,
         writeFenced: values.writeFenced,
-        writeFenceNote: values.writeFenceNote,
-        allowTargetFlush: values.allowTargetFlush,
-        confirmationTaskNo: values.confirmationTaskNo,
+        allowTargetFlush: values.resetMode === 'FLUSH' ? values.allowTargetFlush : false,
+        workerInstance: values.workerInstance || null,
       })
       setStartTask(null)
       await refreshAfterAction(startTask.id, '启动命令已提交')
+    } catch (error) {
+      if (!error.errorFields) message.error(error.message)
+    }
+  }
+
+  const openPrecheck = (task) => {
+    precheckForm.resetFields()
+    precheckForm.setFieldsValue({ workerInstance: task.assignedWorker || undefined })
+    setPrecheckTask(task)
+  }
+
+  const submitPrecheck = async () => {
+    try {
+      const values = await precheckForm.validateFields()
+      await api.precheckSyncTask(precheckTask.id, precheckTask.version, {
+        workerInstance: values.workerInstance || null,
+      })
+      setPrecheckTask(null)
+      await refreshAfterAction(precheckTask.id, '预检查命令已提交')
+    } catch (error) {
+      if (!error.errorFields) message.error(error.message)
+    }
+  }
+
+  const openRestart = (task) => {
+    restartForm.resetFields()
+    restartForm.setFieldsValue({ resetMode: task.resetMode || 'PRESERVE' })
+    setRestartTask(task)
+  }
+
+  const submitRestart = async () => {
+    try {
+      const values = await restartForm.validateFields()
+      await api.restartFullSyncTask(restartTask.id, restartTask.version, {
+        resetMode: values.resetMode,
+        writeFenced: values.writeFenced,
+        allowTargetFlush: values.resetMode === 'FLUSH' ? values.allowTargetFlush : false,
+      })
+      setRestartTask(null)
+      await refreshAfterAction(restartTask.id, '重开全量命令已提交')
     } catch (error) {
       if (!error.errorFields) message.error(error.message)
     }
@@ -514,7 +605,6 @@ export default function SyncTasksPage() {
       const values = await finishForm.validateFields()
       await api.finishSyncTask(finishTask.id, finishTask.version, {
         sourceWriteFenced: values.sourceWriteFenced,
-        sourceFenceNote: values.sourceFenceNote,
       })
       setFinishTask(null)
       await refreshAfterAction(finishTask.id, '结束命令已提交，将等待最终 offset 追平')
@@ -538,7 +628,7 @@ export default function SyncTasksPage() {
       <Button onClick={() => { window.location.hash = `/validations?syncTaskId=${task.id}` }}>数据校验</Button>
       <Button onClick={() => analyzeTask(task)}>辅助分析</Button>
       {['CREATED', 'READY', 'FAILED', 'BLOCKED'].includes(task.status) && (
-        <Button onClick={() => runAction(task, api.precheckSyncTask, '预检查命令已提交')}>
+        <Button onClick={() => openPrecheck(task)}>
           {task.status === 'READY' ? '重新预检' : '预检查'}
         </Button>
       )}
@@ -546,10 +636,13 @@ export default function SyncTasksPage() {
       {['FULL_SYNCING', 'INCR_SYNCING', 'CAUGHT_UP'].includes(task.status) && (
         <Button onClick={() => runAction(task, api.pauseSyncTask, '暂停命令已提交')}>暂停</Button>
       )}
-      {['PAUSED', 'BLOCKED'].includes(task.status) && (
+      {(task.status === 'PAUSED' || (task.status === 'BLOCKED' && task.blockedReason !== 'BLOCKED_REQUIRES_FULL_RESYNC')) && (
         <Button type="primary" onClick={() => runAction(task, api.resumeSyncTask, '恢复命令已提交')}>
           恢复
         </Button>
+      )}
+      {task.status === 'BLOCKED' && task.blockedReason === 'BLOCKED_REQUIRES_FULL_RESYNC' && (
+        <Button type="primary" onClick={() => openRestart(task)}>重开全量</Button>
       )}
       {['INCR_SYNCING', 'CAUGHT_UP'].includes(task.status) && (
         <Button onClick={() => openFinish(task)}>结束同步</Button>
@@ -582,6 +675,23 @@ export default function SyncTasksPage() {
     ...counts,
     [item.category]: (counts[item.category] || 0) + 1,
   }), {})
+
+  const leaseInstance = taskId => (workers[taskId]?.leaseOwner || '')
+    .replace(/-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, '')
+  const keyword = filters.keyword.trim().toLowerCase()
+  const filteredRows = rows.filter(task => {
+    if (filters.statuses.length && !filters.statuses.includes(task.status)) return false
+    if (filters.worker === '__none__') {
+      if (workers[task.id]?.leaseOwner) return false
+    } else if (filters.worker && leaseInstance(task.id) !== filters.worker) return false
+    if (keyword) {
+      const relationName = relations.find(relation => relation.id === task.relationId)?.name || ''
+      const haystack = [task.taskNo, String(task.id), name(task.sourceClusterId), name(task.targetClusterId), relationName]
+        .join(' ').toLowerCase()
+      if (!haystack.includes(keyword)) return false
+    }
+    return true
+  })
 
   const columns = [
     {
@@ -627,9 +737,24 @@ export default function SyncTasksPage() {
     <>
       <div className="toolbar">
         <div className="muted">全量阶段支持任务级并发 RESTORE；增量阶段保持 offset 有序提交</div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增同步任务</Button>
+        <Space wrap size={8}>
+          <Input allowClear style={{ width: 230 }} placeholder="任务号 / ID / 集群 / 关系名"
+            value={filters.keyword} onChange={e => setFilters(f => ({ ...f, keyword: e.target.value }))} />
+          <Select allowClear mode="multiple" maxTagCount="responsive" style={{ minWidth: 170 }} placeholder="状态"
+            value={filters.statuses} onChange={v => setFilters(f => ({ ...f, statuses: v || [] }))}
+            options={Object.entries(statusMeta).map(([value, [label]]) => ({ value, label }))} />
+          <Select allowClear style={{ minWidth: 160 }} placeholder="执行 Worker"
+            value={filters.worker || undefined} onChange={v => setFilters(f => ({ ...f, worker: v || '' }))}
+            options={[
+              ...registry.map(worker => ({ value: worker.instanceName, label: worker.instanceName })),
+              { value: '__none__', label: '（暂无执行 Worker）' },
+            ]} />
+          <Button onClick={() => setFilters({ keyword: '', worker: '', statuses: [] })}>重置</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增同步任务</Button>
+        </Space>
       </div>
-      <Table className="sync-task-list" rowKey="id" dataSource={rows} columns={columns} tableLayout="fixed" scroll={{ x: 900 }} />
+      <Table className="sync-task-list" rowKey="id" dataSource={filteredRows} columns={columns} tableLayout="fixed" scroll={{ x: 900 }}
+        pagination={{ pageSize: 20, showSizeChanger: true, showTotal: total => `共 ${total} 条` }} />
 
       <Modal
         title="新增同步任务"
@@ -913,19 +1038,40 @@ export default function SyncTasksPage() {
         title={`启动全量同步 · ${startTask?.taskNo || ''}`}
         open={!!startTask}
         width={620}
-        okText="确认清空目标并启动"
-        okButtonProps={{ danger: true }}
+        okText={startResetMode === 'FLUSH' ? '确认清空目标并启动' : '确认启动'}
+        okButtonProps={{ danger: startResetMode === 'FLUSH' }}
         onCancel={() => setStartTask(null)}
         onOk={submitStart}
       >
         <Alert
-          type="warning"
+          type={startResetMode === 'FLUSH' ? 'warning' : 'info'}
           showIcon
-          message="该操作会清空目标端所选 DB"
-          description="启动前必须确认目标写入已经隔离，并输入任务号进行二次确认。预检查结果需在 10 分钟有效期内。"
+          message={startResetMode === 'FLUSH'
+            ? '该操作会清空目标端所选 DB'
+            : '保留模式：启动时不清空目标端所选 DB，同步数据将与存量数据并存'}
+          description="启动前请确认目标写入已经隔离。预检查结果需在 10 分钟有效期内。"
           style={{ marginBottom: 16 }}
         />
         <Form form={startForm} layout="vertical">
+          <Form.Item
+            name="workerInstance"
+            label="执行 Worker"
+            extra="未选择时沿用预检查分配的 Worker；预检查也未指定则任意在线 Worker 可认领"
+          >
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="自动分配（任意在线 Worker）"
+              options={syncWorkerOptions(registry, workersUnavailable)}
+            />
+          </Form.Item>
+          <Form.Item name="resetMode" label="目标数据处理" rules={[{ required: true }]}>
+            <Radio.Group optionType="button" buttonStyle="solid">
+              <Radio.Button value="PRESERVE">保留（不清空）</Radio.Button>
+              <Radio.Button value="FLUSH">清空目标 DB</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
           <Form.Item
             name="writeFenced"
             valuePropName="checked"
@@ -933,28 +1079,108 @@ export default function SyncTasksPage() {
           >
             <Checkbox>目标端业务写入已经隔离</Checkbox>
           </Form.Item>
-          <Form.Item name="writeFenceNote" label="写隔离依据" rules={[{ required: true, whitespace: true }]}>
-            <Input placeholder="例如：change-ticket-123" />
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.resetMode !== cur.resetMode}>
+            {({ getFieldValue }) => getFieldValue('resetMode') === 'FLUSH' ? (
+              <Form.Item
+                name="allowTargetFlush"
+                valuePropName="checked"
+                rules={[{ validator: (_, value) => value ? Promise.resolve() : Promise.reject(new Error('请确认允许清空目标')) }]}
+              >
+                <Checkbox>我确认允许清空目标 DB</Checkbox>
+              </Form.Item>
+            ) : null}
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`重开全量同步 · ${restartTask?.taskNo || ''}`}
+        open={!!restartTask}
+        width={620}
+        okText={restartResetMode === 'FLUSH' ? '确认清空目标并重开' : '确认重开'}
+        okButtonProps={{ danger: restartResetMode === 'FLUSH' }}
+        onCancel={() => setRestartTask(null)}
+        onOk={submitRestart}
+      >
+        <Alert
+          type={restartResetMode === 'FLUSH' ? 'warning' : 'info'}
+          showIcon
+          message={restartResetMode === 'FLUSH'
+            ? '该操作会清空目标端所选 DB，并从头重做全量同步'
+            : '保留模式：不清空目标端，重开的全量将与目标存量数据（含上次尝试已写入的数据）并存'}
+          description="重开会更换同步 epoch、清理本任务的围栏与断点键，并从头执行全量同步；执行 Worker 沿用当前任务运行时。"
+          style={{ marginBottom: 16 }}
+        />
+        <Form form={restartForm} layout="vertical">
+          <Form.Item name="resetMode" label="目标数据处理" rules={[{ required: true }]}>
+            <Radio.Group optionType="button" buttonStyle="solid">
+              <Radio.Button value="PRESERVE">保留（不清空）</Radio.Button>
+              <Radio.Button value="FLUSH">清空目标 DB</Radio.Button>
+            </Radio.Group>
           </Form.Item>
           <Form.Item
-            name="allowTargetFlush"
+            name="writeFenced"
             valuePropName="checked"
-            rules={[{ validator: (_, value) => value ? Promise.resolve() : Promise.reject(new Error('请确认允许清空目标')) }]}
+            rules={[{ validator: (_, value) => value ? Promise.resolve() : Promise.reject(new Error('请确认目标写入已隔离')) }]}
           >
-            <Checkbox>我确认允许清空目标 DB</Checkbox>
+            <Checkbox>目标端业务写入已经隔离</Checkbox>
           </Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.resetMode !== cur.resetMode}>
+            {({ getFieldValue }) => getFieldValue('resetMode') === 'FLUSH' ? (
+              <Form.Item
+                name="allowTargetFlush"
+                valuePropName="checked"
+                rules={[{ validator: (_, value) => value ? Promise.resolve() : Promise.reject(new Error('请确认允许清空目标')) }]}
+              >
+                <Checkbox>我确认允许清空目标 DB</Checkbox>
+              </Form.Item>
+            ) : null}
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`预检查 · ${precheckTask?.taskNo || ''}`}
+        open={!!precheckTask}
+        width={520}
+        okText="提交预检查"
+        onCancel={() => setPrecheckTask(null)}
+        onOk={submitPrecheck}
+      >
+        <Alert
+          type="info"
+          showIcon
+          message="预检查会扫描源端键空间与风险命令，可指定执行 Worker"
+          style={{ marginBottom: 16 }}
+        />
+        <Form form={precheckForm} layout="vertical">
           <Form.Item
-            name="confirmationTaskNo"
-            label={`请输入任务号 ${startTask?.taskNo || ''}`}
-            rules={[
-              { required: true },
-              { validator: (_, value) => value === startTask?.taskNo
-                ? Promise.resolve()
-                : Promise.reject(new Error('任务号不一致')) },
-            ]}
+            name="workerInstance"
+            label="执行 Worker"
+            extra="重新预检可在此更换执行机器；清除选择即为自动分配"
           >
-            <Input />
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="自动分配（任意在线 Worker）"
+              options={syncWorkerOptions(registry, workersUnavailable)}
+            />
           </Form.Item>
+          {precheckTask?.assignedWorker && (() => {
+            const assigned = registry.find(worker => worker.instanceName === precheckTask.assignedWorker)
+            const state = workerRegistryStatus(assigned, workersUnavailable)
+            const healthUrl = workerHealthUrl(assigned)
+            return (
+              <Space>
+                <span className="muted">当前指派：{precheckTask.assignedWorker}</span>
+                <Tag color={state.color}>{state.label}</Tag>
+                {assigned && (healthUrl
+                  ? <a href={healthUrl} target="_blank" rel="noreferrer">{workerAddress(assigned)}</a>
+                  : workerAddress(assigned) && <span className="muted">{workerAddress(assigned)}</span>)}
+              </Space>
+            )
+          })()}
         </Form>
       </Modal>
 
@@ -979,9 +1205,6 @@ export default function SyncTasksPage() {
             rules={[{ validator: (_, value) => value ? Promise.resolve() : Promise.reject(new Error('请确认源端写入已隔离')) }]}
           >
             <Checkbox>源端业务写入已经停止并隔离</Checkbox>
-          </Form.Item>
-          <Form.Item name="sourceFenceNote" label="源端写隔离依据" rules={[{ required: true, whitespace: true }]}>
-            <Input placeholder="例如：change-ticket-456" />
           </Form.Item>
         </Form>
       </Modal>
@@ -1010,6 +1233,11 @@ export default function SyncTasksPage() {
               items={[
                 { key: 'direction', label: '同步方向', children: `${name(detail.task.sourceClusterId)} → ${name(detail.task.targetClusterId)}` },
                 { key: 'status', label: '状态', children: renderStatus(detail.task.status) },
+                {
+                  key: 'assignedWorker',
+                  label: <TipLabel label="指派 Worker" tip="预检查时选定的执行实例；未指派时任意在线 Worker 可认领，指派实例心跳停止后其他 Worker 会接管。" />,
+                  children: detail.task.assignedWorker || '自动分配',
+                },
                 { key: 'db', label: 'DB 映射', children: `${detail.task.sourceDb} → ${detail.task.targetDb}` },
                 { key: 'desired', label: '期望动作', children: detail.task.desiredAction || '-' },
                 { key: 'includes', label: '包含规则', span: 2, children: <span style={{ overflowWrap: 'anywhere' }}>{patternLabel(detail.task.includePatternsJson, '全部 Key')}</span> },
@@ -1075,8 +1303,8 @@ export default function SyncTasksPage() {
                     </Space>
                   ),
                 },
-                { key: 'checkedAt', label: '检查时间', children: detail.precheck.checkedAt },
-                { key: 'validUntil', label: '有效期至', children: detail.precheck.validUntil },
+                { key: 'checkedAt', label: '检查时间', children: timeText(detail.precheck.checkedAt) },
+                { key: 'validUntil', label: '有效期至', children: timeText(detail.precheck.validUntil) },
               ]}
             />
             <Table
@@ -1184,7 +1412,7 @@ export default function SyncTasksPage() {
                     title: '已写入 Key',
                     render: (_, row) => `${row.appliedKeys}${row.totalKeys == null ? '' : ` / ${row.totalKeys}`}`,
                   },
-                  { title: '更新时间', dataIndex: 'updatedAt' },
+                  { title: '更新时间', dataIndex: 'updatedAt', render: timeText },
                 ]}
               />
               {lanes.length > 0 && (
@@ -1205,7 +1433,7 @@ export default function SyncTasksPage() {
                         dataIndex: 'status',
                         render: (status) => <Tag color={status === 'FAILED' ? 'error' : status === 'COMPLETED' ? 'success' : 'processing'}>{status}</Tag>,
                       },
-                      { title: '更新时间', dataIndex: 'updatedAt' },
+                      { title: '更新时间', dataIndex: 'updatedAt', render: timeText },
                     ]}
                   />
                 </>
@@ -1214,7 +1442,21 @@ export default function SyncTasksPage() {
           )
         })() : <div className="muted">全量同步启动后显示 RDB 接收、解析和并发 RESTORE 进度</div>}
 
-        <h3>运行实例</h3>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 16 }}>
+          <h3 style={{ margin: 0 }}>运行实例</h3>
+          {detail && ['FINISHED', 'CANCELLED', 'FAILED'].includes(detail.task.status) && (
+            <Popconfirm
+              title="清理该任务的残留 spool？"
+              description="持有该任务 spool 目录的各台 worker 将在下一轮清扫（约 30 秒内）删除本地目录并释放磁盘。"
+              okText="清理"
+              cancelText="取消"
+              onConfirm={() => runAction(detail.task, id => api.cleanupSyncTaskSpool(id),
+                '清理请求已提交，各 worker 将在约 30 秒内删除该任务的 spool 目录')}
+            >
+              <Button size="small" danger>清理 spool</Button>
+            </Popconfirm>
+          )}
+        </div>
         {detail?.runtime ? (
           <Descriptions
             bordered
@@ -1236,17 +1478,17 @@ export default function SyncTasksPage() {
               {
                 key: 'lease',
                 label: <TipLabel label="租约至" tip="当前 Worker 在 MySQL 中的执行权截止时间；到期且未续租后允许新 Worker 接管。" />,
-                children: detail.runtime.leaseUntil || '-',
+                children: timeText(detail.runtime.leaseUntil),
               },
               {
                 key: 'heartbeat',
                 label: <TipLabel label="Worker 心跳" tip="由 Sync Worker 在成功续租时写入，反映控制面最后一次确认该运行实例存活的时间。" />,
-                children: detail.runtime.heartbeatAt || '-',
+                children: timeText(detail.runtime.heartbeatAt),
               },
               {
                 key: 'fenceAt',
                 label: 'Fence 发布时间',
-                children: detail.runtime.fencePublishedAt || '-',
+                children: timeText(detail.runtime.fencePublishedAt),
               },
               {
                 key: 'recovery',
@@ -1305,6 +1547,7 @@ export default function SyncTasksPage() {
               {
                 title: <TipLabel label="心跳" tip="该复制通道最后一次向平台报告存活状态的时间。" />,
                 dataIndex: 'lastHeartbeatAt',
+                render: timeText,
               },
             ]}
           />
@@ -1356,7 +1599,7 @@ export default function SyncTasksPage() {
                 {
                   key: 'collected',
                   label: <TipLabel label="采集时间" tip="本组指标在 Worker 侧完成计算并写入平台的时间。" />,
-                  children: detail.metrics[0].collectedAt,
+                  children: timeText(detail.metrics[0].collectedAt),
                 },
               ]}
             />
@@ -1375,7 +1618,7 @@ export default function SyncTasksPage() {
           }}
           dataSource={eventRows}
           columns={[
-            { title: '时间', dataIndex: 'createdAt' },
+            { title: '时间', dataIndex: 'createdAt', render: timeText },
             { title: '原状态', dataIndex: 'fromStatus' },
             { title: '新状态', dataIndex: 'toStatus' },
             { title: '操作人', dataIndex:'operator',render:(value,row)=>actorLabel(value,row.operatorSnapshot) },

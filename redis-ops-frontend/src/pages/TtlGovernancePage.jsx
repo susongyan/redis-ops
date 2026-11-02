@@ -45,7 +45,8 @@ export default function TtlGovernancePage() {
     const id = detail?.task?.id
     const status = detail?.task?.status
     if (!id || terminal.includes(status) || status === 'PAUSED') return undefined
-    const timer = setInterval(() => refreshDetail(id), 3000)
+    // 活动态 2s 轮询，与风扫/校验进度体验对齐
+    const timer = setInterval(() => refreshDetail(id), 2000)
     return () => clearInterval(timer)
   }, [detail?.task?.id, detail?.task?.status, refreshDetail])
 
@@ -85,7 +86,7 @@ export default function TtlGovernancePage() {
   }
 
   return <Space direction="vertical" size={16} style={{ width: '100%' }}>
-    <Card title="TTL 治理" extra={<Button type="primary" onClick={() => { form.resetFields(); form.setFieldsValue({ databaseNo: 0, includePattern: '*', targetTtlSeconds: 86400, scanRatePerSecond: 500, maxKeys: 100000 }); setOpen(true) }}>新建治理任务</Button>}>
+    <Card title="TTL 治理" extra={<Button type="primary" onClick={() => { form.resetFields(); form.setFieldsValue({ databaseNo: 0, includePattern: '*', targetTtlSeconds: 86400, scanRatePerSecond: 5000, maxKeys: 100000 }); setOpen(true) }}>新建治理任务</Button>}>
       <Alert type="info" showIcon message="安全门禁" description="可预检后审批执行，或填写原因并确认跳过预检直接执行。所有执行保留限速和数量限制，可暂停或取消。" />
       <Table loading={loading} style={{ marginTop: 16 }} rowKey="id" dataSource={tasks} scroll={{ x: 1100 }} columns={[
         { title: '任务', dataIndex: 'taskNo', render: (v,row) => <Button type="link" onClick={()=>show(row.id)}>{v}</Button> },
