@@ -20,4 +20,11 @@ public interface ExecutionRecordRepository {
     }
     Snapshot lock(Type type, long id);
     boolean delete(Type type, long id, long version);
+
+    /**
+     * Hard-deletes the detail rows (runs, findings, differences, checkpoints, groups) owned by the
+     * given task; runs in the caller's transaction so a rejected delete rolls the purge back.
+     * Returns the number of purged rows.
+     */
+    int purgeDetails(Type type, long id);
 }

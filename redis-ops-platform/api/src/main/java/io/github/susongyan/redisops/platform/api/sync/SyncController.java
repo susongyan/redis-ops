@@ -54,7 +54,7 @@ public class SyncController {
             @RequestParam(defaultValue = "false") boolean allowDestructiveCommands,
             @RequestParam(defaultValue = "true") boolean allowSafeSplit,
             @RequestParam(required = false) Set<String> additionalBlockedCommands,
-            @RequestParam(defaultValue = "v1") String policyVersion,
+            @RequestParam(defaultValue = "v3") String policyVersion,
             HttpServletRequest request) {
         var policy = new SyncCommandPolicy(allowDestructiveCommands, allowSafeSplit,
                 additionalBlockedCommands, policyVersion);
@@ -75,6 +75,21 @@ public class SyncController {
         return wrap(service.workerAssignments(taskIds), request);
     }
 
+    @GetMapping("/api/v1/sync-workers")
+    ApiResponse<List<SyncWorkerInstance>> workerRegistry(HttpServletRequest request) {
+        return wrap(service.workers(), request);
+    }
+
+    @GetMapping("/api/v1/sync-worker-tasks")
+    ApiResponse<List<SyncWorkerRuntimeRow>> workerRuntimes(HttpServletRequest request) {
+        return wrap(service.workerRuntimes(), request);
+    }
+
+    @GetMapping("/api/v1/sync-workers/{instanceName}/load")
+    ApiResponse<WorkerLoad> workerLoad(@PathVariable String instanceName, HttpServletRequest request) {
+        return wrap(service.workerLoad(instanceName), request);
+    }
+
     @GetMapping("/api/v1/sync-tasks/{id}/events")
     ApiResponse<PageResult<SyncTaskEvent>> events(@PathVariable long id,
             @RequestParam(defaultValue = "1") int page,
@@ -85,9 +100,11 @@ public class SyncController {
     @PostMapping("/api/v1/sync-tasks/{id}/prechecks")
     @ResponseStatus(HttpStatus.ACCEPTED)
     ApiResponse<SyncTask> precheck(@PathVariable long id, @RequestHeader("Idempotency-Key") String key,
-            @RequestHeader("If-Match") long version, HttpServletRequest request) {
-        return action(request, key, "SYNC_PRECHECK", Map.of("taskId", id),
-                () -> service.requestPrecheck(id, version, operator(request), key));
+            @RequestHeader("If-Match") long version,
+            @RequestBody(required = false) @Valid PrecheckRequest body, HttpServletRequest request) {
+        return action(request, key, "SYNC_PRECHECK", body == null ? Map.of("taskId", id) : body,
+                () -> service.requestPrecheck(id, version, body == null ? null : body.workerInstance(),
+                        operator(request), key));
     }
 
     @GetMapping("/api/v1/sync-tasks/{id}/precheck")
@@ -101,7 +118,8 @@ public class SyncController {
             @RequestHeader("If-Match") long version, @Valid @RequestBody StartRequest body,
             HttpServletRequest request) {
         return action(request, key, "SYNC_START", body, () -> service.requestStart(id, version, body.writeFenced,
-                body.writeFenceNote, body.allowTargetFlush, body.confirmationTaskNo, operator(request), key));
+                body.writeFenceNote, body.resetMode, body.allowTargetFlush, body.workerInstance(),
+                operator(request), key));
     }
 
     @PostMapping("/api/v1/sync-tasks/{id}/pause")
@@ -120,6 +138,16 @@ public class SyncController {
                 () -> service.requestResume(id, version, operator(request), key));
     }
 
+    @PostMapping("/api/v1/sync-tasks/{id}/restart-full")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    ApiResponse<SyncTask> restartFull(@PathVariable long id, @RequestHeader("Idempotency-Key") String key,
+            @RequestHeader("If-Match") long version, @Valid @RequestBody RestartFullRequest body,
+            HttpServletRequest request) {
+        return action(request, key, "SYNC_RESTART_FULL", body, () -> service.requestRestartFull(id, version,
+                body.resetMode, body.allowTargetFlush, body.writeFenced, body.writeFenceNote, operator(request),
+                key));
+    }
+
     @PostMapping("/api/v1/sync-tasks/{id}/finish")
     @ResponseStatus(HttpStatus.ACCEPTED)
     ApiResponse<SyncTask> finish(@PathVariable long id, @RequestHeader("Idempotency-Key") String key,
@@ -135,6 +163,14 @@ public class SyncController {
             @RequestHeader("If-Match") long version, HttpServletRequest request) {
         return action(request, key, "SYNC_CANCEL", Map.of("taskId", id),
                 () -> service.requestCancel(id, version, operator(request), key));
+    }
+
+    @PostMapping("/api/v1/sync-tasks/{id}/spool-cleanup")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    ApiResponse<SyncTask> spoolCleanup(@PathVariable long id, @RequestHeader("Idempotency-Key") String key,
+            HttpServletRequest request) {
+        return action(request, key, "SYNC_SPOOL_CLEANUP", Map.of("taskId", id),
+                () -> service.requestSpoolCleanup(id, operator(request)));
     }
 
     @PutMapping("/api/v1/sync-tasks/{id}/limits")
@@ -222,10 +258,16 @@ public class SyncController {
             String unknownCommandPolicy,
             List<SyncCommandCapability> commands) {
     }
-    public record StartRequest(boolean writeFenced, @NotBlank String writeFenceNote, boolean allowTargetFlush,
-            @NotBlank String confirmationTaskNo) {
+    public record PrecheckRequest(@Size(max = 128) String workerInstance) {
     }
-    public record FinishRequest(boolean sourceWriteFenced, @NotBlank String sourceFenceNote) {
+    public record StartRequest(boolean writeFenced, String writeFenceNote,
+            @Pattern(regexp = "PRESERVE|FLUSH") String resetMode, boolean allowTargetFlush,
+            @Size(max = 128) String workerInstance) {
+    }
+    public record RestartFullRequest(Boolean writeFenced, String writeFenceNote,
+            @Pattern(regexp = "PRESERVE|FLUSH") String resetMode, boolean allowTargetFlush) {
+    }
+    public record FinishRequest(boolean sourceWriteFenced, String sourceFenceNote) {
     }
     public record SourceFenceRequest(@NotBlank String note) {
     }

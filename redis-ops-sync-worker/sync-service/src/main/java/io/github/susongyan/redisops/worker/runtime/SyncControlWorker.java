@@ -12,13 +12,18 @@ import java.util.UUID;
 @ConditionalOnProperty(name = "sync.engine.enabled", havingValue = "true", matchIfMissing = true)
 public class SyncControlWorker {
     private static final List<String> TYPES = List.of("SYNC_PRECHECK", "SYNC_START", "SYNC_PAUSE", "SYNC_RESUME",
-            "SYNC_FINISH", "SYNC_CANCEL", "SYNC_RATE_LIMIT");
+            "SYNC_RESTART_FULL", "SYNC_FINISH", "SYNC_CANCEL", "SYNC_RATE_LIMIT");
     private final WorkerControlJobPort jobs;
     private final NativeSyncCoordinator coordinator;
+    private final WorkerIdentity identity;
+    private final long assignmentStaleSeconds;
     private final String owner;
-    public SyncControlWorker(WorkerControlJobPort jobs, NativeSyncCoordinator coordinator) {
+    public SyncControlWorker(WorkerControlJobPort jobs, NativeSyncCoordinator coordinator, WorkerIdentity identity,
+            @org.springframework.beans.factory.annotation.Value("${sync.engine.assignment-stale-seconds:60}") long assignmentStaleSeconds) {
         this.jobs = jobs;
         this.coordinator = coordinator;
+        this.identity = identity;
+        this.assignmentStaleSeconds = assignmentStaleSeconds;
         this.owner = coordinator.instanceId() + ":control:" + UUID.randomUUID();
     }
     @Scheduled(fixedDelayString = "${sync.engine.poll-interval-ms:500}")
@@ -30,8 +35,12 @@ public class SyncControlWorker {
         String claimOwner = owner + ":" + type;
         return switch (type) {
             case "SYNC_PRECHECK", "SYNC_START" ->
-                jobs.claim(type, claimOwner, Duration.ofSeconds(30));
-            case "SYNC_RESUME", "SYNC_CANCEL" ->
+                jobs.claim(type, claimOwner, Duration.ofSeconds(30), identity.instanceName(),
+                        assignmentStaleSeconds);
+            // These actions must stay claimable after the runtime lease was released (runner gone or
+            // an earlier attempt failed and left lease_owner NULL) — otherwise the retry job is
+            // frozen forever and e.g. a STOPPING task can never leave that state again.
+            case "SYNC_RESUME", "SYNC_RESTART_FULL", "SYNC_CANCEL", "SYNC_FINISH" ->
                 jobs.claimForRuntime(type, claimOwner, coordinator.instanceId(), Duration.ofSeconds(30), true);
             default ->
                 jobs.claimForRuntime(type, claimOwner, coordinator.instanceId(), Duration.ofSeconds(30), false);
@@ -45,6 +54,7 @@ public class SyncControlWorker {
                 case "SYNC_START" -> coordinator.start(job.taskId());
                 case "SYNC_PAUSE" -> coordinator.pause(job.taskId());
                 case "SYNC_RESUME" -> coordinator.resume(job.taskId());
+                case "SYNC_RESTART_FULL" -> coordinator.restartFull(job.taskId());
                 case "SYNC_FINISH" -> coordinator.finish(job.taskId());
                 case "SYNC_CANCEL" -> coordinator.cancel(job.taskId());
                 case "SYNC_RATE_LIMIT" -> coordinator.limits(job.taskId());

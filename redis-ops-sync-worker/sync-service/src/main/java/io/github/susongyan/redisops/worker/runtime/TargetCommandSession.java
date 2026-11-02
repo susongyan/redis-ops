@@ -1,6 +1,7 @@
 package io.github.susongyan.redisops.worker.runtime;
 
 import io.github.susongyan.redisops.worker.protocol.CommandPlan;
+import io.github.susongyan.redisops.worker.protocol.RedisSlot;
 import io.github.susongyan.redisops.worker.protocol.RespCodec;
 import io.github.susongyan.redisops.worker.protocol.RespProtocolException;
 import io.github.susongyan.redisops.worker.protocol.RespValue;
@@ -13,6 +14,7 @@ import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -26,6 +28,10 @@ public final class TargetCommandSession implements AutoCloseable {
     private final byte[] heartbeatKey;
     private final byte[] fenceKey;
     private final byte[] fullProgressPrefix;
+    private final long taskId;
+
+    private static final java.util.Set<String> RESERVED_KEY_TYPES = java.util.Set.of("ckpt", "hb", "fence", "cursor",
+            "full_progress");
 
     public TargetCommandSession(WorkerRedisConnectionProfile profile, int database, long taskId,
             Duration connectTimeout)
@@ -35,12 +41,12 @@ public final class TargetCommandSession implements AutoCloseable {
 
     public TargetCommandSession(WorkerRedisConnectionProfile profile, RedisEndpoint endpoint, int database,
             long taskId, Duration connectTimeout) throws IOException {
-        this(profile, endpoint, database, connectTimeout, standaloneKeyspace(taskId, "standalone"), true);
+        this(profile, endpoint, database, taskId, connectTimeout, standaloneKeyspace(taskId, "standalone"), true);
     }
 
     TargetCommandSession(WorkerRedisConnectionProfile profile, RedisEndpoint endpoint, int database,
             long taskId, Duration connectTimeout, String channel) throws IOException {
-        this(profile, endpoint, database, connectTimeout, standaloneKeyspace(taskId, channel), true);
+        this(profile, endpoint, database, taskId, connectTimeout, standaloneKeyspace(taskId, channel), true);
     }
 
     static TargetCommandSession clusterSlot(WorkerRedisConnectionProfile profile, RedisEndpoint endpoint,
@@ -50,11 +56,11 @@ public final class TargetCommandSession implements AutoCloseable {
         Keyspace keyspace = new Keyspace(ClusterSlotKeyspace.checkpoint(taskId, channel, slot),
                 heartbeatKey(taskId, channel, slot), ClusterSlotKeyspace.fence(taskId, channel, slot),
                 java.util.Arrays.copyOf(progress, separator + 1));
-        return new TargetCommandSession(profile, endpoint, 0, connectTimeout, keyspace, false);
+        return new TargetCommandSession(profile, endpoint, 0, taskId, connectTimeout, keyspace, false);
     }
 
     private TargetCommandSession(WorkerRedisConnectionProfile profile, RedisEndpoint endpoint, int database,
-            Duration connectTimeout, Keyspace keyspace, boolean selectDatabase) throws IOException {
+            long taskId, Duration connectTimeout, Keyspace keyspace, boolean selectDatabase) throws IOException {
         socket = new Socket();
         socket.setKeepAlive(true);
         socket.setTcpNoDelay(true);
@@ -66,6 +72,7 @@ public final class TargetCommandSession implements AutoCloseable {
         heartbeatKey = keyspace.heartbeat();
         fenceKey = keyspace.fence();
         fullProgressPrefix = keyspace.fullProgressPrefix();
+        this.taskId = taskId;
         authenticate(profile);
         if (selectDatabase)
             expectOk(command("SELECT", Integer.toString(database)), "SELECT");
@@ -73,6 +80,21 @@ public final class TargetCommandSession implements AutoCloseable {
 
     public Optional<TargetCheckpoint> checkpoint() throws IOException {
         return checkpoint(command(bytes("GET"), checkpointKey));
+    }
+
+    /**
+     * Deletes this task's own persistent reserved keys found on the connected node. A fresh start
+     * always carries a new full sync epoch and the control plane only starts terminal tasks, so
+     * every own-task key here belongs to a finished attempt: its worker is gone, and republished
+     * fencing fails any zombie transaction. Recovery must never call this - it continues the
+     * current attempt rather than superseding it.
+     */
+    public long deleteOwnReservedKeys() throws IOException {
+        List<byte[]> own = new java.util.ArrayList<>();
+        for (byte[] key : scanReservedKeys())
+            if (ownedByTask(key, taskId))
+                own.add(key);
+        return deleteKeys(own);
     }
 
     void requireMultiKeyVersion(io.github.susongyan.redisops.sync.contract.SyncCommandPolicy policy)
@@ -112,6 +134,21 @@ public final class TargetCommandSession implements AutoCloseable {
         return checkpoint(command(bytes("GET"), ClusterSlotKeyspace.cursor(taskId, channel, slot)));
     }
 
+    public long dbsize() throws IOException {
+        RespValue response = command("DBSIZE");
+        if (!(response instanceof RespValue.IntegerValue value))
+            throw new RespProtocolException("DBSIZE returned an unexpected response");
+        return value.value();
+    }
+
+    /** Non-destructive availability probe: COMMAND INFO reports nil entries for renamed/unknown commands. */
+    public boolean commandAvailable(String name) throws IOException {
+        RespValue response = command("COMMAND", "INFO", name);
+        if (response instanceof RespValue.Array array)
+            return !array.values().isEmpty() && !(array.values().get(0) instanceof RespValue.NullValue);
+        throw new RespProtocolException("COMMAND INFO returned an unexpected response");
+    }
+
     public Map<String, Long> commandStats() throws IOException {
         RespValue response = command("INFO", "commandstats");
         if (!(response instanceof RespValue.Bulk bulk))
@@ -144,6 +181,14 @@ public final class TargetCommandSession implements AutoCloseable {
     }
 
     public void assertReservedNamespaceAvailable() throws IOException {
+        if (!foreignReservedKeys().isEmpty())
+            throw new SyncBlockedException("BLOCKED_RESERVED_NAMESPACE",
+                    "target contains a Redis Ops reserved key owned by another task");
+    }
+
+    /** All keys in the Redis Ops reserved namespace on the connected node. */
+    private List<byte[]> scanReservedKeys() throws IOException {
+        List<byte[]> found = new java.util.ArrayList<>();
         String cursor = "0";
         do {
             RespValue response = command(bytes("SCAN"), bytes(cursor), bytes("MATCH"),
@@ -156,14 +201,100 @@ public final class TargetCommandSession implements AutoCloseable {
             for (RespValue value : keys.values()) {
                 if (!(value instanceof RespValue.Bulk key))
                     throw new RespProtocolException("SCAN key is not a bulk string");
-                if (!java.util.Arrays.equals(key.value(), checkpointKey)
-                        && !java.util.Arrays.equals(key.value(), heartbeatKey)
-                        && !java.util.Arrays.equals(key.value(), fenceKey)
-                        && !startsWith(key.value(), fullProgressPrefix))
-                    throw new SyncBlockedException("BLOCKED_RESERVED_NAMESPACE",
-                            "target contains a Redis Ops reserved key owned by another task");
+                found.add(key.value());
             }
         } while (!"0".equals(cursor));
+        return found;
+    }
+
+    /** Reserved-namespace keys not owned by this task; callers decide whether the owning task is still alive. */
+    public List<byte[]> foreignReservedKeys() throws IOException {
+        List<byte[]> foreign = new java.util.ArrayList<>();
+        for (byte[] key : scanReservedKeys()) {
+            if (!java.util.Arrays.equals(key, checkpointKey)
+                    && !java.util.Arrays.equals(key, heartbeatKey)
+                    && !java.util.Arrays.equals(key, fenceKey)
+                    && !startsWith(key, fullProgressPrefix)
+                    && !ownedByTask(key, taskId))
+                foreign.add(key);
+        }
+        return foreign;
+    }
+
+    public long deleteKeys(List<byte[]> keys) throws IOException {
+        long deleted = 0;
+        for (byte[] key : keys) {
+            // One DEL per key: a cluster target rejects a multi-key DEL whose keys hash to
+            // different slots (CROSSSLOT), and reserved keys rarely share a hash tag.
+            RespValue response = command(bytes("DEL"), key);
+            failOnError(response, "DEL");
+            if (response instanceof RespValue.IntegerValue value)
+                deleted += value.value();
+            else
+                throw new RespProtocolException("DEL returned an unexpected response");
+        }
+        return deleted;
+    }
+
+    /**
+     * Parses the owning task id out of a reserved key. Standalone keys carry "{taskId}:channel" after the
+     * type segment; cluster keys carry "{slotTag}:{taskId}:channel" where the tag is alphanumeric, so a
+     * fully numeric tag means the standalone layout. Unparsable keys return empty and stay treated as foreign.
+     */
+    static java.util.OptionalLong ownerTaskId(byte[] key) {
+        String text = new String(key, StandardCharsets.US_ASCII);
+        if (!text.startsWith("__redis_ops_sync_"))
+            return java.util.OptionalLong.empty();
+        int typeEnd = text.indexOf("__", "__redis_ops_sync_".length());
+        if (typeEnd < 0 || typeEnd + 3 > text.length()
+                || !RESERVED_KEY_TYPES.contains(text.substring("__redis_ops_sync_".length(), typeEnd)))
+            return java.util.OptionalLong.empty();
+        String rest = text.substring(typeEnd + 3);
+        if (!rest.startsWith("{"))
+            return java.util.OptionalLong.empty();
+        int tagEnd = rest.indexOf('}');
+        if (tagEnd < 1)
+            return java.util.OptionalLong.empty();
+        String tag = rest.substring(1, tagEnd);
+        String candidate;
+        if (tag.chars().allMatch(Character::isDigit))
+            candidate = tag; // standalone "{taskId}:channel"
+        else {
+            if (!rest.startsWith(":", tagEnd + 1))
+                return java.util.OptionalLong.empty();
+            int idEnd = rest.indexOf(':', tagEnd + 2);
+            candidate = idEnd < 0 ? rest.substring(tagEnd + 2) : rest.substring(tagEnd + 2, idEnd);
+        }
+        try {
+            long owner = Long.parseLong(candidate);
+            return owner > 0 ? java.util.OptionalLong.of(owner) : java.util.OptionalLong.empty();
+        } catch (NumberFormatException unparsable) {
+            return java.util.OptionalLong.empty();
+        }
+    }
+
+    /**
+     * A reserved key belongs to this task when it carries this task's id, regardless of channel
+     * or cluster slot tag. Standalone keys carry "{taskId}:channel" after the type segment;
+     * cluster keys carry "{slotTag}:{taskId}:channel". Ownership by taskId alone lets a re-run
+     * of the same task skip its own leftover metadata without opening the namespace to other
+     * tasks.
+     */
+    static boolean ownedByTask(byte[] key, long taskId) {
+        String text = new String(key, StandardCharsets.US_ASCII);
+        if (!text.startsWith("__redis_ops_sync_"))
+            return false;
+        int typeEnd = text.indexOf("__", "__redis_ops_sync_".length());
+        if (typeEnd < 0 || typeEnd + 3 > text.length()
+                || !RESERVED_KEY_TYPES.contains(text.substring("__redis_ops_sync_".length(), typeEnd)))
+            return false;
+        String rest = text.substring(typeEnd + 3);
+        if (rest.startsWith("{" + taskId + "}:"))
+            return true;
+        if (!rest.startsWith("{"))
+            return false;
+        int tagEnd = rest.indexOf('}');
+        return tagEnd > 0 && rest.startsWith(":" + taskId + ":", tagEnd + 1);
     }
 
     public void restore(byte[] key, long absoluteExpireMillis, byte[] payload) throws IOException {
@@ -211,6 +342,63 @@ public final class TargetCommandSession implements AutoCloseable {
             if (result == RespValue.NullValue.INSTANCE)
                 throw new FencingException("full restore batch lost the target fence");
             assertTransaction(result, "full restore transaction");
+        } catch (RuntimeException | IOException error) {
+            unwatchQuietly();
+            throw error;
+        }
+    }
+
+    /**
+     * Restores a multi-slot batch that is guaranteed to live on one target node. Cluster-mode
+     * WATCH is single-slot, so every distinct slot forms its own WATCH/GET/MULTI/RESTORE/EXEC
+     * transaction. The transactions run in two pipelined phases on this node connection: first
+     * every slot's WATCH and fence GET (so a lost fence is detected before any write is sent),
+     * then every slot's MULTI/RESTORE/EXEC. A node batch therefore costs two round trips no
+     * matter how many slots or keys it spans, with the same fencing semantics as the per-slot
+     * path. No progress key is written here: the authoritative full-sync progress lives in the
+     * control database. Any failed command leaves the reply stream partially consumed, so the
+     * connection is only fit for reconnect afterwards (the task fails and the runner is
+     * discarded either way).
+     */
+    void restoreNodeBatch(List<RestoreRequest> requests, TargetFence expectedFence, int lane,
+            LeaseGuard leaseGuard, long taskId, String channel) throws IOException {
+        leaseGuard.assertValid();
+        Map<Integer, List<RestoreRequest>> bySlot = new LinkedHashMap<>();
+        for (RestoreRequest request : requests)
+            bySlot.computeIfAbsent(RedisSlot.of(request.key()), ignored -> new ArrayList<>()).add(request);
+        try {
+            // Phase 1: watch every slot and read its fence back before writing anything.
+            for (Integer slot : bySlot.keySet()) {
+                byte[] fenceKey = ClusterSlotKeyspace.fence(taskId, channel, slot);
+                codec.writeCommandBuffered(bytes("WATCH"), fenceKey);
+                codec.writeCommandBuffered(bytes("GET"), fenceKey);
+            }
+            codec.flush();
+            for (Integer slot : bySlot.keySet()) {
+                expectOk(codec.read(), "WATCH");
+                assertFenceValue(codec.read(), expectedFence);
+            }
+            leaseGuard.assertValid();
+            // Phase 2: queue the restores and execute each slot's transaction.
+            for (List<RestoreRequest> slotRequests : bySlot.values()) {
+                codec.writeCommandBuffered(bytes("MULTI"));
+                for (RestoreRequest request : slotRequests) {
+                    long ttl = request.absoluteExpireMillis() < 0 ? 0 : request.absoluteExpireMillis();
+                    codec.writeCommandBuffered(bytes("RESTORE"), request.key(), bytes(Long.toString(ttl)),
+                            request.payload(), bytes("REPLACE"), bytes("ABSTTL"));
+                }
+                codec.writeCommandBuffered(bytes("EXEC"));
+            }
+            codec.flush();
+            for (List<RestoreRequest> slotRequests : bySlot.values()) {
+                expectOk(codec.read(), "MULTI");
+                for (int i = 0; i < slotRequests.size(); i++)
+                    expectQueued(codec.read());
+                RespValue result = codec.read();
+                if (result == RespValue.NullValue.INSTANCE)
+                    throw new FencingException("full restore batch lost the target fence");
+                assertTransaction(result, "full restore transaction");
+            }
         } catch (RuntimeException | IOException error) {
             unwatchQuietly();
             throw error;
@@ -477,7 +665,8 @@ public final class TargetCommandSession implements AutoCloseable {
         if (value == RespValue.NullValue.INSTANCE)
             return Optional.empty();
         if (!(value instanceof RespValue.Bulk bulk))
-            throw new RespProtocolException("fence GET returned an unexpected response");
+            throw new RespProtocolException("fence GET returned an unexpected response: "
+                    + value.getClass().getSimpleName());
         return Optional.of(TargetFence.decode(bulk.value()));
     }
 

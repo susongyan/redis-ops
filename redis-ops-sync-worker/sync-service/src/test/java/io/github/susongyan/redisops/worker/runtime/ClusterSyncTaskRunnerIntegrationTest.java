@@ -200,7 +200,7 @@ class ClusterSyncTaskRunnerIntegrationTest {
                 mock(SyncRunnerStateReporter.class), new SpoolKeyProvider(keyRing),
                 new RedisDataEndpointResolver(5000), new ObjectMapper(),
                 dataDirectory, 1024 * 1024, Duration.ofSeconds(5), 4, 32, 8,
-                4 * 1024 * 1024L, Duration.ofSeconds(2), Duration.ofMillis(200));
+                4 * 1024 * 1024L, 64 * 1024 * 1024L, Duration.ofSeconds(2), Duration.ofMillis(200));
     }
 
     private static WorkerRedisConnectionProfilePort clusterProfiles() {
@@ -212,7 +212,8 @@ class ClusterSyncTaskRunnerIntegrationTest {
         Instant now = Instant.now();
         return new WorkerSyncTask(id, "SYNC-CLUSTER-IT-" + id, null, sourceClusterId, targetClusterId,
                 "MIGRATION", "FULL_AND_INCREMENTAL", SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0,
-                "[\"*\"]", "[]", v3() ? "{\"policyVersion\":\"v3\",\"allowSafeSplit\":true}" : "{}", 50_000,
+                "[\"*\"]", "[]", v3() ? "{\"policyVersion\":\"v3\",\"allowSafeSplit\":true}" : "{}", "FLUSH",
+                50_000,
                 100_000_000, 64 * 1024 * 1024, 4, 8, "START", true,
                 "cluster integration", null, epoch, null, null, 0, now, now, null);
     }

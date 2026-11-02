@@ -43,13 +43,19 @@ public interface AssetMapper {
             """)
     void insertNode(RedisNode node);
 
-    @Insert("INSERT INTO discovery_run(cluster_id,status,started_at) VALUES(#{clusterId},'RUNNING',CURRENT_TIMESTAMP(3))")
+    @Insert("INSERT INTO discovery_run(cluster_id,status,started_at) VALUES(#{clusterId},'RUNNING',#{startedAt})")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     void startDiscovery(DiscoveryRow row);
-    @Update("UPDATE discovery_run SET status='SUCCEEDED',finished_at=CURRENT_TIMESTAMP(3),node_count=#{count} WHERE id=#{id}")
-    void completeDiscovery(@Param("id") long id, @Param("count") int count);
-    @Update("UPDATE discovery_run SET status='FAILED',finished_at=CURRENT_TIMESTAMP(3),error_message=#{error} WHERE id=#{id}")
-    void failDiscovery(@Param("id") long id, @Param("error") String error);
+    @Update("UPDATE discovery_run SET status='SUCCEEDED',finished_at=#{finishedAt},node_count=#{count} WHERE id=#{id}")
+    void completeDiscovery(@Param("id") long id, @Param("count") int count,
+            @Param("finishedAt") java.time.Instant finishedAt);
+    @Update("UPDATE discovery_run SET status='FAILED',finished_at=#{finishedAt},error_message=#{error} WHERE id=#{id}")
+    void failDiscovery(@Param("id") long id, @Param("error") String error,
+            @Param("finishedAt") java.time.Instant finishedAt);
+    @Update("UPDATE discovery_run SET heartbeat_at=#{now} WHERE id=#{id}")
+    void touchDiscovery(@Param("id") long id, @Param("now") java.time.Instant now);
+    @Select("SELECT id,cluster_id,status,started_at,finished_at,node_count,error_message FROM discovery_run WHERE status='RUNNING' AND COALESCE(heartbeat_at,started_at) < #{threshold}")
+    List<DiscoveryRun> findStaleDiscoveries(@Param("threshold") java.time.Instant threshold);
     @Select("SELECT id,cluster_id,status,started_at,finished_at,node_count,error_message FROM discovery_run WHERE cluster_id=#{clusterId} ORDER BY id DESC LIMIT 100")
     List<DiscoveryRun> findDiscoveries(long clusterId);
     @Select("SELECT id,cluster_id,status,started_at,finished_at,node_count,error_message FROM discovery_run WHERE id=#{id}")
@@ -90,5 +96,6 @@ public interface AssetMapper {
     class DiscoveryRow {
         public Long id;
         public long clusterId;
+        public java.time.Instant startedAt;
     }
 }

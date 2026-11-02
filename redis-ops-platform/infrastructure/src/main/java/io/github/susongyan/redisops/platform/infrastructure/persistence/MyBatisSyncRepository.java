@@ -34,6 +34,15 @@ public class MyBatisSyncRepository implements SyncRepository {
         event(x.id(), before.status(), x.status(), op, message);
         return true;
     }
+
+    @Override
+    public void requestSpoolCleanup(long taskId, String op) {
+        SyncTask task = mapper.findTask(taskId);
+        if (task == null || mapper.requestSpoolCleanup(taskId) != 1)
+            return;
+        event(taskId, task.status(), task.status(), op,
+                "spool cleanup requested; workers will delete their local spool directories");
+    }
     public List<SyncTaskEvent> findEvents(long id, int offset, int limit) {
         return mapper.findEvents(id, offset, limit);
     }
@@ -69,6 +78,18 @@ public class MyBatisSyncRepository implements SyncRepository {
     }
     public List<SyncWorkerAssignment> findWorkerAssignments(List<Long> taskIds) {
         return taskIds.isEmpty() ? List.of() : mapper.findWorkerAssignments(taskIds);
+    }
+    public List<SyncWorkerInstance> findWorkers(long staleSeconds) {
+        return mapper.findWorkers(staleSeconds);
+    }
+    public Optional<SyncWorkerInstance> findWorker(String instanceName, long staleSeconds) {
+        return Optional.ofNullable(mapper.findWorker(instanceName, staleSeconds));
+    }
+    public List<SyncWorkerRuntimeRow> findWorkerRuntimes() {
+        return mapper.findWorkerRuntimes();
+    }
+    public int purgeOfflineWorkers(long retentionSeconds) {
+        return mapper.purgeOfflineWorkers(retentionSeconds);
     }
     public boolean claimRuntime(long taskId, String runtimeId, String owner, long leaseSeconds) {
         mapper.ensureRuntime(taskId, runtimeId);

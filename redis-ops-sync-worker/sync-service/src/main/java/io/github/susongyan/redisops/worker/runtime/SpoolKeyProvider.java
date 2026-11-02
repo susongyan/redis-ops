@@ -13,14 +13,34 @@ import java.util.Base64;
 public class SpoolKeyProvider {
     private static final byte[] INFO = "redis-ops/sync-spool/v1".getBytes(StandardCharsets.US_ASCII);
     private final byte[] masterKey;
+    private final SpoolEncryption encryption;
 
     public SpoolKeyProvider(@Value("${redis-ops.credential.keys:}") String keyRing) {
-        this.masterKey = parseCurrentKey(keyRing);
+        this(keyRing, "NONE");
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    public SpoolKeyProvider(@Value("${redis-ops.credential.keys:}") String keyRing,
+            @Value("${sync.engine.spool-encryption:NONE}") String encryption) {
+        this.masterKey = parseCurrentKey(keyRing);
+        this.encryption = SpoolEncryption.parse(encryption);
+    }
+
+    public SpoolEncryption encryption() {
+        return encryption;
+    }
+
+    /**
+     * Per-task spool key. Always derived when the credential key ring is configured — even in NONE
+     * mode, so legacy AES_GCM spools from before a configuration switch stay readable on recovery.
+     * Returns null only when the ring is empty and the spool is written unencrypted.
+     */
     public byte[] taskKey(long taskId) {
-        if (masterKey == null)
+        if (masterKey == null) {
+            if (encryption == SpoolEncryption.NONE)
+                return null;
             throw new IllegalStateException("REDIS_OPS_CREDENTIAL_KEYS is required for encrypted sync spool");
+        }
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(masterKey, "HmacSHA256"));

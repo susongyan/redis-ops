@@ -12,3 +12,5 @@ GRANT INSERT, UPDATE ON redis_governance.sync_channel_checkpoint TO 'redis_ops_w
 GRANT INSERT ON redis_governance.sync_metric_snapshot TO 'redis_ops_worker'@'REPLACE_WORKER_HOST';
 -- Upsert 使用已有列计算 GREATEST/COALESCE，需要 SELECT。
 GRANT SELECT, INSERT, UPDATE ON redis_governance.sync_full_progress TO 'redis_ops_worker'@'REPLACE_WORKER_HOST';
+-- Worker 心跳注册与按 assignment 认领控制作业（V39）。
+GRANT SELECT, INSERT, UPDATE ON redis_governance.sync_worker_registry TO 'redis_ops_worker'@'REPLACE_WORKER_HOST';

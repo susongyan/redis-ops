@@ -6,6 +6,8 @@ public interface SyncRepository {
     List<SyncTask> findTasks(Long relationId);
     Optional<SyncTask> findLatestTask(long relationId);
     boolean updateTask(SyncTask task, long version, String operator, String message);
+    /** Flags the task so every sync worker deletes its local spool directory on the next sweep. */
+    void requestSpoolCleanup(long taskId, String operator);
     List<SyncTaskEvent> findEvents(long taskId, int offset, int limit);
     long countEvents(long taskId);
     long countActiveTasks(long relationId);
@@ -17,6 +19,10 @@ public interface SyncRepository {
     long countActiveSwitchovers(long relationId);
     Optional<SyncRuntime> findRuntime(long taskId);
     List<SyncWorkerAssignment> findWorkerAssignments(List<Long> taskIds);
+    List<SyncWorkerInstance> findWorkers(long staleSeconds);
+    Optional<SyncWorkerInstance> findWorker(String instanceName, long staleSeconds);
+    List<SyncWorkerRuntimeRow> findWorkerRuntimes();
+    int purgeOfflineWorkers(long retentionSeconds);
     boolean claimRuntime(long taskId, String runtimeId, String owner, long leaseSeconds);
     boolean renewRuntime(long taskId, String owner, long leaseSeconds, String phase, long spoolBytes);
     void releaseRuntime(long taskId, String owner, String phase, String error);

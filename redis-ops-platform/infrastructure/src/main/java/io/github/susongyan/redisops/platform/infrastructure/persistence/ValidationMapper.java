@@ -29,6 +29,11 @@ public interface ValidationMapper {
     ValidationTask findTask(long id);
     @Select("SELECT " + TASK_COLUMNS + " FROM validation_task WHERE deleted_at IS NULL ORDER BY id DESC")
     List<ValidationTask> findTasks();
+    @Select("SELECT " + TASK_COLUMNS + " FROM validation_task WHERE deleted_at IS NULL "
+            + "AND status IN ('CHECKING','RUNNING') "
+            + "AND ((source_cluster_id=#{source} AND target_cluster_id=#{target}) "
+            + "OR (source_cluster_id=#{target} AND target_cluster_id=#{source})) ORDER BY id DESC LIMIT 1")
+    ValidationTask findActiveTaskForPair(@Param("source") long source, @Param("target") long target);
     @Update("""
             UPDATE validation_task SET status=#{row.status},last_error=#{row.lastError},version=version+1
             WHERE id=#{row.id} AND version=#{version} AND deleted_at IS NULL
@@ -37,16 +42,30 @@ public interface ValidationMapper {
 
     @Insert("""
             INSERT INTO validation_run(task_id,run_no,status,planned_keys,scanned_keys,compared_keys,difference_count,degraded_count,
-              unverifiable_count,inconclusive_count,started_at,finished_at,summary_json)
+              unverifiable_count,inconclusive_count,started_at,finished_at,summary_json,heartbeat_at)
             VALUES(#{taskId},#{runNo},#{status},#{plannedKeys},#{scannedKeys},#{comparedKeys},#{differenceCount},#{degradedCount},
-              #{unverifiableCount},#{inconclusiveCount},#{startedAt},#{finishedAt},CAST(#{summaryJson} AS JSON))
+              #{unverifiableCount},#{inconclusiveCount},#{startedAt},#{finishedAt},CAST(#{summaryJson} AS JSON),#{heartbeat})
             ON DUPLICATE KEY UPDATE status=VALUES(status),planned_keys=VALUES(planned_keys),scanned_keys=VALUES(scanned_keys),compared_keys=VALUES(compared_keys),
               difference_count=VALUES(difference_count),degraded_count=VALUES(degraded_count),
               unverifiable_count=VALUES(unverifiable_count),inconclusive_count=VALUES(inconclusive_count),
-              finished_at=VALUES(finished_at),summary_json=VALUES(summary_json)
+              finished_at=VALUES(finished_at),summary_json=VALUES(summary_json),heartbeat_at=VALUES(heartbeat_at)
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id")
     void insertRun(RunRow row);
+    @Update("UPDATE validation_run SET heartbeat_at=#{now} WHERE id=#{id}")
+    void touchRun(@Param("id") long id, @Param("now") Instant now);
+    @Update("""
+            UPDATE validation_run SET status='FAILED',finished_at=#{finishedAt},
+              summary_json=CAST('{"interrupted":"executor lost"}' AS JSON)
+            WHERE id=#{id} AND status='RUNNING'
+            """)
+    int failRun(@Param("id") long id, @Param("finishedAt") Instant finishedAt);
+    @Select("SELECT " + TASK_COLUMNS + " FROM validation_task WHERE deleted_at IS NULL AND status='CHECKING' "
+            + "AND updated_at < DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL #{minutes} MINUTE)")
+    List<ValidationTask> findStaleQueuedTasks(@Param("minutes") int minutes);
+    @Select("SELECT " + RUN_COLUMNS + " FROM validation_run WHERE status='RUNNING' "
+            + "AND COALESCE(heartbeat_at,started_at) < #{threshold}")
+    List<ValidationRun> findStaleRuns(@Param("threshold") Instant threshold);
     @Select("SELECT " + RUN_COLUMNS + " FROM validation_run WHERE task_id=#{taskId} ORDER BY id DESC LIMIT 1")
     ValidationRun findLatestRun(long taskId);
     @Insert("""
@@ -104,7 +123,7 @@ public interface ValidationMapper {
         public long taskId, plannedKeys, scannedKeys, comparedKeys, differenceCount, degradedCount, unverifiableCount,
                 inconclusiveCount;
         public String runNo, status, summaryJson;
-        public Instant startedAt, finishedAt;
+        public Instant startedAt, finishedAt, heartbeat;
         static RunRow from(ValidationRun x) {
             RunRow r = new RunRow();
             r.id = x.id();

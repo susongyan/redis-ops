@@ -22,16 +22,36 @@ public class MyBatisValidationRepository implements ValidationRepository {
     public List<ValidationTask> findTasks() {
         return mapper.findTasks();
     }
+    public Optional<ValidationTask> findActiveTaskForPair(long sourceClusterId, long targetClusterId) {
+        return Optional.ofNullable(mapper.findActiveTaskForPair(sourceClusterId, targetClusterId));
+    }
     public boolean updateTask(ValidationTask task, long expectedVersion) {
         return mapper.updateTask(ValidationMapper.TaskRow.from(task), expectedVersion) == 1;
     }
     public ValidationRun saveRun(ValidationRun run) {
         var row = ValidationMapper.RunRow.from(run);
+        row.heartbeat = java.time.Instant.now();
         mapper.insertRun(row);
         return run.id() == null ? mapper.findLatestRun(run.taskId()) : run;
     }
     public Optional<ValidationRun> findLatestRun(long taskId) {
         return Optional.ofNullable(mapper.findLatestRun(taskId));
+    }
+    @Override
+    public void touchRun(long runId) {
+        mapper.touchRun(runId, java.time.Instant.now());
+    }
+    @Override
+    public boolean failRun(long runId) {
+        return mapper.failRun(runId, java.time.Instant.now()) > 0;
+    }
+    @Override
+    public List<ValidationRun> findStaleRuns(java.time.Instant threshold) {
+        return mapper.findStaleRuns(threshold);
+    }
+    @Override
+    public List<ValidationTask> findStaleQueuedTasks(int staleMinutes) {
+        return mapper.findStaleQueuedTasks(staleMinutes);
     }
     public PageResult<ValidationDifference> findDifferences(long runId, int page, int size) {
         int safePage = Math.max(1, page), safeSize = Math.max(1, Math.min(100, size));

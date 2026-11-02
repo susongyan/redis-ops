@@ -12,7 +12,7 @@ class DistributionJsonTest {
                 java.util.List
                         .of(new io.github.susongyan.redisops.platform.domain.distribution.DistributionCheckpoint.Cursor(
                                 shard, "42", false)),
-                0, 7, 20, java.util.List.of(), 200, 0);
+                0, 7, 20, java.util.List.of());
         assertEquals(state, json.decode(json.encode(state, 2097152), state.getClass()));
         var old = json.decode("{\"id\":\"primary\",\"endpoint\":\"primary:6379\"}", shard.getClass());
         assertEquals("master", old.role());
@@ -23,5 +23,15 @@ class DistributionJsonTest {
         var json = new DistributionJson(new ObjectMapper());
         assertThrows(IllegalArgumentException.class, () -> json.encode(java.util.List.of("x".repeat(1000)), 32));
         assertEquals("[1,2]", json.encode(java.util.List.of(1, 2), 32));
+    }
+    @Test
+    void checkpointWrittenBeforeTheDenominatorDecodesAsUnknown() {
+        var json = new DistributionJson(new ObjectMapper());
+        var decoded = json.decode("{\"fingerprint\":\"" + "a".repeat(64)
+                + "\",\"cursors\":[{\"shard\":{\"id\":\"primary\",\"endpoint\":\"primary:6379\"},\"cursor\":\"42\",\"completed\":false}],"
+                + "\"nextShard\":0,\"observed\":7,\"elapsedMillis\":20,\"entries\":[]}",
+                io.github.susongyan.redisops.platform.domain.distribution.DistributionCheckpoint.class);
+        assertEquals(7L, decoded.observed());
+        assertEquals(0L, decoded.estimatedTotal());
     }
 }

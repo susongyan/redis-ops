@@ -23,7 +23,8 @@ class SyncIdcValidationTest {
     private final ClusterRelationService relationService = new ClusterRelationService(relations, clusters, sync,
             audits);
     private final SyncService service = new SyncService(sync, relations, relationService, clusters,
-            mock(JobRepository.class), audits, new ObjectMapper());
+            mock(JobRepository.class), audits, new ObjectMapper(), 60, 21600,
+            mock(WorkerLoadPort.class));
 
     private void clusters(Long sourceIdc, Long targetIdc, ClusterStatus targetStatus) {
         when(clusters.findById(1)).thenReturn(Optional.of(cluster(1, sourceIdc, ClusterStatus.ACTIVE)));

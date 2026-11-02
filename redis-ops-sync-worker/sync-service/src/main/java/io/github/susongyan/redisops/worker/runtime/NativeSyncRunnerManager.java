@@ -212,8 +212,26 @@ public class NativeSyncRunnerManager {
                 managed.runner().revokeLease();
                 managed.runner().cancel();
             } finally {
-                remove(managed, "SHUTDOWN", null, false);
+                removeParked(managed);
             }
+        }
+    }
+
+    /**
+     * Shutdown removal parks the runtime instead of releasing it: the lease expires on its own
+     * within one lease period, after which any worker's recovery scan re-adopts the task.
+     * Releasing here (lease_owner to NULL) made the row invisible to
+     * findExpiredRecoverableTasks and stranded running tasks on every worker restart.
+     */
+    private void removeParked(ManagedRunner managed) {
+        if (!active.remove(managed.taskId(), managed))
+            return;
+        try {
+            managed.runner().revokeLease();
+            sync.parkRuntime(managed.taskId(), managed.owner(), "SHUTDOWN", null);
+        } finally {
+            closeQuietly(managed.runner());
+            capacity.release();
         }
     }
 

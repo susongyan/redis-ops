@@ -17,7 +17,8 @@ public interface WorkerSyncMapper {
     String TASK_COLUMNS = "id,task_no,relation_id,source_cluster_id,target_cluster_id,purpose,sync_mode,status,tool_type,"
             + "source_db,target_db,CAST(include_patterns_json AS CHAR) include_patterns_json,"
             + "CAST(exclude_patterns_json AS CHAR) exclude_patterns_json,"
-            + "CAST(command_policy_json AS CHAR) command_policy_json,rate_limit_ops,bandwidth_limit_bytes_per_second,"
+            + "CAST(command_policy_json AS CHAR) command_policy_json,reset_mode,rate_limit_ops,"
+            + "bandwidth_limit_bytes_per_second,"
             + "spool_limit_bytes,full_apply_concurrency,full_apply_pipeline_size,desired_action,write_fenced,"
             + "write_fence_note,blocked_reason,full_sync_epoch,last_rpo_seconds,last_error,version,created_at,"
             + "updated_at,finished_at";
@@ -25,9 +26,34 @@ public interface WorkerSyncMapper {
     @Select("SELECT " + TASK_COLUMNS + " FROM sync_task WHERE id=#{taskId}")
     WorkerSyncTask findTask(@Param("taskId") long taskId);
 
+    @Select("<script>SELECT " + TASK_COLUMNS + " FROM sync_task WHERE id IN "
+            + "<foreach item='id' collection='taskIds' open='(' separator=',' close=')'>#{id}</foreach></script>")
+    List<WorkerSyncTask> findTasks(@Param("taskIds") java.util.Collection<Long> taskIds);
+
+    // Spool retention sweep: terminal tasks whose last row update is older than the grace window,
+    // plus anything the platform explicitly flagged via spool_cleanup_requested_at (manual button).
+    // updated_at and the timestamp math both live on the DB clock, so the comparison stays correct
+    // regardless of the JDBC session timezone.
+    @Select("<script>SELECT id FROM sync_task WHERE id IN "
+            + "<foreach item='id' collection='ids' open='(' separator=',' close=')'>#{id}</foreach>"
+            + " AND ((status IN ('FINISHED','CANCELLED','FAILED')"
+            + " AND updated_at&lt;=DATE_SUB(CURRENT_TIMESTAMP(3),INTERVAL #{graceSeconds} SECOND))"
+            + " OR spool_cleanup_requested_at IS NOT NULL)</script>")
+    List<Long> findSpoolPurgeTaskIds(@Param("ids") java.util.Collection<Long> ids,
+            @Param("graceSeconds") long graceSeconds);
+
+    @Update("UPDATE sync_runtime SET spool_bytes=0 WHERE task_id=#{taskId}")
+    void zeroRuntimeSpoolBytes(@Param("taskId") long taskId);
+
     @Select("SELECT " + TASK_COLUMNS + " FROM sync_task capability_task WHERE id IN (SELECT task_id FROM sync_runtime "
             + "WHERE lease_owner IS NOT NULL AND lease_until<CURRENT_TIMESTAMP(3)) "
             + "AND status IN ('STARTING','FULL_SYNCING','INCR_SYNCING','CAUGHT_UP','RESUMING') "
+            // A pending full-restart must not be adopted here: recover() would resume the
+            // incremental channel, hit the same backlog shortfall, and flip the task back to
+            // BLOCKED before the routed SYNC_RESTART_FULL job can transition it. desired_action
+            // is NULL for many live tasks and must stay adoptable — bare <> would evaluate to
+            // NULL for those rows and silently drop them from the candidate set.
+            + "AND (desired_action IS NULL OR desired_action<>'RESTART_FULL') "
             + "AND " + WorkerPolicySql.SUPPORTED
             + " ORDER BY (SELECT lease_until FROM sync_runtime WHERE task_id=capability_task.id),id LIMIT #{limit}")
     List<WorkerSyncTask> findExpiredRecoverableTasks(@Param("limit") int limit);
@@ -72,6 +98,18 @@ public interface WorkerSyncMapper {
               heartbeat_at=CURRENT_TIMESTAMP(3) WHERE task_id=#{taskId} AND lease_owner=#{owner}
             """)
     int releaseRuntime(@Param("taskId") long taskId, @Param("owner") String owner,
+            @Param("phase") String phase, @Param("error") String error);
+
+    /**
+     * Graceful-shutdown counterpart of {@link #releaseRuntime}: keeps lease_owner/lease_until so
+     * the lease expires on its own and any worker's recovery scan can re-adopt the task. Clearing
+     * the owner at shutdown is what stranded running tasks after every worker restart.
+     */
+    @Update("""
+            UPDATE sync_runtime SET phase=#{phase},last_error=#{error},heartbeat_at=CURRENT_TIMESTAMP(3)
+              WHERE task_id=#{taskId} AND lease_owner=#{owner}
+            """)
+    int parkRuntime(@Param("taskId") long taskId, @Param("owner") String owner,
             @Param("phase") String phase, @Param("error") String error);
 
     @Update("""

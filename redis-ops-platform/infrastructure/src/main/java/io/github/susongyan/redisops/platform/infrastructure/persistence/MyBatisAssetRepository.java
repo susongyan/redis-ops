@@ -58,8 +58,9 @@ public class MyBatisAssetRepository implements AssetRepository {
     public DiscoveryRun startDiscovery(long clusterId) {
         AssetMapper.DiscoveryRow r = new AssetMapper.DiscoveryRow();
         r.clusterId = clusterId;
+        r.startedAt = java.time.Instant.now();
         mapper.startDiscovery(r);
-        return new DiscoveryRun(r.id, clusterId, "RUNNING", java.time.Instant.now(), null, null, null);
+        return new DiscoveryRun(r.id, clusterId, "RUNNING", r.startedAt, null, null, null);
     }
     @Override
     public Optional<DiscoveryRun> findDiscovery(long runId) {
@@ -77,11 +78,19 @@ public class MyBatisAssetRepository implements AssetRepository {
                 .map(n -> new RedisNode(null, clusterId, n.host(), n.port(), n.nodeId(), n.role(), n.masterNodeId(),
                         n.slotRanges() == null ? "[]" : n.slotRanges(), n.memoryBytes(), n.status()))
                 .forEach(mapper::insertNode);
-        mapper.completeDiscovery(runId, nodes.size());
+        mapper.completeDiscovery(runId, nodes.size(), java.time.Instant.now());
     }
     @Override
     public void failDiscovery(long runId, String errorMessage) {
-        mapper.failDiscovery(runId, errorMessage);
+        mapper.failDiscovery(runId, errorMessage, java.time.Instant.now());
+    }
+    @Override
+    public void touchDiscovery(long runId) {
+        mapper.touchDiscovery(runId, java.time.Instant.now());
+    }
+    @Override
+    public List<DiscoveryRun> findStaleDiscoveries(java.time.Instant threshold) {
+        return mapper.findStaleDiscoveries(threshold);
     }
     @Override
     public List<DiscoveryRun> findDiscoveries(long clusterId) {

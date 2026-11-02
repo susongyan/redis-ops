@@ -1,13 +1,23 @@
 spring:
   profiles:
     default: dev
-  # Keep Worker configuration in Spring Config Data for future Apollo use.
+  # Spring Config Data is the single configuration entry point. Apollo
+  # integrates through its Config Data adapter; see docs/apollo-integration.md.
   config:
-    import: optional:file:./config/
+    import:
+      # Local external config directory. Values here override the defaults below.
+      - optional:file:./config/
+      # Apollo is optional: when no Apollo meta server is configured the
+      # import is skipped and startup proceeds with file/env config only.
+      # The Apollo environment (DEV/FAT/UAT/PRO) is chosen by the `env`/ENV
+      # setting at launch; see docs/apollo-integration.md.
+      - optional:apollo://application
   application:
-    name: redis-ops-sync-worker
+    name: redis-ops-sync
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
+    # No session timezone override: the JDBC session follows the database
+    # server timezone; wall times are restamped to UTC on read.
+    url: ${DB_URL:jdbc:mysql://localhost:3306/redis_governance?useUnicode=true&characterEncoding=utf8}
     username: ${SYNC_DB_USERNAME:${DB_USERNAME:redis_governance}}
     password: ${SYNC_DB_PASSWORD:${DB_PASSWORD:redis_governance}}
   flyway:
@@ -17,17 +27,25 @@ spring:
 server:
   port: ${SYNC_SERVICE_PORT:8081}
 management:
-  endpoints.web.exposure.include: health,info,prometheus
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,workerload
 redis-ops:
   credential:
     # Supplied by external Spring configuration; no default key is permitted.
     keys: ${REDIS_OPS_CREDENTIAL_KEYS:}
 sync:
   engine:
-    enabled: ${SYNC_ENGINE_ENABLED:true}
+    enabled: true
     instance-id: ${SYNC_ENGINE_INSTANCE_ID:${HOSTNAME:local-sync}}
     # Empty detects this process's IP address; containers can explicitly report their deployment node.
     worker-ip: ${SYNC_ENGINE_WORKER_IP:}
+    # Registry heartbeat (platform reads liveness for task assignment) and how long another
+    # worker waits before treating a dead assignee's tasks as claimable. Keep the stale
+    # threshold aligned with the platform's sync.worker.heartbeat-stale-seconds.
+    heartbeat-interval-ms: ${SYNC_ENGINE_HEARTBEAT_INTERVAL_MS:15000}
+    assignment-stale-seconds: ${SYNC_ENGINE_ASSIGNMENT_STALE_SECONDS:60}
     poll-interval-ms: ${SYNC_ENGINE_POLL_INTERVAL_MS:500}
     lease-seconds: ${SYNC_ENGINE_LEASE_SECONDS:30}
     lease-renew-interval-ms: ${SYNC_ENGINE_LEASE_RENEW_INTERVAL_MS:5000}
@@ -36,6 +54,12 @@ sync:
     metric-interval-ms: ${SYNC_ENGINE_METRIC_INTERVAL_MS:1000}
     max-concurrent-tasks: ${SYNC_ENGINE_MAX_CONCURRENT_TASKS:2}
     data-dir: ${SYNC_ENGINE_DATA_DIR:./data/sync}
+    spool-encryption: ${SYNC_ENGINE_SPOOL_ENCRYPTION:NONE}
+    # Terminal tasks (FINISHED/CANCELLED/FAILED) keep their local spool directory for this long
+    # after the last task-row update (postmortem window) before every worker deletes its own copy;
+    # a platform-requested cleanup (spool_cleanup_requested_at) bypasses the window.
+    spool-retention-seconds: ${SYNC_ENGINE_SPOOL_RETENTION_SECONDS:86400}
+    spool-sweep-interval-ms: ${SYNC_ENGINE_SPOOL_SWEEP_INTERVAL_MS:30000}
     segment-bytes: ${SYNC_ENGINE_SEGMENT_BYTES:268435456}
     fsync-interval-ms: ${SYNC_ENGINE_FSYNC_INTERVAL_MS:200}
     connect-timeout-ms: ${SYNC_ENGINE_CONNECT_TIMEOUT_MS:10000}

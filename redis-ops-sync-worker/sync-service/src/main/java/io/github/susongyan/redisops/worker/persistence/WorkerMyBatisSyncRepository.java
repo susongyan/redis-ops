@@ -20,7 +20,7 @@ public class WorkerMyBatisSyncRepository implements WorkerSyncStatePort, WorkerS
         this.workerIp = resolveIp(workerIp);
     }
 
-    static String resolveIp(String configured) {
+    public static String resolveIp(String configured) {
         String host = configured == null ? "" : configured.trim();
         if (host.isEmpty()) {
             try {
@@ -57,6 +57,13 @@ public class WorkerMyBatisSyncRepository implements WorkerSyncStatePort, WorkerS
     }
 
     @Override
+    public java.util.List<WorkerSyncTask> findTasks(java.util.Collection<Long> taskIds) {
+        if (taskIds == null || taskIds.isEmpty())
+            return java.util.List.of();
+        return mapper.findTasks(taskIds);
+    }
+
+    @Override
     public Optional<WorkerSyncRuntime> runtime(long taskId) {
         return Optional.ofNullable(mapper.findRuntime(taskId));
     }
@@ -76,6 +83,11 @@ public class WorkerMyBatisSyncRepository implements WorkerSyncStatePort, WorkerS
     @Override
     public void releaseRuntime(long taskId, String owner, String phase, String error) {
         mapper.releaseRuntime(taskId, owner, phase, error);
+    }
+
+    @Override
+    public void parkRuntime(long taskId, String owner, String phase, String error) {
+        mapper.parkRuntime(taskId, owner, phase, error);
     }
 
     @Override
@@ -111,6 +123,16 @@ public class WorkerMyBatisSyncRepository implements WorkerSyncStatePort, WorkerS
     @Override
     public void appendTaskEvent(long taskId, String operator, String message) {
         appendEngineEvent(taskId, message, operator);
+    }
+
+    @Override
+    public List<Long> findSpoolPurgeTaskIds(java.util.Collection<Long> taskIds, long graceSeconds) {
+        return taskIds.isEmpty() ? List.of() : mapper.findSpoolPurgeTaskIds(taskIds, graceSeconds);
+    }
+
+    @Override
+    public void zeroRuntimeSpoolBytes(long taskId) {
+        mapper.zeroRuntimeSpoolBytes(taskId);
     }
 
     @Override

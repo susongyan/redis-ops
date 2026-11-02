@@ -43,7 +43,7 @@ class NativeSyncRecoveryWorkerTest {
         Instant now = Instant.now();
         return new WorkerSyncTask(id, "SYNC-" + id, null, 1, 2, "ADHOC", "FULL_AND_INCREMENTAL",
                 SyncContractStatus.INCR_SYNCING, "NATIVE_JAVA",
-                0, 0, "[\"*\"]", "[]", "{}", 50_000, 100_000_000, 1024 * 1024,
+                0, 0, "[\"*\"]", "[]", "{}", "PRESERVE", 50_000, 100_000_000, 1024 * 1024,
                 4, 100, null, true, "fenced", null, "epoch", 0L, null, 1, now, now, null);
     }
 }

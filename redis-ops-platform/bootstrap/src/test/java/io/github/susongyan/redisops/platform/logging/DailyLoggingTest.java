@@ -7,6 +7,7 @@ import ch.qos.logback.classic.joran.JoranConfigurator;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.rolling.RollingFileAppender;
 import ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -46,18 +47,32 @@ class DailyLoggingTest {
             var today = Instant.ofEpochMilli(clock.getCurrentTime()).atZone(ZoneId.systemDefault()).toLocalDate();
             var logger = context.getLogger("daily-test");
             logger.info("before-rollover");
-            var first = directory.resolve(today.toString()).resolve("platform.0.log");
+            var first = datedLog(directory, today.toString());
             assertTrue(Files.readString(first).contains("before-rollover"));
-            assertTrue(Files.readString(first).contains("[logging-test]"));
+            assertTrue(Files.readString(first).contains("logging-test"));
             clock.setCurrentTime(
                     today.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli() + 1000);
             logger.info("after-rollover");
-            var second = directory.resolve(today.plusDays(1).toString()).resolve("platform.0.log");
+            var second = datedLog(directory, today.plusDays(1).toString());
             assertTrue(Files.readString(second).contains("after-rollover"));
             assertFalse(Files.readString(first).contains("after-rollover"));
-            assertFalse(Files.exists(directory.resolve("platform.log")));
+            // No fixed active file at the log root: the active file always lives in a date directory.
+            try (var rootFiles = Files.list(directory)) {
+                assertTrue(rootFiles.filter(Files::isRegularFile).findAny().isEmpty());
+            }
         } finally {
             context.stop();
+        }
+    }
+
+    // The active file lives in the rolling date directory; there is no fixed
+    // file at the log root, so locate the log by its date directory.
+    private static Path datedLog(Path root, String date) throws IOException {
+        try (var files = Files.walk(root)) {
+            return files.filter(Files::isRegularFile)
+                    .filter(file -> date.equals(file.getParent().getFileName().toString()))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("no log file found under date directory " + date));
         }
     }
 }

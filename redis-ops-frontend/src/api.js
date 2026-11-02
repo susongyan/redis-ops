@@ -21,7 +21,9 @@ export async function request(path, options={}) {
   if(!response.ok){
     if(response.status===401 && path!=='/api/v1/auth/login') window.dispatchEvent(new Event('identity-expired'))
     if(body.code==='PASSWORD_CHANGE_REQUIRED') window.dispatchEvent(new Event('identity-expired'))
-    throw new Error(body.message||`请求失败 (${response.status})`)
+    const error=new Error(body.message||`请求失败 (${response.status})`)
+    error.code=body.code; error.status=response.status
+    throw error
   }
   return body.data
 }
@@ -32,7 +34,7 @@ export const api={
   createDistribution:data=>request('/api/v1/key-distributions/tasks',{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:JSON.stringify(data)}),
   distributionTasks:(page=1)=>request(`/api/v1/key-distributions/tasks?page=${page}&size=20`),
   distributionTask:id=>request(`/api/v1/key-distributions/tasks/${id}`),
-  distributionGroups:(id,page=1)=>request(`/api/v1/key-distributions/tasks/${id}/groups?page=${page}&size=20`),
+  distributionGroups:(id,page=1,size=20)=>request(`/api/v1/key-distributions/tasks/${id}/groups?page=${page}&size=${size}`),
   controlDistribution:(id,version,action)=>request(`/api/v1/key-distributions/tasks/${id}/${action}`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'}),
   clusters:(params={})=>request(`/api/v1/clusters?${new URLSearchParams(Object.entries(params).filter(([,v])=>v!==undefined&&v!==''))}`),
   cluster:id=>request(`/api/v1/clusters/${id}`,{cache:'no-store'}),
@@ -42,7 +44,6 @@ export const api={
   deleteCluster:(id,version)=>request(`/api/v1/clusters/${id}`,{method:'DELETE',headers:{'If-Match':String(version),'Idempotency-Key':idempotencyKey()}}),
   discover:id=>request(`/api/v1/clusters/${id}/discoveries`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:'{}'}),
   discoveries:id=>request(`/api/v1/clusters/${id}/discoveries`),
-  job:id=>request(`/api/v1/jobs/${id}`),
   applications:()=>request('/api/v1/applications'),
   application:id=>request(`/api/v1/applications/${id}`),
   createApplication:data=>request('/api/v1/applications',{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:JSON.stringify(data)}),
@@ -68,25 +69,30 @@ export const api={
   ,syncTasks:(relationId)=>request(`/api/v1/sync-tasks${relationId?`?relationId=${relationId}`:''}`)
   ,syncTask:id=>request(`/api/v1/sync-tasks/${id}`)
   ,syncTaskWorkers:ids=>request(`/api/v1/sync-task-workers?taskIds=${ids.join(',')}`)
+  ,syncWorkers:()=>request('/api/v1/sync-workers',{cache:'no-store'})
+  ,syncWorkerTasks:()=>request('/api/v1/sync-worker-tasks',{cache:'no-store'})
+  ,syncWorkerLoad:instance=>request(`/api/v1/sync-workers/${encodeURIComponent(instance)}/load`,{cache:'no-store'})
   ,syncTaskFullProgress:id=>request(`/api/v1/sync-tasks/${id}/full-progress`)
   ,syncCommandCapabilities:(targetMode,policy={})=>{
     const params=new URLSearchParams({
       targetMode,
       allowDestructiveCommands:String(!!policy.allowDestructiveCommands),
       allowSafeSplit:String(policy.allowSafeSplit!==false),
-      policyVersion:policy.policyVersion||'v1',
+      policyVersion:policy.policyVersion||'v3',
     })
     ;(policy.additionalBlockedCommands||[]).forEach(command=>params.append('additionalBlockedCommands',command))
     return request(`/api/v1/sync-command-capabilities?${params}`)
   }
   ,syncTaskEvents:(id,page=1,size=20)=>request(`/api/v1/sync-tasks/${id}/events?page=${page}&size=${size}`)
   ,createSyncTask:data=>request('/api/v1/sync-tasks',{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:JSON.stringify(data)})
-  ,precheckSyncTask:(id,version)=>request(`/api/v1/sync-tasks/${id}/prechecks`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
+  ,precheckSyncTask:(id,version,data)=>request(`/api/v1/sync-tasks/${id}/prechecks`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:JSON.stringify(data||{})})
   ,startSyncTask:(id,version,data)=>request(`/api/v1/sync-tasks/${id}/start`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:JSON.stringify(data)})
   ,pauseSyncTask:(id,version)=>request(`/api/v1/sync-tasks/${id}/pause`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
   ,resumeSyncTask:(id,version)=>request(`/api/v1/sync-tasks/${id}/resume`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
+  ,restartFullSyncTask:(id,version,data)=>request(`/api/v1/sync-tasks/${id}/restart-full`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:JSON.stringify(data)})
   ,finishSyncTask:(id,version,data)=>request(`/api/v1/sync-tasks/${id}/finish`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:JSON.stringify(data)})
   ,cancelSyncTask:(id,version)=>request(`/api/v1/sync-tasks/${id}/cancel`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
+  ,cleanupSyncTaskSpool:id=>request(`/api/v1/sync-tasks/${id}/spool-cleanup`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey()},body:'{}'})
   ,updateSyncLimits:(id,version,data)=>request(`/api/v1/sync-tasks/${id}/limits`,{method:'PUT',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:JSON.stringify(data)})
   ,confirmSwitchover:(id,version)=>request(`/api/v1/switchovers/${id}/confirm`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
   ,cancelSwitchover:(id,version)=>request(`/api/v1/switchovers/${id}/cancel`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
@@ -102,6 +108,7 @@ export const api={
   ,startRiskScanTask:(id,version)=>request(`/api/v1/risk-scan-tasks/${id}/start`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
   ,cancelRiskScanTask:(id,version)=>request(`/api/v1/risk-scan-tasks/${id}/cancel`,{method:'POST',headers:{'Idempotency-Key':idempotencyKey(),'If-Match':String(version)},body:'{}'})
   ,riskFindings:(id,page=1,size=20,riskType)=>request(`/api/v1/risk-scan-tasks/${id}/findings?${new URLSearchParams({page,size,...(riskType?{riskType}: {})})}`)
+  ,riskNoTtlGroups:(id,page=1,size=20)=>request(`/api/v1/risk-scan-tasks/${id}/no-ttl-groups?${new URLSearchParams({page,size})}`)
   ,collectorMetrics:()=>request('/api/v1/collector/metrics',{cache:'no-store'})
   ,collectorNodes:clusterId=>request(`/api/v1/collector/clusters/${clusterId}/nodes`)
   ,alertRules:()=>request('/api/v1/alert-rules')

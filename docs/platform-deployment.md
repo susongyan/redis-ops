@@ -61,7 +61,7 @@ chmod 600 conf/redis-ops.env
 使用外部覆盖文件时，至少修改以下配置：
 
 ```bash
-DB_URL='jdbc:mysql://mysql.example.internal:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC'
+DB_URL='jdbc:mysql://mysql.example.internal:3306/redis_governance?useUnicode=true&characterEncoding=utf8'
 DB_USERNAME='redis_ops_platform'
 DB_PASSWORD='...'
 REDIS_OPS_CREDENTIAL_KEYS='v1:...'

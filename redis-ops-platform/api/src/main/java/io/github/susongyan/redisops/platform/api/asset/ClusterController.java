@@ -90,8 +90,8 @@ public class ClusterController {
             @RequestHeader("Idempotency-Key") String key, HttpServletRequest request) {
         String operator = operator(request);
         return wrap(idempotency.execute(operator, key, "CLUSTER_DISCOVERY", id,
-                () -> assets.enqueueDiscovery(id, operator, key), s -> s.job().id().toString(),
-                jobId -> assets.getSubmission(Long.parseLong(jobId))), request);
+                () -> assets.submitDiscovery(id, operator, key), s -> s.discovery().id().toString(),
+                runId -> assets.getSubmission(Long.parseLong(runId))), request);
     }
     @GetMapping("/{id}/discoveries")
     public ApiResponse<List<DiscoveryRun>> discoveries(@PathVariable long id, HttpServletRequest request) {

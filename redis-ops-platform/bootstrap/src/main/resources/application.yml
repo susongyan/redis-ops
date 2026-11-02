@@ -1,15 +1,22 @@
 spring:
   profiles:
     default: dev
-  # Spring Config Data is the single configuration entry point. External
-  # Apollo additionally requires its Config Data adapter; see docs/apollo-integration.md.
+  # Spring Config Data is the single configuration entry point. Apollo
+  # integrates through its Config Data adapter; see docs/apollo-integration.md.
   config:
-    import: optional:file:./config/
+    import:
+      # Local external config directory. Values here override the defaults below.
+      - optional:file:./config/
+      # Apollo is optional: when no Apollo meta server is configured the
+      # import is skipped and startup proceeds with file/env config only.
+      - optional:apollo://application
 
   application:
     name: redis-ops-platform
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
+    # No session timezone override: the JDBC session follows the database
+    # server timezone; DATETIME columns store the session wall clock.
+    url: ${DB_URL:jdbc:mysql://localhost:3306/redis_governance?useUnicode=true&characterEncoding=utf8}
     username: ${DB_USERNAME:redis_governance}
     password: ${DB_PASSWORD:redis_governance}
   flyway:
@@ -47,18 +54,13 @@ collector:
 platform:
   jobs:
     # Platform jobs and credential re-encryption; not the independent Sync Worker.
-    enabled: ${PLATFORM_JOBS_ENABLED:true}
+    enabled: true
     instance-id: ${PLATFORM_JOBS_INSTANCE_ID:${HOSTNAME:local-platform}}
     discovery:
       poll-interval-ms: ${PLATFORM_JOBS_DISCOVERY_POLL_INTERVAL_MS:1000}
-      poll-jitter-ms: ${PLATFORM_JOBS_DISCOVERY_POLL_JITTER_MS:500}
     risk-scan:
       poll-interval-ms: 1000
     validation:
-      poll-interval-ms: 1000
-    ttl-governance:
-      poll-interval-ms: 1000
-    cleanup-governance:
       poll-interval-ms: 1000
 redis-ops:
   analysis:

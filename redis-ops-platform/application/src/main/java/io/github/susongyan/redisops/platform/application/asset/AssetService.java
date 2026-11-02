@@ -1,33 +1,39 @@
 package io.github.susongyan.redisops.platform.application.asset;
+import io.github.susongyan.redisops.platform.application.LocalJobRunner;
 import io.github.susongyan.redisops.platform.application.audit.AuditDetails;
 import java.util.Map;
 
 import io.github.susongyan.redisops.platform.common.BusinessException;
 import io.github.susongyan.redisops.platform.domain.asset.*;
 import io.github.susongyan.redisops.platform.domain.audit.AuditRepository;
-import io.github.susongyan.redisops.platform.domain.job.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
 public class AssetService {
+    private static final Logger log = LoggerFactory.getLogger(AssetService.class);
+    private static final Duration STALE_RUN = Duration.ofMinutes(10);
     private final AssetRepository assets;
     private final ClusterRepository clusters;
     private final TopologyDiscoveryPort discovery;
     private final AuditRepository audits;
-    private final JobRepository jobs;
+    private final LocalJobRunner runner;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public AssetService(AssetRepository assets, ClusterRepository clusters,
-            TopologyDiscoveryPort discovery, AuditRepository audits, JobRepository jobs) {
+            TopologyDiscoveryPort discovery, AuditRepository audits, LocalJobRunner runner) {
         this.assets = assets;
         this.clusters = clusters;
         this.discovery = discovery;
         this.audits = audits;
-        this.jobs = jobs;
+        this.runner = runner;
     }
 
     @Transactional
@@ -128,23 +134,23 @@ public class AssetService {
         return assets.findDiscoveries(clusterId);
     }
 
-    @Transactional
-    public DiscoverySubmission enqueueDiscovery(long clusterId, String operator, String idempotencyKey) {
+    /** Discovery runs on this instance; the returned run is what callers poll for progress. */
+    public DiscoverySubmission submitDiscovery(long clusterId, String operator, String idempotencyKey) {
         clusters.findById(clusterId).orElseThrow(() -> BusinessException.notFound("cluster", clusterId));
+        runner.checkCapacity("CLUSTER_DISCOVERY");
         DiscoveryRun run = assets.startDiscovery(clusterId);
-        AsyncJob job = jobs.enqueue("CLUSTER_DISCOVERY", run.id(), "{\"clusterId\":" + clusterId + "}",
-                "cluster-discovery:" + clusterId + ":" + idempotencyKey);
-        audits.append(operator, "CLUSTER_DISCOVERY_ENQUEUE", "REDIS_CLUSTER", Long.toString(clusterId), "SUCCESS");
-        return new DiscoverySubmission(run, job);
+        runner.submit("CLUSTER_DISCOVERY", () -> executeDiscovery(run.id(), clusterId, operator));
+        audits.append(operator, "CLUSTER_DISCOVERY_SUBMIT", "REDIS_CLUSTER", Long.toString(clusterId), "SUCCESS");
+        return new DiscoverySubmission(run);
     }
-    public DiscoverySubmission getSubmission(long jobId) {
-        AsyncJob job = jobs.findById(jobId).orElseThrow(() -> BusinessException.notFound("job", jobId));
-        DiscoveryRun run = assets.findDiscovery(job.bizId())
-                .orElseThrow(() -> BusinessException.notFound("discovery", job.bizId()));
-        return new DiscoverySubmission(run, job);
+    public DiscoverySubmission getSubmission(long runId) {
+        DiscoveryRun run = assets.findDiscovery(runId)
+                .orElseThrow(() -> BusinessException.notFound("discovery", runId));
+        return new DiscoverySubmission(run);
     }
     public void executeDiscovery(long runId, long clusterId, String operator) {
         assets.restartDiscovery(runId);
+        assets.touchDiscovery(runId);
         RedisCluster cluster = clusters.findById(clusterId)
                 .orElseThrow(() -> BusinessException.notFound("cluster", clusterId));
         try {
@@ -154,12 +160,18 @@ public class AssetService {
         } catch (RuntimeException exception) {
             assets.failDiscovery(runId, abbreviate(exception.getMessage()));
             audits.append(operator, "CLUSTER_DISCOVER", "REDIS_CLUSTER", Long.toString(clusterId), "FAILED");
-            throw new BusinessException("DISCOVERY_FAILED",
-                    "topology discovery failed: " + abbreviate(exception.getMessage()));
+            log.warn("discovery run {} for cluster {} failed", runId, clusterId, exception);
+        }
+    }
+    /** Fails discovery runs whose heartbeat went stale — their executing instance died. */
+    public void recoverInterrupted() {
+        for (DiscoveryRun run : assets.findStaleDiscoveries(Instant.now().minus(STALE_RUN))) {
+            assets.failDiscovery(run.id(), "interrupted: executor lost");
+            log.warn("recovered stale discovery run {} of cluster {}", run.id(), run.clusterId());
         }
     }
 
-    public record DiscoverySubmission(DiscoveryRun discovery, AsyncJob job) {
+    public record DiscoverySubmission(DiscoveryRun discovery) {
     }
     private static BusinessException concurrent(String resource) {
         return new BusinessException("CONCURRENT_MODIFICATION", resource + " was modified, reload and retry");

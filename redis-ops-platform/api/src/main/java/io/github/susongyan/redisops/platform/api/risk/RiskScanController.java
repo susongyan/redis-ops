@@ -24,7 +24,8 @@ public class RiskScanController {
         String o = op(r);
         return wrap(i.execute(
                 o, k, "RISK_SCAN_CREATE", b, () -> s.create(b.clusterId, b.databaseNo, b.includePattern,
-                        b.largeKeyThresholdBytes, b.scanRatePerSecond, b.maxFindings),
+                        b.largeKeyThresholdBytes, b.scanRatePerSecond, b.maxFindings, b.groupDelimiter,
+                        b.groupSegments),
                 x -> x.id().toString(), x -> s.get(Long.parseLong(x))), r);
     }
     @GetMapping("/api/v1/risk-scan-tasks")
@@ -48,14 +49,21 @@ public class RiskScanController {
                 x -> x.id().toString(), x -> s.get(Long.parseLong(x))), r);
     }
     @GetMapping("/api/v1/risk-scan-tasks/{id}/findings")
-    ApiResponse<PageResult<RiskFinding>> findings(@PathVariable long id, @RequestParam(defaultValue = "1") int p,
+    ApiResponse<PageResult<RiskFinding>> findings(@PathVariable long id, @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size, @RequestParam(defaultValue = "") String riskType,
             HttpServletRequest r) {
-        return wrap(s.findings(id, p, size, riskType), r);
+        return wrap(s.findings(id, page, size, riskType), r);
+    }
+    @GetMapping("/api/v1/risk-scan-tasks/{id}/no-ttl-groups")
+    ApiResponse<PageResult<RiskFindingGroup>> noTtlGroups(@PathVariable long id,
+            @RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int size,
+            HttpServletRequest r) {
+        return wrap(s.noTtlGroups(id, page, size), r);
     }
     record Create(@Positive long clusterId, @Min(0) Integer databaseNo, String includePattern,
             @Min(1) Long largeKeyThresholdBytes, @Min(1) @Max(100000) Integer scanRatePerSecond,
-            @Min(1) @Max(100000) Integer maxFindings) {
+            @Min(1) @Max(100000) Integer maxFindings, @Size(min = 1, max = 8) String groupDelimiter,
+            @Min(1) @Max(8) Integer groupSegments) {
     }
     record Detail(RiskScanTask task, RiskScanRun latestRun, List<RiskScanCheckpoint> checkpoints,
             RiskScanService.RiskSummary summary) {

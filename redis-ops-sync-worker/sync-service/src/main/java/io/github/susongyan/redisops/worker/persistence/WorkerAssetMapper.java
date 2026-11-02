@@ -31,7 +31,8 @@ interface WorkerAssetMapper {
     WorkerCredentialRow findCredential(@Param("clusterId") long clusterId);
 
     class WorkerCredentialRow {
-        public java.util.UUID secretUuid;
+        /** Plain string: MyBatis has no UUID TypeHandler, a UUID field would stay silently null. */
+        public String secretUuid;
         public byte[] encryptedSecret;
         public String keyId, username, secretStatus;
     }

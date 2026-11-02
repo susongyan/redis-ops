@@ -53,9 +53,10 @@ class ClusterTransactionExecutionTest {
             when(task.commandPolicyJson()).thenReturn("{\"policyVersion\":\"v3\",\"allowSafeSplit\":true}");
             var keys = mock(SpoolKeyProvider.class);
             when(keys.taskKey(17)).thenReturn(new byte[32]);
+            when(keys.encryption()).thenReturn(SpoolEncryption.AES_GCM);
             var runner = new ClusterSyncTaskRunner(task, false, null, mock(WorkerSyncExecutionPort.class),
                     mock(SyncRunnerStateReporter.class), keys, null, new ObjectMapper(), directory, 1024,
-                    Duration.ofSeconds(1), 1, 1, 1, 1024, Duration.ZERO, Duration.ofSeconds(1));
+                    Duration.ofSeconds(1), 1, 1, 1, 1024, 64 * 1024 * 1024L, Duration.ZERO, Duration.ofSeconds(1));
             var profile = new WorkerRedisConnectionProfile(1, WorkerClusterMode.CLUSTER, List.of("127.0.0.1:6379"),
                     null, null, "NONE", null);
             ReflectionTestUtils.setField(runner, "sourceProfile", profile);
@@ -70,7 +71,8 @@ class ClusterTransactionExecutionTest {
             Class<?> channelClass = Class.forName(ClusterSyncTaskRunner.class.getName() + "$Channel");
             var constructor = channelClass.getDeclaredConstructors()[0];
             constructor.setAccessible(true);
-            channel = constructor.newInstance(runner, spec, new KeyFilter(List.of(), List.of()), 1024L * 1024, 1, 1);
+            channel = constructor.newInstance(runner, spec, new KeyFilter(List.of(), List.of()), 1024L * 1024, 1, 1,
+                    64 * 1024 * 1024L);
             ReflectionTestUtils.setField(channel, "routedTarget", target);
             ReflectionTestUtils.setField(channel, "spool",
                     mock(EncryptedSpool.class, withSettings().mockMaker("mock-maker-inline")));

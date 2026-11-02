@@ -89,27 +89,50 @@ public class JdbcDistributionRepository implements DistributionRepository {
         return get(id);
     }
     @Transactional
+    public ClaimedTask createAndClaim(DistributionSpec spec, String owner) {
+        var task = create(spec);
+        return claimTask(task.id(), owner)
+                .map(lease -> new ClaimedTask(get(task.id()), lease))
+                .orElseThrow(() -> new BusinessException("DISTRIBUTION_CLUSTER_BUSY",
+                        "another scan holds this cluster"));
+    }
+    @Transactional
     public Optional<Lease> claim(String owner) {
         var tasks = jdbc.query("SELECT " + COLUMNS
                 + " FROM key_distribution_task WHERE deleted_at IS NULL AND status IN ('QUEUED','RUNNING') AND NOT EXISTS (SELECT 1 FROM key_distribution_runtime r WHERE r.cluster_id=key_distribution_task.cluster_id AND r.owner IS NOT NULL AND r.lease_until>=CURRENT_TIMESTAMP(3)) ORDER BY id LIMIT 32",
                 this::row);
         for (var task : tasks) {
-            jdbc.update("INSERT IGNORE INTO key_distribution_runtime(cluster_id) VALUES(?)", task.clusterId());
-            if (jdbc.update(
-                    "UPDATE key_distribution_runtime SET task_id=?,owner=?,generation=generation+1,lease_until=DATE_ADD(CURRENT_TIMESTAMP(3),INTERVAL 30 SECOND) WHERE cluster_id=? AND (owner IS NULL OR lease_until<CURRENT_TIMESTAMP(3))",
-                    task.id(), owner, task.clusterId()) != 1)
-                continue;
-            if (jdbc.update(
-                    "UPDATE key_distribution_task SET status='RUNNING',version=version+1 WHERE id=? AND deleted_at IS NULL AND status IN ('QUEUED','RUNNING')",
-                    task.id()) != 1) {
-                jdbc.update(
-                        "UPDATE key_distribution_runtime SET owner=NULL,task_id=NULL,lease_until=NULL WHERE cluster_id=? AND owner=?",
-                        task.clusterId(), owner);
-                continue;
-            }
-            return Optional.of(new Lease(task.clusterId(), task.id(), owner, generation(task.clusterId())));
+            var lease = grab(task, owner);
+            if (lease.isPresent())
+                return lease;
         }
         return Optional.empty();
+    }
+    @Transactional
+    public Optional<Lease> claimTask(long id, String owner) {
+        var tasks = jdbc.query(
+                "SELECT " + COLUMNS
+                        + " FROM key_distribution_task WHERE id=? AND deleted_at IS NULL AND status IN ('QUEUED','RUNNING')",
+                this::row, id);
+        for (var task : tasks)
+            return grab(task, owner);
+        return Optional.empty();
+    }
+    private Optional<Lease> grab(DistributionTask task, String owner) {
+        jdbc.update("INSERT IGNORE INTO key_distribution_runtime(cluster_id) VALUES(?)", task.clusterId());
+        if (jdbc.update(
+                "UPDATE key_distribution_runtime SET task_id=?,owner=?,generation=generation+1,lease_until=DATE_ADD(CURRENT_TIMESTAMP(3),INTERVAL 30 SECOND) WHERE cluster_id=? AND (owner IS NULL OR lease_until<CURRENT_TIMESTAMP(3))",
+                task.id(), owner, task.clusterId()) != 1)
+            return Optional.empty();
+        if (jdbc.update(
+                "UPDATE key_distribution_task SET status='RUNNING',version=version+1 WHERE id=? AND deleted_at IS NULL AND status IN ('QUEUED','RUNNING')",
+                task.id()) != 1) {
+            jdbc.update(
+                    "UPDATE key_distribution_runtime SET owner=NULL,task_id=NULL,lease_until=NULL WHERE cluster_id=? AND owner=?",
+                    task.clusterId(), owner);
+            return Optional.empty();
+        }
+        return Optional.of(new Lease(task.clusterId(), task.id(), owner, generation(task.clusterId())));
     }
     private long generation(long cluster) {
         return jdbc.queryForObject("SELECT generation FROM key_distribution_runtime WHERE cluster_id=?", Long.class,
@@ -134,6 +157,17 @@ public class JdbcDistributionRepository implements DistributionRepository {
                 "UPDATE key_distribution_runtime SET owner=NULL,task_id=NULL,lease_until=NULL WHERE cluster_id=? AND owner=? AND generation=?",
                 l.clusterId(), l.owner(), l.generation());
     }
+    @Transactional
+    public void requeue(Lease l, String reason) {
+        jdbc.update(
+                "UPDATE key_distribution_task SET status='QUEUED',reason=?,version=version+1 WHERE id=? AND status='RUNNING' AND deleted_at IS NULL",
+                reason, l.taskId());
+        // keep the lease held briefly as a cooldown: the claim sweep on an instance that
+        // cannot reach this cluster would otherwise grab the task again on its next poll
+        jdbc.update(
+                "UPDATE key_distribution_runtime SET lease_until=DATE_ADD(CURRENT_TIMESTAMP(3),INTERVAL 60 SECOND) WHERE cluster_id=? AND owner=? AND generation=?",
+                l.clusterId(), l.owner(), l.generation());
+    }
     public Optional<DistributionCheckpoint> checkpoint(long taskId) {
         String state = jdbc.queryForObject("SELECT checkpoint_json FROM key_distribution_task WHERE id=?", String.class,
                 taskId);
@@ -147,8 +181,13 @@ public class JdbcDistributionRepository implements DistributionRepository {
         String state = c == null ? null : json.encode(c, 2 * 1024 * 1024);
         if (!renew(l))
             return false;
+        // RUNNING progress checkpoints carry no user-visible transition: leaving version alone
+        // keeps If-Match stable while the scan advances, so pause/cancel/resume don't race a
+        // target that moves every second (and the driver won't bind a ? inside IF/CASE anyway)
         int updated = jdbc.update(
-                "UPDATE key_distribution_task SET status=?,reason=?,checkpoint_json=COALESCE(?,checkpoint_json),observed=COALESCE(?,observed),completed_shards=COALESCE(?,completed_shards),total_shards=COALESCE(?,total_shards),elapsed_millis=COALESCE(?,elapsed_millis),version=version+1 WHERE id=? AND status='RUNNING'",
+                "UPDATE key_distribution_task SET status=?,reason=?,checkpoint_json=COALESCE(?,checkpoint_json),observed=COALESCE(?,observed),completed_shards=COALESCE(?,completed_shards),total_shards=COALESCE(?,total_shards),elapsed_millis=COALESCE(?,elapsed_millis)"
+                        + ("RUNNING".equals(status) ? "" : ",version=version+1")
+                        + " WHERE id=? AND status='RUNNING'",
                 status, reason, state,
                 c == null ? null : c.observed(),
                 c == null ? null : c.cursors().stream().filter(DistributionCheckpoint.Cursor::completed).count(),

@@ -32,9 +32,12 @@ public class JdbcExecutionRecordRepository implements ExecutionRecordRepository 
             executing = runtimes.stream().anyMatch(
                     r -> r.get("task_id") instanceof Number task && task.longValue() == id && r.get("owner") != null);
         } else if (type == Type.RISK_SCAN || type == Type.VALIDATION) {
+            // validation/risk moved off async_job onto the LocalJobRunner; an active run row is the
+            // live-execution signal and also covers the task-just-turned-terminal wrap-up race.
             executing = !jdbc.queryForList(
-                    "SELECT id FROM async_job WHERE job_type=? AND biz_id=? AND status IN ('PENDING','RETRY','RUNNING') FOR UPDATE",
-                    type == Type.RISK_SCAN ? "RISK_SCAN" : "DATA_VALIDATION", id).isEmpty();
+                    "SELECT id FROM " + (type == Type.RISK_SCAN ? "scan_run" : "validation_run")
+                            + " WHERE task_id=? AND status='RUNNING' FOR UPDATE",
+                    id).isEmpty();
         }
         String linked = type == Type.VALIDATION ? "sync_task_id IS NOT NULL" : "FALSE";
         final boolean active = executing;
@@ -48,5 +51,35 @@ public class JdbcExecutionRecordRepository implements ExecutionRecordRepository 
         return jdbc.update("UPDATE " + table(type)
                 + " SET deleted_at=CURRENT_TIMESTAMP(3),version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL",
                 id, version) == 1;
+    }
+    @Override
+    public int purgeDetails(Type type, long id) {
+        // Run-owned children first, then the runs themselves, then task-owned rows — all inside the
+        // caller's delete transaction.
+        int purged = 0;
+        switch (type) {
+            case RISK_SCAN -> {
+                purged += deleteByRun("risk_finding", "scan_run", id);
+                purged += deleteByRun("risk_finding_group", "scan_run", id);
+                purged += deleteByRun("scan_shard_checkpoint", "scan_run", id);
+                purged += jdbc.update("DELETE FROM scan_run WHERE task_id=?", id);
+            }
+            case VALIDATION -> {
+                purged += deleteByRun("validation_difference", "validation_run", id);
+                purged += deleteByRun("validation_shard_checkpoint", "validation_run", id);
+                purged += jdbc.update("DELETE FROM validation_run WHERE task_id=?", id);
+            }
+            case KEY_DISTRIBUTION -> {
+                purged += jdbc.update("DELETE FROM key_distribution_group WHERE task_id=?", id);
+                purged += jdbc.update("DELETE FROM key_distribution_runtime WHERE task_id=?", id);
+            }
+            case ANALYSIS -> {
+            }
+        }
+        return purged;
+    }
+    private int deleteByRun(String childTable, String runTable, long taskId) {
+        return jdbc.update("DELETE FROM " + childTable + " WHERE run_id IN (SELECT id FROM " + runTable
+                + " WHERE task_id=?)", taskId);
     }
 }

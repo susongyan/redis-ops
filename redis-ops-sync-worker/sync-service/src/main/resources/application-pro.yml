@@ -3,7 +3,7 @@ spring:
     activate:
       on-profile: pro
   datasource:
-    url: jdbc:mysql://mysql-pro:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC
+    url: jdbc:mysql://mysql-pro:3306/redis_governance?useUnicode=true&characterEncoding=utf8
     username: redis_governance
     password: redis_governance
 redis-ops:

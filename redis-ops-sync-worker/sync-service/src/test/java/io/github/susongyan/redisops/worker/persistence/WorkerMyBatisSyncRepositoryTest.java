@@ -116,7 +116,7 @@ class WorkerMyBatisSyncRepositoryTest {
     private static WorkerSyncTask task(SyncContractStatus status, long version) {
         Instant now = Instant.now();
         return new WorkerSyncTask(7L, "SYNC-7", null, 1, 2, "MIGRATION", "FULL_AND_INCREMENTAL", status,
-                "NATIVE_JAVA", 0, 0, "[]", "[]", "{}", 0, 0, 1, 1, 1, "START", true, null, null, null,
+                "NATIVE_JAVA", 0, 0, "[]", "[]", "{}", "PRESERVE", 0, 0, 1, 1, 1, "START", true, null, null, null,
                 null, null, version, now, now, null);
     }
 }

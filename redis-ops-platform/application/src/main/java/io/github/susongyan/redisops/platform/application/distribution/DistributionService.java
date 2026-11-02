@@ -3,17 +3,22 @@ package io.github.susongyan.redisops.platform.application.distribution;
 import io.github.susongyan.redisops.platform.common.*;
 import io.github.susongyan.redisops.platform.domain.asset.*;
 import io.github.susongyan.redisops.platform.domain.distribution.*;
+import io.github.susongyan.redisops.platform.domain.scan.ReadOnlyScanPort;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.nio.*;
 import java.nio.charset.*;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.DisposableBean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class DistributionService implements DisposableBean {
+    private static final Logger log = LoggerFactory.getLogger(DistributionService.class);
     private final DistributionRepository repository;
     private final DistributionScanPort redis;
     private final RedisConnectionProfileProvider profiles;
@@ -21,7 +26,10 @@ public class DistributionService implements DisposableBean {
     private final ExecutorService executor;
     private final ScheduledExecutorService heartbeats = Executors.newScheduledThreadPool(1,
             r -> daemon(r, "distribution-heartbeat"));
-    private final int maxDuration, maxScanCount, maxGroups;
+    // checkpoint persistence lives off the scan thread: a slow DB link must not stall scanning
+    private final ExecutorService checkpoints = Executors.newSingleThreadExecutor(
+            r -> daemon(r, "distribution-checkpoint"));
+    private final int maxDuration, maxScanCount, maxGroups, shardParallelism;
     private int minScanIntervalMillis = 10;
     @Value("${distribution.min-scan-interval-ms:10}")
     public void setMinScanIntervalMillis(int value) {
@@ -36,10 +44,11 @@ public class DistributionService implements DisposableBean {
             @Value("${distribution.concurrent-tasks:1}") int concurrent,
             @Value("${distribution.max-duration-seconds:21600}") int maxDuration,
             @Value("${distribution.max-scan-count:5000}") int maxScanCount,
-            @Value("${distribution.max-groups:1000}") int maxGroups) {
+            @Value("${distribution.max-groups:1000}") int maxGroups,
+            @Value("${distribution.max-shard-parallelism:4}") int shardParallelism) {
         if (concurrent < 1 || concurrent > 2 || maxDuration < 1 || maxDuration > 21600 || maxScanCount < 1
                 || maxScanCount > 5000
-                || maxGroups < 1 || maxGroups > 1000)
+                || maxGroups < 1 || maxGroups > 1000 || shardParallelism < 1 || shardParallelism > 32)
             throw new IllegalArgumentException("INVALID_DISTRIBUTION_CONFIGURATION");
         this.repository = repository;
         this.redis = redis;
@@ -47,6 +56,7 @@ public class DistributionService implements DisposableBean {
         this.maxDuration = maxDuration;
         this.maxScanCount = maxScanCount;
         this.maxGroups = maxGroups;
+        this.shardParallelism = shardParallelism;
         slots = new Semaphore(concurrent);
         executor = Executors.newFixedThreadPool(concurrent, r -> daemon(r, "distribution-scan"));
     }
@@ -62,7 +72,27 @@ public class DistributionService implements DisposableBean {
                 || spec.scanIntervalMillis() < minScanIntervalMillis)
             throw new IllegalArgumentException("DISTRIBUTION_DEPLOYMENT_BUDGET_EXCEEDED");
         validateCluster(spec.clusterId(), spec.database());
-        return repository.create(spec);
+        // create-then-execute like every other scan job: the instance that received the request
+        // claims the cluster lease in the same transaction as the insert, so a foreign instance's
+        // sweep never wins the first claim of a task for a cluster it cannot reach
+        if (closing || !slots.tryAcquire())
+            throw new BusinessException("DISTRIBUTION_BUSY",
+                    "this instance already runs the maximum number of scans");
+        DistributionRepository.ClaimedTask created;
+        try {
+            created = repository.createAndClaim(spec, UUID.randomUUID().toString());
+        } catch (RuntimeException e) {
+            slots.release();
+            throw e;
+        }
+        executor.execute(() -> {
+            try {
+                execute(created.lease(), created.task());
+            } finally {
+                slots.release();
+            }
+        });
+        return created.task();
     }
     private void validateCluster(long id, int db) {
         if (id < 1 || db < 0 || db > 15)
@@ -74,8 +104,10 @@ public class DistributionService implements DisposableBean {
     }
     public DistributionTask get(long id) {
         var task = repository.get(id);
-        return task.withScanNodes(repository.checkpoint(id).map(c -> c.cursors().stream()
-                .map(DistributionCheckpoint.Cursor::shard).toList()).orElse(List.of()));
+        var checkpoint = repository.checkpoint(id);
+        return task.withScanNodes(checkpoint.map(c -> c.cursors().stream()
+                .map(DistributionCheckpoint.Cursor::shard).toList()).orElse(List.of()))
+                .withEstimatedTotal(checkpoint.map(DistributionCheckpoint::estimatedTotal).orElse(0L));
     }
     private void page(int page, int size) {
         if (page < 1 || page > 1_000_000 || size < 1 || size > 100)
@@ -92,12 +124,31 @@ public class DistributionService implements DisposableBean {
     }
     public DistributionTask control(long id, long version, String action) {
         var result = repository.control(id, version, action);
-        if (!"resume".equals(action)) {
+        if ("resume".equals(action))
+            startLocally(id);
+        else {
             Thread thread = running.get(id);
             if (thread != null)
                 thread.interrupt();
         }
         return result;
+    }
+    /** Runs a queued task on this instance; the sweep takes over if it cannot start here. */
+    private void startLocally(long taskId) {
+        if (closing || !slots.tryAcquire())
+            return;
+        var lease = repository.claimTask(taskId, UUID.randomUUID().toString());
+        if (lease.isEmpty()) {
+            slots.release();
+            return;
+        }
+        executor.execute(() -> {
+            try {
+                execute(lease.get(), null);
+            } finally {
+                slots.release();
+            }
+        });
     }
     public void cleanup() {
         repository.cleanup(30);
@@ -228,7 +279,7 @@ public class DistributionService implements DisposableBean {
             }
             executor.execute(() -> {
                 try {
-                    execute(lease.get());
+                    execute(lease.get(), null);
                 } finally {
                     slots.release();
                 }
@@ -238,7 +289,7 @@ public class DistributionService implements DisposableBean {
             throw e;
         }
     }
-    private void execute(DistributionRepository.Lease lease) {
+    private void execute(DistributionRepository.Lease lease, DistributionTask known) {
         Thread executionThread = Thread.currentThread();
         running.put(lease.taskId(), executionThread);
         AtomicBoolean lost = new AtomicBoolean();
@@ -253,9 +304,16 @@ public class DistributionService implements DisposableBean {
                 executionThread.interrupt();
         }, 5, 5, TimeUnit.SECONDS);
         DistributionCheckpoint committed = null;
+        ExecutorService shardWorkers = null;
+        boolean persisted = false, requeued = false;
+        // halt stops the scan when an async checkpoint reports status drift or a DB outage
+        AtomicBoolean halt = new AtomicBoolean(), saveInFlight = new AtomicBoolean();
         long started = System.nanoTime();
         try {
-            var task = repository.get(lease.taskId());
+            // the create path hands over the task it just committed: a row born milliseconds ago
+            // can still be invisible to another pooled connection on this OB tenant, so re-reading
+            // it here races read-your-writes and once failed the task as "not found"
+            var task = known != null ? known : repository.get(lease.taskId());
             var spec = task.spec();
             if (spec.legacyRateConfiguration()) {
                 repository.save(lease, null, "INCOMPLETE", "LEGACY_RATE_CONFIGURATION");
@@ -265,7 +323,7 @@ public class DistributionService implements DisposableBean {
                 repository.save(lease, null, "PAUSED", "DEPLOYMENT_BUDGET_CHANGED");
                 return;
             }
-            committed = repository.checkpoint(task.id()).orElse(null);
+            committed = known != null ? null : repository.checkpoint(task.id()).orElse(null);
             long deadline = started + Math.max(0, Math.min(spec.durationSeconds(), maxDuration) * 1000L
                     - (committed == null ? 0 : committed.elapsedMillis())) * 1_000_000L;
             if (System.nanoTime() >= deadline) {
@@ -277,10 +335,20 @@ public class DistributionService implements DisposableBean {
                 repository.save(lease, committed, "INCOMPLETE", "TOPOLOGY_CHANGED");
                 return;
             }
+            // progress denominator: one O(1) DBSIZE per shard, sampled before the workers start.
+            // A committed value is reused across pause/resume and instance takeover so the bar
+            // stays monotonic; a failed sample degrades to an indeterminate bar, never the scan
+            long estimatedTotal = committed == null ? 0 : committed.estimatedTotal();
+            if (estimatedTotal == 0)
+                try {
+                    estimatedTotal = redis.count(spec.clusterId(), spec.database(), topology);
+                } catch (RuntimeException e) {
+                    log.debug("distribution dbsize sample failed for task {}", lease.taskId());
+                }
             var classifier = new DistributionClassifier(spec.rules());
             var counter = new DistributionCounter(spec.mode(), spec.capacity(), spec.rules());
             List<DistributionCheckpoint.Cursor> cursors = new ArrayList<>();
-            int next = 0, interval = spec.scanIntervalMillis(), slow = 0;
+            int interval = spec.scanIntervalMillis();
             long initialElapsed = 0;
             if (committed == null)
                 for (var shard : topology.shards())
@@ -288,124 +356,258 @@ public class DistributionService implements DisposableBean {
             else {
                 counter.restore(committed.observed(), committed.entries());
                 cursors.addAll(committed.cursors());
-                next = committed.nextShard();
                 initialElapsed = committed.elapsedMillis();
-                interval = Math.max(interval, committed.effectiveIntervalMillis());
-                slow = committed.slowStreak();
             }
-            long lastSave = 0, lastTopology = System.nanoTime();
-            int timeouts = 0;
-            while (!closing && !lost.get()) {
-                if (!"RUNNING".equals(repository.get(task.id()).status()))
-                    return;
-                long elapsed = initialElapsed + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
-                boolean complete = cursors.stream().allMatch(DistributionCheckpoint.Cursor::completed);
-                boolean budget = elapsed >= Math.min(spec.durationSeconds(), maxDuration) * 1000L
-                        || spec.maxObservations() > 0 && counter.observed() >= spec.maxObservations();
-                if (complete || budget) {
-                    if (complete && !topology.fingerprint()
-                            .equals(redis.topology(spec.clusterId(), spec.database(), deadline).fingerprint())) {
-                        repository.save(lease, committed, "INCOMPLETE", "TOPOLOGY_CHANGED");
-                        return;
-                    }
-                    var state = state(topology, cursors, next, counter, elapsed, interval, slow);
-                    repository.save(lease, state, complete ? "COMPLETED" : "INCOMPLETE",
-                            complete ? null : "BUDGET_REACHED");
-                    return;
+            long budgetMillis = Math.min(spec.durationSeconds(), maxDuration) * 1000L;
+            // cursors and the counter are not thread-safe: every read or write holds this lock,
+            // held for well under a millisecond per page so workers never queue on it
+            Object lock = new Object();
+            Deque<Integer> pending = new ArrayDeque<>();
+            for (int i = 0; i < cursors.size(); i++)
+                if (!cursors.get(i).completed())
+                    pending.add(i);
+            AtomicBoolean stop = new AtomicBoolean();
+            AtomicReference<String> failure = new AtomicReference<>();
+            java.util.function.BooleanSupplier capped = () -> {
+                synchronized (lock) {
+                    return spec.maxObservations() > 0 && counter.observed() >= spec.maxObservations();
                 }
-                if (System.nanoTime() - lastTopology >= 5_000_000_000L) {
-                    if (!topology.fingerprint()
-                            .equals(redis.topology(spec.clusterId(), spec.database(), deadline).fingerprint())) {
-                        repository.save(lease, committed, "INCOMPLETE", "TOPOLOGY_CHANGED");
-                        return;
-                    }
-                    lastTopology = System.nanoTime();
-                }
-                var cursor = cursors.get(next);
-                if (cursor.completed()) {
-                    next = (next + 1) % cursors.size();
-                    continue;
-                }
-                long before = System.nanoTime();
-                DistributionScanPort.Page batch;
+            };
+            // shards scan in parallel, each on its own pinned session paced by its own page
+            // interval: scan pressure stays bounded per node, and there is no shared pacer
+            Runnable worker = () -> {
+                ReadOnlyScanPort.Session session = null;
                 try {
-                    batch = redis.scan(spec.clusterId(), spec.database(), cursor.shard(), cursor.cursor(),
-                            spec.scanCount(),
-                            deadline);
-                    timeouts = 0;
-                } catch (IllegalStateException e) {
-                    if ("SCAN_TIMEOUT".equals(e.getMessage()) && ++timeouts < 3)
-                        continue;
-                    throw e;
-                }
-                if (lost.get())
-                    return;
-                if (System.nanoTime() - before > 200_000_000L)
-                    slow++;
-                else
-                    slow = 0;
-                if (slow == 3)
-                    interval = Math.min(60000, interval * 2);
-                if (slow >= 6) {
-                    repository.save(lease, committed, "PAUSED", "SCAN_SLOW");
-                    return;
-                }
-                int accepted = 0;
-                for (byte[] key : batch.keys()) {
-                    if (spec.maxObservations() > 0 && counter.observed() >= spec.maxObservations())
-                        break;
-                    counter.accept(classifier.classify(key));
-                    accepted++;
-                }
-                cursors.set(next, new DistributionCheckpoint.Cursor(cursor.shard(), batch.cursor(),
-                        accepted == batch.keys().size() && "0".equals(batch.cursor())));
-                next = (next + 1) % cursors.size();
-                if (System.nanoTime() - lastSave >= 1_000_000_000L) {
-                    var state = state(topology, cursors, next, counter,
-                            initialElapsed + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started), interval,
-                            slow);
-                    if (!repository.save(lease, state, "RUNNING", null))
+                    while (!stop.get() && System.nanoTime() < deadline && !capped.getAsBoolean()) {
+                        Integer index;
+                        synchronized (pending) {
+                            index = pending.poll();
+                        }
+                        if (index == null)
+                            return;
+                        var cursor = cursors.get(index);
+                        // one pinned connection per shard: the per-page form paid a fresh
+                        // connect+auth+handshake roundtrip chain on every single page
+                        session = redis.open(spec.clusterId(), spec.database(), cursor.shard());
+                        int timeouts = 0;
+                        while (!stop.get() && System.nanoTime() < deadline && !capped.getAsBoolean()
+                                && !cursor.completed()) {
+                            long before = System.nanoTime();
+                            DistributionScanPort.Page batch;
+                            try {
+                                batch = session.scan(cursor.cursor(), spec.scanCount());
+                                timeouts = 0;
+                            } catch (IllegalStateException e) {
+                                if ("SCAN_TIMEOUT".equals(e.getMessage()) && ++timeouts < 3)
+                                    continue;
+                                throw e;
+                            }
+                            synchronized (lock) {
+                                int accepted = 0;
+                                for (byte[] key : batch.keys()) {
+                                    if (spec.maxObservations() > 0 && counter.observed() >= spec.maxObservations())
+                                        break;
+                                    counter.accept(classifier.classify(key));
+                                    accepted++;
+                                }
+                                cursors.set(index, new DistributionCheckpoint.Cursor(cursor.shard(), batch.cursor(),
+                                        accepted == batch.keys().size() && "0".equals(batch.cursor())));
+                                cursor = cursors.get(index);
+                            }
+                            try {
+                                sleepUntil(Math.min(before + interval * 1_000_000L, deadline));
+                            } catch (IllegalStateException e) {
+                                if (stop.get())
+                                    return;
+                                throw e;
+                            }
+                        }
+                        session.close();
+                        session = null;
+                    }
+                } catch (RuntimeException e) {
+                    // a pacing interrupt is shutdownNow by design: the coordinator owns the
+                    // outcome, and when it dies unexpectedly its terminal save already decided it
+                    if ("SCAN_INTERRUPTED".equals(e.getMessage()))
                         return;
-                    committed = state;
-                    lastSave = System.nanoTime();
+                    // a failure that only surfaced because shutdownNow interrupted this worker is
+                    // not a scan failure: pause/cancel/lease loss already own the outcome
+                    if (!stop.get()) {
+                        // null messages (e.g. NPE) would leave the coordinator waiting forever
+                        failure.compareAndSet(null,
+                                e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                        log.warn("distribution shard worker failed", e);
+                        stop.set(true);
+                    }
+                } finally {
+                    if (session != null)
+                        try {
+                            session.close();
+                        } catch (RuntimeException ignored) {
+                            // scan is over; connection teardown errors are irrelevant
+                        }
                 }
-                long waitUntil = Math.min(
-                        before + interval * 1_000_000L,
-                        started + Math.max(0, Math.min(spec.durationSeconds(), maxDuration) * 1000L - initialElapsed)
-                                * 1_000_000L);
-                while (!closing && !lost.get() && System.nanoTime() < waitUntil)
-                    sleepUntil(Math.min(waitUntil, System.nanoTime() + 200_000_000L));
+            };
+            int workers = Math.min(cursors.size(), shardParallelism);
+            shardWorkers = Executors.newFixedThreadPool(workers, r -> daemon(r, "distribution-shard"));
+            for (int i = 0; i < workers; i++)
+                shardWorkers.execute(worker);
+            String drift = null;
+            boolean complete = false, budgetOut = false;
+            long lastSave = 0, lastTopology = System.nanoTime();
+            // the coordinator owns completion/budget detection, topology rechecks and
+            // checkpoints; same-instance pause/cancel and lease loss interrupt this thread,
+            // which stops the workers quietly without writing a terminal state
+            try {
+                while (!closing && !lost.get() && !halt.get() && failure.get() == null) {
+                    Thread.sleep(150);
+                    // a worker may have failed during the sleep: never persist a first
+                    // checkpoint for an execution that already died, it must stay requeueable
+                    if (failure.get() != null)
+                        break;
+                    long elapsed = initialElapsed + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+                    synchronized (lock) {
+                        complete = cursors.stream().allMatch(DistributionCheckpoint.Cursor::completed);
+                        budgetOut = elapsed >= budgetMillis
+                                || spec.maxObservations() > 0 && counter.observed() >= spec.maxObservations();
+                    }
+                    if (complete || budgetOut) {
+                        stop.set(true);
+                        break;
+                    }
+                    // pinned sessions revalidate run_id on every reconnect, and completion
+                    // verifies the fingerprint: a full topology probe every 5s just stalled the loop
+                    if (System.nanoTime() - lastTopology >= 30_000_000_000L) {
+                        if (!topology.fingerprint()
+                                .equals(redis.topology(spec.clusterId(), spec.database(), deadline).fingerprint())) {
+                            drift = "TOPOLOGY_CHANGED";
+                            stop.set(true);
+                            break;
+                        }
+                        lastTopology = System.nanoTime();
+                    }
+                    if (System.nanoTime() - lastSave >= 1_000_000_000L) {
+                        DistributionCheckpoint snap;
+                        synchronized (lock) {
+                            snap = state(topology, cursors, 0, counter, elapsed, estimatedTotal);
+                        }
+                        if (!persisted) {
+                            // the first checkpoint is synchronous: there is no point scanning a
+                            // whole budget if the task cannot persist or already drifted
+                            if (!repository.save(lease, snap, "RUNNING", null)) {
+                                stop.set(true);
+                                break;
+                            }
+                            persisted = true;
+                        } else if (saveInFlight.compareAndSet(false, true)) {
+                            // later checkpoints are latest-wins on a single writer: if the previous
+                            // save is still in flight on a slow link this one is simply skipped
+                            checkpoints.execute(() -> {
+                                try {
+                                    if (!repository.save(lease, snap, "RUNNING", null))
+                                        halt.set(true);
+                                } catch (RuntimeException e) {
+                                    halt.set(true);
+                                } finally {
+                                    saveInFlight.set(false);
+                                }
+                            });
+                        }
+                        committed = snap;
+                        lastSave = System.nanoTime();
+                    }
+                }
+            } catch (InterruptedException e) {
+                stop.set(true); // pause, cancel or lease loss: stop without writing a terminal state
             }
+            stop.set(true);
+            shardWorkers.shutdownNow();
+            try {
+                shardWorkers.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.interrupted();
+            }
+            if (failure.get() != null)
+                throw new IllegalStateException(failure.get());
+            if (drift != null) {
+                repository.save(lease, committed, "INCOMPLETE", "TOPOLOGY_CHANGED");
+                return;
+            }
+            long finalElapsed = initialElapsed + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+            synchronized (lock) {
+                complete = cursors.stream().allMatch(DistributionCheckpoint.Cursor::completed);
+                budgetOut = finalElapsed >= budgetMillis
+                        || spec.maxObservations() > 0 && counter.observed() >= spec.maxObservations();
+            }
+            if (complete) {
+                if (!topology.fingerprint()
+                        .equals(redis.topology(spec.clusterId(), spec.database(), deadline).fingerprint())) {
+                    repository.save(lease, committed, "INCOMPLETE", "TOPOLOGY_CHANGED");
+                    return;
+                }
+                DistributionCheckpoint snap;
+                synchronized (lock) {
+                    snap = state(topology, cursors, 0, counter, finalElapsed, estimatedTotal);
+                }
+                repository.save(lease, snap, "COMPLETED", null);
+                return;
+            }
+            if (budgetOut) {
+                DistributionCheckpoint snap;
+                synchronized (lock) {
+                    snap = state(topology, cursors, 0, counter, finalElapsed, estimatedTotal);
+                }
+                repository.save(lease, snap, "INCOMPLETE", "BUDGET_REACHED");
+                return;
+            }
+            // paused, cancelled, lease lost or checkpoint drift: status already moved elsewhere
         } catch (RuntimeException e) {
             String reason = e.getMessage();
             if (reason == null || !reason.matches("(?:SCAN|DISTRIBUTION|INVALID_DISTRIBUTION)_[A-Z_]{1,40}"))
                 reason = "SCAN_FAILED";
-            String status = reason.contains("LIMIT")
-                    ? "INCOMPLETE"
-                    : reason.equals("SCAN_TIMEOUT")
-                            ? "PAUSED"
-                            : reason.equals("SCAN_TOPOLOGY_UNSTABLE") ? "INCOMPLETE" : "FAILED";
-            try {
-                if (!lost.get())
-                    repository.save(lease, committed, status, reason);
-            } catch (RuntimeException ignored) {
-                /* No further scan or buffered accumulation after persistence failure. */}
+            // the client only ever sees the mapped code; this line is where the real cause lives
+            log.warn("distribution task {} ended as {}: {}", lease.taskId(), reason, e.toString());
+            // a claim that never opened its first connection made no progress: put the task
+            // back in the queue instead of failing it, so an instance that can reach the
+            // cluster takes over (instances share one database and one claim sweep)
+            if (!persisted && !lost.get()
+                    && ("SCAN_CONNECTION_FAILED".equals(reason) || "SCAN_TIMEOUT".equals(reason)))
+                try {
+                    repository.requeue(lease, reason);
+                    requeued = true;
+                } catch (RuntimeException ignored) {
+                    /* fall through to the terminal failure below */}
+            if (!requeued) {
+                String status = reason.contains("LIMIT")
+                        ? "INCOMPLETE"
+                        : reason.equals("SCAN_TIMEOUT")
+                                ? "PAUSED"
+                                : reason.equals("SCAN_TOPOLOGY_UNSTABLE") ? "INCOMPLETE" : "FAILED";
+                try {
+                    if (!lost.get())
+                        repository.save(lease, committed, status, reason);
+                } catch (RuntimeException ignored) {
+                    /* No further scan or buffered accumulation after persistence failure. */}
+            }
         } finally {
+            if (shardWorkers != null)
+                shardWorkers.shutdownNow(); // workers close their own sessions
             running.remove(lease.taskId(), executionThread);
             Thread.interrupted();
             heartbeat.cancel(false);
-            try {
-                repository.release(lease);
-            } catch (RuntimeException ignored) {
-                /* lease expires */}
+            // a requeued claim keeps its lease as the cooldown; releasing here would lift it
+            if (!requeued)
+                try {
+                    repository.release(lease);
+                } catch (RuntimeException ignored) {
+                    /* lease expires */}
         }
     }
     private static DistributionCheckpoint state(DistributionScanPort.Topology topology,
             List<DistributionCheckpoint.Cursor> cursors, int next, DistributionCounter counter, long elapsed,
-            int interval,
-            int slow) {
+            long estimatedTotal) {
         return new DistributionCheckpoint(topology.fingerprint(), cursors, next, counter.observed(), elapsed,
-                counter.snapshot(), interval, slow);
+                estimatedTotal, counter.snapshot());
     }
     private static void sleepUntil(long deadline) {
         long remaining = deadline - System.nanoTime();
@@ -423,5 +625,6 @@ public class DistributionService implements DisposableBean {
         closing = true;
         executor.shutdownNow();
         heartbeats.shutdownNow();
+        checkpoints.shutdownNow();
     }
 }
