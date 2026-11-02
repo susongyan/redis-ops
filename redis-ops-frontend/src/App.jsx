@@ -1,11 +1,12 @@
 import { Component,lazy,Suspense,useEffect,useState } from 'react'
-import { AlertOutlined, AppstoreOutlined, AuditOutlined, ClockCircleOutlined, ClusterOutlined, CodeOutlined, DatabaseOutlined, DeleteOutlined, EnvironmentOutlined, FileSearchOutlined, FileTextOutlined, FundProjectionScreenOutlined, LineChartOutlined, RobotOutlined, SafetyCertificateOutlined, SearchOutlined, SettingOutlined, SwapOutlined, SyncOutlined, TeamOutlined } from '@ant-design/icons'
+import { AlertOutlined, AppstoreOutlined, AuditOutlined, ClockCircleOutlined, ClusterOutlined, CodeOutlined, DatabaseOutlined, DeleteOutlined, DesktopOutlined, EnvironmentOutlined, FileSearchOutlined, FileTextOutlined, FundProjectionScreenOutlined, LineChartOutlined, RobotOutlined, SafetyCertificateOutlined, SearchOutlined, SettingOutlined, SwapOutlined, SyncOutlined, TeamOutlined } from '@ant-design/icons'
 import { Layout, Menu, Typography, Button, Select, Space } from 'antd'
 const ClustersPage=lazy(()=>import('./pages/ClustersPage.jsx'))
 const ApplicationsPage=lazy(()=>import('./pages/ApplicationsPage.jsx'))
 const LocationsPage=lazy(()=>import('./pages/LocationsPage.jsx'))
 const RelationsPage=lazy(()=>import('./pages/RelationsPage.jsx'))
 const SyncTasksPage=lazy(()=>import('./pages/SyncTasksPage.jsx'))
+const SyncWorkersPage=lazy(()=>import('./pages/SyncWorkersPage.jsx'))
 const ValidationTasksPage=lazy(()=>import('./pages/ValidationTasksPage.jsx'))
 const RiskScansPage=lazy(()=>import('./pages/RiskScansPage.jsx'))
 const AlertsPage=lazy(()=>import('./pages/AlertsPage.jsx'))
@@ -23,7 +24,7 @@ const KeyDistributionsPage=lazy(()=>import('./pages/KeyDistributionsPage.jsx'))
 const {Sider,Header,Content}=Layout
 const pageFromHash=()=>{
   const page=window.location.hash.replace(/^#\/?/,'').split('?')[0]
-  return ['users','clusters','locations','relations','syncTasks','validations','keyDistributions','riskScans','metrics','alerts','ttlGovernance','cleanupGovernance','redisOperations','commandCatalog','applications','audits','analysisAgents','analysisRuns'].includes(page)?page:'clusters'
+  return ['users','clusters','locations','relations','syncTasks','syncWorkers','validations','keyDistributions','riskScans','metrics','alerts','ttlGovernance','cleanupGovernance','redisOperations','commandCatalog','applications','audits','analysisAgents','analysisRuns'].includes(page)?page:'clusters'
 }
 class PageErrorBoundary extends Component{
   state={error:null}
@@ -33,13 +34,14 @@ class PageErrorBoundary extends Component{
 export default function App({user,onLogout,onPassword}){
   const [page,setPage]=useState(pageFromHash)
   const [openMenuKeys,setOpenMenuKeys]=useState(['assets','observability','governance','platform'])
-  const pages={users:user.role==='ADMIN'?<UsersPage/>:<div>无用户管理权限</div>,clusters:<ClustersPage/>,applications:<ApplicationsPage/>,locations:<LocationsPage/>,relations:<RelationsPage/>,syncTasks:<SyncTasksPage/>,validations:<ValidationTasksPage/>,keyDistributions:<KeyDistributionsPage/>,riskScans:<RiskScansPage/>,metrics:<MetricsPage/>,alerts:<AlertsPage/>,ttlGovernance:<TtlGovernancePage/>,cleanupGovernance:<CleanupGovernancePage/>,redisOperations:<RedisOperationsPage/>,commandCatalog:<CommandCatalogPage/>,audits:<AuditsPage/>,analysisAgents:<AnalysisAgentsPage/>,analysisRuns:<AnalysisRunsPage/>}
+  const pages={users:user.role==='ADMIN'?<UsersPage/>:<div>无用户管理权限</div>,clusters:<ClustersPage/>,applications:<ApplicationsPage/>,locations:<LocationsPage/>,relations:<RelationsPage/>,syncTasks:<SyncTasksPage/>,syncWorkers:<SyncWorkersPage/>,validations:<ValidationTasksPage/>,keyDistributions:<KeyDistributionsPage/>,riskScans:<RiskScansPage/>,metrics:<MetricsPage/>,alerts:<AlertsPage/>,ttlGovernance:<TtlGovernancePage/>,cleanupGovernance:<CleanupGovernancePage/>,redisOperations:<RedisOperationsPage/>,commandCatalog:<CommandCatalogPage/>,audits:<AuditsPage/>,analysisAgents:<AnalysisAgentsPage/>,analysisRuns:<AnalysisRunsPage/>}
   const pageOptions=[
     ...(user.role==='ADMIN'?[{value:'users',label:'用户管理'}]:[]),
     {value:'clusters',label:'Redis 集群'},
     {value:'locations',label:'Region / IDC'},
     {value:'relations',label:'主备关系'},
     {value:'syncTasks',label:'同步任务'},
+    {value:'syncWorkers',label:'同步 Worker'},
     {value:'validations',label:'数据校验'},
     {value:'riskScans',label:'风险扫描'},
     {value:'keyDistributions',label:'Key 分布分析'},
@@ -74,6 +76,7 @@ export default function App({user,onLogout,onPassword}){
           {key:'locations',icon:<EnvironmentOutlined/>,label:'Region / IDC'},
           {key:'relations',icon:<SwapOutlined/>,label:'主备关系'},
           {key:'syncTasks',icon:<SyncOutlined/>,label:'同步任务'},
+          {key:'syncWorkers',icon:<DesktopOutlined/>,label:'同步 Worker'},
           {key:'validations',icon:<SafetyCertificateOutlined/>,label:'数据校验'}]},
         {key:'observability',icon:<LineChartOutlined/>,label:'采集与风险',children:[
           {key:'metrics',icon:<FundProjectionScreenOutlined/>,label:'监控指标'},

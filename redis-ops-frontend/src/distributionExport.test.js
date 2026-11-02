@@ -1,11 +1,18 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { csvCell, distributionCsv, loadDistributionExport } from './distributionExport.js'
+import { csvCell, distributionCsv, distributionFileName, loadDistributionExport } from './distributionExport.js'
 test('CSV quoting and formula protection', () => {
   assert.equal(csvCell('a,"b\nc'), '"a,""b\nc"')
   for (const value of ['=1', '+cmd', '-1', '@SUM(A1)', '  =1', '\tvalue']) assert.ok(csvCell(value).startsWith('"\''))
 })
 const task = { id: 5, version: 1, status: 'COMPLETED', observed: 21, spec: { clusterId: 1, rules: [], mode: 'FIXED' } }
+test('distributionFileName sanitizes cluster name and stamps task creation', () => {
+  const named = { id: 51, clusterId: 4, createdAt: '2026-10-28T15:05:18.391Z', spec: { clusterId: 4, database: 0 } }
+  assert.equal(distributionFileName(named, 'local-c1'), 'distribution-local_c1-20261028-1505.csv')
+  assert.equal(distributionFileName(named, 'p2:6380#3'), 'distribution-p2_6380_3-20261028-1505.csv')
+  assert.equal(distributionFileName(named, ''), 'distribution-cluster4-20261028-1505.csv')
+  assert.equal(distributionFileName({ ...named, spec: { ...named.spec, database: 3 } }, 'local-c1'), 'distribution-local_c1-db3-20261028-1505.csv')
+})
 test('exports all pages with metadata and BOM', async () => {
   const rows = Array.from({ length: 21 }, (_, i) => ({ group: { text: `group${i}` }, count: 1, error: 0 }))
   const pages = []
