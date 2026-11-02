@@ -10,9 +10,9 @@
 | --- | --- | --- |
 | 资产 | Standalone / Sentinel / Cluster 登记、Region / IDC、连接测试、拓扑发现 | 不负责 Redis 安装、扩缩容或自动切换 |
 | 应用 | 应用与集群多对多、双向维护，新增集群可多选应用 | 人工资产关系，不修改业务连接配置 |
-| 同步 | 独立 Worker 全量 / 增量同步、租约、checkpoint、fence 与任务控制 | 写入必须遵守预检查和确认；上线前按版本及规模验收 |
-| 数据校验 | 全量及抽样，缺失、额外、类型、TTL、摘要差异 | 大 Key 可安全降级，严格模式不把降级结果视为自动放行依据 |
-| 观测与治理 | 指标采集、风险扫描、告警、TTL 治理、数据清理、受控 Redis Console | 依赖环境权限和配置，不表示当前部署全部可用 |
+| 同步 | 独立 Worker 全量 / 增量同步、租约、checkpoint、fence 与任务控制、Worker 注册与指派、BLOCKED 任务一键全量重做（RESTART_FULL） | 写入必须遵守预检查和确认；上线前按版本及规模验收 |
+| 数据校验 | 全量及抽样，缺失、额外、类型、TTL、摘要差异、结果 CSV 导出 | 大 Key 可安全降级，严格模式不把降级结果视为自动放行依据 |
+| 观测与治理 | 指标采集、风险扫描（NO_TTL 按规则分组、CSV 导出）、告警、TTL 治理、数据清理、受控 Redis Console；治理与扫描任务在接收实例进程内执行（ADR-038） | 依赖环境权限和配置，不表示当前部署全部可用 |
 | Key 分布 | 按需预览、固定容量 / 有界 Top-K、规则快照、CSV 导出 | SCAN 观测次数，不精确去重、不读取 value、不占用 Sync Worker |
 | 用户 | 本地账号、ADMIN / OPERATOR、MySQL 共享会话 | 无集群级权限；企业 OIDC / LDAP 仅预留扩展，未提供登录入口 |
 | AI 分析 | 按需分析入口与外部适配边界 | 依赖外部服务配置，不赋予 Agent Redis 修改权限 |
@@ -33,7 +33,11 @@ redis-ops/
 
 Platform 与 Worker 共享一个 MySQL 逻辑库，通过控制表和契约协作；Worker 不依赖 Platform HTTP 或实现模块。Platform 负责 Flyway，Worker 不执行迁移。
 
-Platform 的通用 Job 执行器与独立 Sync Worker 不同：`platform.jobs.enabled`（环境变量 `PLATFORM_JOBS_ENABLED`）控制前者，不是同步进程开关，也不关闭按需 Key 分布执行器。该开关同时控制后台凭据重加密。
+用户触发的校验、风险扫描、Key 分布与治理任务由接收请求的 Platform 实例**进程内**执行
+（`LocalJobRunner`，并发受 `platform.local-jobs.max-concurrent` 限制，池满显式拒绝，见
+[ADR-038](docs/adr/ADR-038-in-process-local-job-runner.md)）；这与独立 Sync Worker 进程不同。
+`platform.jobs.enabled` 只门控后台轻量任务（本地任务恢复、Worker 注册清理、凭据重加密），
+不是同步进程开关。
 
 三个运行项目可独立构建部署；公司拆仓、私服、CI 和 Apollo 服务建设由企业负责。详见[拆仓说明](docs/split-repository-migration.md)。
 
@@ -43,7 +47,7 @@ Java 包和 Maven groupId 统一为 `io.github.susongyan.redisops`，模块子�
 
 ## 构建
 
-- 后端编译目标 Java 17，可使用 JDK 17 或 21；Maven 3.9+。
+- 后端编译目标 Java 21，需要 JDK 21；Maven 3.9+。
 - 当前 Vite 要求 Node.js `^20.19.0 || >=22.12.0`；部署静态文件不需要 Node。
 - Docker / Colima 用于本地依赖及隔离测试，不是运行 JAR 的必需条件。
 
@@ -79,7 +83,7 @@ docker compose up -d mysql redis redis-sync-target
 ```yaml
 spring:
   datasource:
-    url: jdbc:mysql://localhost:3306/redis_governance?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC
+    url: jdbc:mysql://localhost:3306/redis_governance?useUnicode=true&characterEncoding=utf8
     username: redis_governance
     password: redis_governance
 identity:
@@ -152,8 +156,9 @@ npm run build
 | 操作账号、显示名及历史快照 | [操作身份记录](docs/operator-identity.md) |
 | 审计操作内容与字段变更 | [审计变更详情](docs/audit-change-details.md) |
 | 应用与集群关系 | [关联管理](docs/application-bindings.md) |
-| Key 分布及导出 | [分布分析](docs/key-distribution.md) |
-| 同步恢复与安全 | [生命周期](docs/sync-worker-lifecycle.md)、[运行手册](docs/sync-operations-runbook.md) |
+| Key 分布及导出 | [分布分析](docs/key-distribution.md)、[扫描策略](docs/key-distribution-scan.md) |
+| 同步恢复与安全 | [生命周期](docs/sync-worker-lifecycle.md)、[运行手册](docs/sync-operations-runbook.md)、[数据面设计分析](docs/sync-design-analysis.md) |
+| 大 Key 拆分设计 | [big-key-split-design](docs/big-key-split-design.md) |
 | 业务 Key 拆分与多 Key 同步（规划中） | [背景、设计与实施计划](docs/sync-business-key-migration-plan.md) |
 | 架构与约束 | [架构契约](docs/architecture-contract.md)、[ADR](docs/adr/README.md) |
 

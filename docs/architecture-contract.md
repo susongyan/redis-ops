@@ -56,7 +56,8 @@ Sync Worker ── PSYNC / RDB / RESP ──► Source Redis / Target Redis
 | 高频指标 | Prometheus/TSDB（规划） | MySQL 仅保存低频摘要，禁止把高频采集点持续写入事务库。 |
 | 告警状态 | MySQL `alert_event` | 规则按资源去重收敛；Webhook 投递失败不得改变告警本身状态。 |
 
-所有时间使用 UTC `Instant` 语义，JDBC URL 固定 `serverTimezone=UTC`。已执行的 Flyway
+领域与 API 层时间使用 UTC `Instant` 语义；JDBC URL 不携带会话时区参数，会话时区跟随
+数据库服务器，`DATETIME` 列按会话壁钟单标签读写（ADR-037）。已执行的 Flyway
 migration 是不可变历史；任何 schema 演进均新增版本化 migration。
 
 ## 4. 同步安全契约
