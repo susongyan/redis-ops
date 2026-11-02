@@ -126,6 +126,25 @@ class NativeSyncRunnerManagerTest {
     }
 
     @Test
+    void shutdownParksTheLeaseInsteadOfReleasingIt() {
+        WorkerSyncStatePort sync = mock(WorkerSyncStatePort.class);
+        stubRuntimeClaim(sync);
+        FakeRunner runner = new FakeRunner();
+        NativeSyncRunnerManager manager = new NativeSyncRunnerManager(sync, (task, recovery) -> runner, 1);
+        manager.prepare(task(1), "worker-1", 30, false);
+
+        manager.shutdown();
+
+        assertEquals(1, runner.cancelled.get());
+        assertTrue(runner.closed.get());
+        assertEquals(0, manager.activeCount());
+        // Parked, not released: the lease must survive shutdown so it can expire on its own
+        // and let any worker's recovery scan re-adopt the task.
+        verify(sync).parkRuntime(1L, "worker-1", "SHUTDOWN", null);
+        verify(sync, never()).releaseRuntime(anyLong(), anyString(), anyString(), any());
+    }
+
+    @Test
     void recreatesRunnerInRecoveryModeAfterProcessRestart() {
         WorkerSyncStatePort sync = mock(WorkerSyncStatePort.class);
         stubRuntimeClaim(sync);
@@ -148,7 +167,7 @@ class NativeSyncRunnerManagerTest {
     private static WorkerSyncTask task(long id) {
         Instant now = Instant.now();
         return new WorkerSyncTask(id, "SYNC-" + id, null, 11, 22, "ADHOC", "FULL_AND_INCREMENTAL",
-                SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0, "[\"*\"]", "[]", "{}",
+                SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0, "[\"*\"]", "[]", "{}", "PRESERVE",
                 50_000, 100 * 1024 * 1024L, 50L * 1024 * 1024 * 1024, 4, 100,
                 SyncControlAction.START.name(), true,
                 "test fence", null, "epoch-1", null, null, 0, now, now, null);

@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="redis-ops-sync-worker"/>
+    <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="redis-ops-sync"/>
     <springProperty scope="context" name="LOG_DIRECTORY" source="log-dir" defaultValue="${LOG_DIR:-./log}"/>
-    <property name="CONSOLE_LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSSXXX} %5p [${APP_NAME}] [pid=${PID:-}] [%t] %logger{48} - %msg%n%wEx"/>
+    <property name="CONSOLE_LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} ${APP_NAME} [%X{X-B3-TraceId:-},%X{X-B3-SpanId:-},%X{X-B3-ParentSpanId:-},%X{X-Span-Export:-}] [%thread] %-5level %logger{36} - %msg%n"/>
     <property name="FILE_LOG_PATTERN" value="${CONSOLE_LOG_PATTERN}"/>
     <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
     <property name="DAILY_PATTERN" value="${LOG_DIRECTORY}/%d{yyyy-MM-dd}/worker.%i.log"/>
+
     <property name="MAX_FILE_SIZE" value="20MB"/>
     <property name="MAX_HISTORY" value="14"/>
     <property name="TOTAL_SIZE_CAP" value="1GB"/>

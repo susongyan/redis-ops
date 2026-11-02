@@ -8,6 +8,7 @@ import io.github.susongyan.redisops.worker.domain.WorkerEndpointConfiguration;
 import org.springframework.stereotype.Repository;
 
 import java.util.Arrays;
+import java.util.UUID;
 
 /** Worker-owned connection profile provider; credential material never leaves the returned closeable profile. */
 @Repository
@@ -36,7 +37,7 @@ public class WorkerRedisConnectionProfileProvider implements WorkerRedisConnecti
         try {
             if (!"ENCRYPTED".equals(secret.secretStatus))
                 throw new IllegalStateException("Redis cluster credential is not configured");
-            password = decryptor.decrypt(secret.secretUuid, ciphertext, secret.keyId);
+            password = decryptor.decrypt(parseSecretUuid(secret.secretUuid), ciphertext, secret.keyId);
             return new WorkerRedisConnectionProfile(clusterId, cluster.mode(), endpoint.seedEndpoints(),
                     endpoint.sentinelMasterName(), secret.username,
                     secret.username == null || secret.username.isBlank() ? "PASSWORD" : "ACL", password);
@@ -47,6 +48,16 @@ public class WorkerRedisConnectionProfileProvider implements WorkerRedisConnecti
         } finally {
             if (ciphertext != null)
                 Arrays.fill(ciphertext, (byte) 0);
+        }
+    }
+
+    private static UUID parseSecretUuid(String value) {
+        if (value == null || value.isBlank())
+            throw new IllegalStateException("Redis cluster credential secret uuid is missing");
+        try {
+            return UUID.fromString(value.trim());
+        } catch (IllegalArgumentException error) {
+            throw new IllegalStateException("Redis cluster credential secret uuid is invalid", error);
         }
     }
 }

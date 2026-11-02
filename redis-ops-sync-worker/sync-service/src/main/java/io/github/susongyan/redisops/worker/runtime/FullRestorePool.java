@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 final class FullRestorePool implements AutoCloseable {
-    private static final RestoreItem STOP = new RestoreItem(null);
+    private static final RestoreItem STOP = new RestoreItem(null, 0);
 
     private final WorkerRedisConnectionProfile profile;
     private final RedisDataEndpointResolver endpoints;
@@ -26,6 +26,7 @@ final class FullRestorePool implements AutoCloseable {
     private final Runnable beforeApply;
     private final Runnable afterApply;
     private final FullRestoreProgressListener progress;
+    private final FullRestoreQueueBudget budget;
     private final BlockingQueue<RestoreItem> queue;
     private final ExecutorService executor;
     private final List<Future<?>> workers;
@@ -34,16 +35,17 @@ final class FullRestorePool implements AutoCloseable {
 
     FullRestorePool(WorkerRedisConnectionProfile profile, RedisDataEndpointResolver endpoints, int database,
             long taskId, Duration connectTimeout,
-            int concurrency, int queueCapacity, int pipelineSize, long transactionMaxBytes,
+            int concurrency, int queueCapacity, long queueMaxBytes, int pipelineSize, long transactionMaxBytes,
             TargetFence fence, LeaseGuard leaseGuard, Runnable beforeApply, Runnable afterApply,
             FullRestoreProgressListener progress) {
         this(profile, endpoints, database, taskId, "standalone", connectTimeout, concurrency, queueCapacity,
-                pipelineSize, transactionMaxBytes, fence, leaseGuard, beforeApply, afterApply, progress);
+                queueMaxBytes, pipelineSize, transactionMaxBytes, fence, leaseGuard, beforeApply, afterApply,
+                progress);
     }
 
     FullRestorePool(WorkerRedisConnectionProfile profile, RedisDataEndpointResolver endpoints, int database,
             long taskId, String channel, Duration connectTimeout,
-            int concurrency, int queueCapacity, int pipelineSize, long transactionMaxBytes,
+            int concurrency, int queueCapacity, long queueMaxBytes, int pipelineSize, long transactionMaxBytes,
             TargetFence fence, LeaseGuard leaseGuard, Runnable beforeApply, Runnable afterApply,
             FullRestoreProgressListener progress) {
         if (concurrency < 1 || concurrency > 64)
@@ -67,6 +69,7 @@ final class FullRestorePool implements AutoCloseable {
         this.beforeApply = beforeApply;
         this.afterApply = afterApply;
         this.progress = progress;
+        this.budget = new FullRestoreQueueBudget(queueMaxBytes);
         this.queue = new ArrayBlockingQueue<>(queueCapacity);
         this.executor = Executors.newFixedThreadPool(concurrency, runnable -> {
             Thread thread = new Thread(runnable, "redis-full-restore-" + taskId);
@@ -82,10 +85,20 @@ final class FullRestorePool implements AutoCloseable {
 
     void submit(TargetCommandSession.RestoreRequest request) throws IOException {
         ensureHealthy();
+        int permits = budget.permits(request);
         try {
-            while (!queue.offer(new RestoreItem(request), 100, TimeUnit.MILLISECONDS))
+            while (!budget.tryAcquire(permits, 100, TimeUnit.MILLISECONDS))
                 ensureHealthy();
         } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted while applying full RDB", error);
+        }
+        RestoreItem item = new RestoreItem(request, permits);
+        try {
+            while (!queue.offer(item, 100, TimeUnit.MILLISECONDS))
+                ensureHealthy();
+        } catch (InterruptedException error) {
+            budget.release(permits);
             Thread.currentThread().interrupt();
             throw new IOException("interrupted while applying full RDB", error);
         }
@@ -122,6 +135,7 @@ final class FullRestorePool implements AutoCloseable {
     private void runWorker(int lane) {
         try {
             List<TargetCommandSession.RestoreRequest> batch = new ArrayList<>(pipelineSize);
+            List<RestoreItem> applied = new ArrayList<>(pipelineSize);
             RestoreItem carry = null;
             while (!Thread.currentThread().isInterrupted()) {
                 RestoreItem first = carry == null ? queue.take() : carry;
@@ -129,6 +143,7 @@ final class FullRestorePool implements AutoCloseable {
                 if (first == STOP)
                     return;
                 batch.add(first.request());
+                applied.add(first);
                 long batchBytes = estimatedBytes(first.request());
                 boolean stopAfterBatch = false;
                 while (batch.size() < pipelineSize) {
@@ -145,6 +160,7 @@ final class FullRestorePool implements AutoCloseable {
                         break;
                     }
                     batch.add(next.request());
+                    applied.add(next);
                     batchBytes += nextBytes;
                 }
                 beforeApply.run();
@@ -153,6 +169,9 @@ final class FullRestorePool implements AutoCloseable {
                     progress.applied(lane, batch.size(), batchBytes);
                 } finally {
                     afterApply.run();
+                    for (RestoreItem item : applied)
+                        budget.release(item.permits());
+                    applied.clear();
                     batch.clear();
                 }
                 if (stopAfterBatch)
@@ -196,6 +215,6 @@ final class FullRestorePool implements AutoCloseable {
         return request.key().length + request.payload().length + 128L;
     }
 
-    private record RestoreItem(TargetCommandSession.RestoreRequest request) {
+    private record RestoreItem(TargetCommandSession.RestoreRequest request, int permits) {
     }
 }

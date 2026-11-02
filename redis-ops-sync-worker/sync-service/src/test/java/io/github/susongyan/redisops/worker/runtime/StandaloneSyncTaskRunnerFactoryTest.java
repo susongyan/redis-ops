@@ -40,7 +40,7 @@ class StandaloneSyncTaskRunnerFactoryTest {
                 org.mockito.ArgumentMatchers.eq(source))).thenReturn("5.0.14");
         org.mockito.Mockito.when(endpoints.readServerVersion(org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.eq(target))).thenReturn("5.0.14");
-        var precheck = new SyncPrecheckExecutor(assets, profiles, null, null,
+        var precheck = new SyncPrecheckExecutor(assets, profiles, null, null, null,
                 new com.fasterxml.jackson.databind.ObjectMapper(), endpoints, Path.of("data"), 1024);
         var method = SyncPrecheckExecutor.class.getDeclaredMethod("compatibleVersions", WorkerSyncTask.class);
         method.setAccessible(true);
@@ -108,7 +108,7 @@ class StandaloneSyncTaskRunnerFactoryTest {
         return new StandaloneSyncTaskRunnerFactory(profiles, null, null, null,
                 new RedisDataEndpointResolver(1000), new com.fasterxml.jackson.databind.ObjectMapper(),
                 Path.of("data"), 1024, 1000, concurrency, queueCapacity, pipelineSize,
-                4 * 1024 * 1024L, 2000, 1000);
+                4 * 1024 * 1024L, 64 * 1024 * 1024L, 2000, 1000);
     }
 
     private static WorkerRedisConnectionProfilePort profiles(WorkerClusterMode source, WorkerClusterMode target) {
@@ -123,7 +123,7 @@ class StandaloneSyncTaskRunnerFactoryTest {
         Instant now = Instant.now();
         return new WorkerSyncTask(1L, "SYNC-1", null, 1, 2, "MIGRATION", "FULL_AND_INCREMENTAL",
                 SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0,
-                "[\"*\"]", "[]", policy, 50_000, 100_000_000, 1024 * 1024, 4, 8, "START", true, "test",
+                "[\"*\"]", "[]", policy, "PRESERVE", 50_000, 100_000_000, 1024 * 1024, 4, 8, "START", true, "test",
                 null, "epoch", null, null, 0, now, now, null);
     }
 }

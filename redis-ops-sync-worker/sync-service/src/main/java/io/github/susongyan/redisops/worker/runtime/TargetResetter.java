@@ -18,11 +18,20 @@ public class TargetResetter {
     private final WorkerAssetReadPort clusters;
     private final WorkerRedisConnectionProfilePort profiles;
     private final WorkerTopologyPort topology;
+    private final long flushBaseTimeoutSeconds;
+    private final long flushPerMillionKeysSeconds;
+    private final long flushMaxTimeoutSeconds;
     public TargetResetter(WorkerAssetReadPort clusters, WorkerRedisConnectionProfilePort profiles,
-            WorkerTopologyPort topology) {
+            WorkerTopologyPort topology,
+            @org.springframework.beans.factory.annotation.Value("${sync.engine.target-flush-base-timeout-seconds:30}") long flushBaseTimeoutSeconds,
+            @org.springframework.beans.factory.annotation.Value("${sync.engine.target-flush-timeout-per-million-keys-seconds:60}") long flushPerMillionKeysSeconds,
+            @org.springframework.beans.factory.annotation.Value("${sync.engine.target-flush-max-timeout-seconds:900}") long flushMaxTimeoutSeconds) {
         this.clusters = clusters;
         this.profiles = profiles;
         this.topology = topology;
+        this.flushBaseTimeoutSeconds = flushBaseTimeoutSeconds;
+        this.flushPerMillionKeysSeconds = flushPerMillionKeysSeconds;
+        this.flushMaxTimeoutSeconds = flushMaxTimeoutSeconds;
     }
     public List<ResetResult> flush(long clusterId, int database) {
         WorkerClusterView cluster = clusters.get(clusterId);
@@ -55,6 +64,10 @@ public class TargetResetter {
         }
         RedisClient client = RedisClient.create(builder.build());
         try (var connection = client.connect()) {
+            // FLUSHDB is O(N) and blocks the server; the URI timeout that covers the handshake would
+            // abort a large flush client-side while the server keeps flushing. Probe DBSIZE (O(1))
+            // and widen just this command's timeout by the key count.
+            connection.setTimeout(flushTimeoutFor(connection.sync().dbsize()));
             connection.sync().flushdb();
             return new ResetResult(endpoint, database, true, null, Instant.now());
         } catch (RuntimeException error) {
@@ -62,6 +75,11 @@ public class TargetResetter {
         } finally {
             client.shutdown();
         }
+    }
+    Duration flushTimeoutFor(long keys) {
+        long scaled = flushBaseTimeoutSeconds
+                + Math.max(0L, keys) * flushPerMillionKeysSeconds / 1_000_000L;
+        return Duration.ofSeconds(Math.min(Math.max(scaled, flushBaseTimeoutSeconds), flushMaxTimeoutSeconds));
     }
     private static String safe(Throwable error) {
         String message = error.getMessage();

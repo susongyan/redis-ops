@@ -1,19 +1,27 @@
 package io.github.susongyan.redisops.worker.runtime;
 
 import io.github.susongyan.redisops.worker.protocol.ReplicationCommand;
-import io.github.susongyan.redisops.worker.protocol.SourceTransactionAssembler;
 import java.util.concurrent.Semaphore;
 
-/** Encoded-byte budget, in addition to queue element count; one per source channel. */
+/**
+ * Encoded-byte budget, in addition to queue element count; one per source channel. Applied to
+ * every enqueued command, transactional or not: without it a slow apply fills the count-only
+ * queue with multi-megabyte payloads and the heap dies. A single command larger than the whole
+ * budget reserves all of it, so it passes once the queue drains instead of being rejected.
+ */
 final class ReplicationQueueBudget {
-    private final Semaphore bytes = new Semaphore(32 * 1024 * 1024);
+    private static final long LIMIT = 32L * 1024 * 1024;
+    private final Semaphore bytes = new Semaphore(Math.toIntExact(LIMIT));
+
     void acquire(ReplicationCommand command) throws InterruptedException {
-        long size = command.encodedBytes();
-        if (size > SourceTransactionAssembler.MAX_BYTES)
-            throw new SyncBlockedException("BLOCKED_TRANSACTION_LIMIT", "replication command exceeds frame budget");
-        bytes.acquire(Math.toIntExact(size));
+        bytes.acquire(permits(command));
     }
+
     void release(ReplicationCommand command) {
-        bytes.release(Math.toIntExact(command.encodedBytes()));
+        bytes.release(permits(command));
+    }
+
+    private int permits(ReplicationCommand command) {
+        return (int) Math.min(command.encodedBytes(), LIMIT);
     }
 }

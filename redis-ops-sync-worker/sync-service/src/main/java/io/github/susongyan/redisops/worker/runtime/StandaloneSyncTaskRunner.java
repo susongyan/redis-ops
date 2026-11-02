@@ -45,6 +45,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private final int fullApplyQueueCapacity;
     private final int fullApplyPipelineSize;
     private final long fullApplyTransactionMaxBytes;
+    private final long fullApplyQueueMaxBytes;
     private final LeaseGuard leaseGuard;
     private final long metricIntervalNanos;
     private final ExecutorService workers;
@@ -102,7 +103,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             RedisDataEndpointResolver endpoints, ObjectMapper json,
             Path dataDirectory, long segmentBytes, Duration connectTimeout, int fullApplyConcurrency,
             int fullApplyQueueCapacity, int fullApplyPipelineSize, long fullApplyTransactionMaxBytes,
-            Duration leaseSafetyMargin, Duration metricInterval) {
+            long fullApplyQueueMaxBytes, Duration leaseSafetyMargin, Duration metricInterval) {
         this.originalTask = task;
         this.recovery = recovery;
         this.profiles = profiles;
@@ -118,6 +119,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         this.fullApplyQueueCapacity = fullApplyQueueCapacity;
         this.fullApplyPipelineSize = fullApplyPipelineSize;
         this.fullApplyTransactionMaxBytes = fullApplyTransactionMaxBytes;
+        this.fullApplyQueueMaxBytes = fullApplyQueueMaxBytes;
         this.leaseGuard = new LeaseGuard(leaseSafetyMargin);
         if (metricInterval.isZero() || metricInterval.isNegative())
             throw new IllegalArgumentException("metric interval must be positive");
@@ -160,6 +162,9 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             heartbeatSource = new TargetCommandSession(sourceProfile, sourceEndpoint, originalTask.sourceDb(),
                     originalTask.id(), connectTimeout);
             target.assertReservedNamespaceAvailable();
+            if (!recovery)
+                // A fresh start carries a new full sync epoch and supersedes the finished attempt.
+                target.deleteOwnReservedKeys();
             Optional<TargetCheckpoint> checkpoint = target.checkpoint();
             if (checkpoint.isPresent()) {
                 TargetCheckpoint value = checkpoint.get();
@@ -379,7 +384,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         try (var input = spool.openRdb()) {
             try (var restores = new FullRestorePool(targetProfile, endpoints, originalTask.targetDb(),
                     originalTask.id(), connectTimeout, restoreConcurrency, restoreQueueCapacity,
-                    taskFullApplyPipelineSize(),
+                    fullApplyQueueMaxBytes, taskFullApplyPipelineSize(),
                     fullApplyTransactionMaxBytes, targetFence, leaseGuard,
                     this::waitForApplyPermission, this::targetApplyFinished, fullProgress::applied)) {
                 try {
@@ -441,16 +446,14 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                 leaseGuard.assertValid();
                 ReplicationCommand command = currentSource.readCommand(transactionBatcher != null);
                 leaseGuard.assertValid();
-                if (transactionBatcher != null)
-                    queueBudget.acquire(command);
+                queueBudget.acquire(command);
                 try {
                     spool.append(command);
                     receivedOffset.set(command.endOffset());
                     leaseGuard.assertValid();
                     applyQueue.put(command);
                 } catch (Exception | Error failure) {
-                    if (transactionBatcher != null)
-                        queueBudget.release(command);
+                    queueBudget.release(command);
                     throw failure;
                 }
                 currentSource.acknowledge(command.endOffset());
@@ -521,15 +524,14 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                 continue;
             }
             ReplicationCommand command = applyQueue.poll(250, TimeUnit.MILLISECONDS);
-            if (command != null && transactionBatcher != null)
+            if (command != null)
                 queueBudget.release(command);
             if (command != null && command.endOffset() > appliedOffset.get()) {
                 var batch = new java.util.ArrayList<ReplicationCommand>(100);
                 batch.add(command);
                 applyQueue.drainTo(batch, 99);
-                if (transactionBatcher != null)
-                    for (int i = 1; i < batch.size(); i++)
-                        queueBudget.release(batch.get(i));
+                for (int i = 1; i < batch.size(); i++)
+                    queueBudget.release(batch.get(i));
                 applyBatchWhenAllowed(batch);
             }
             if (finishing && (reader == null || reader.isDone()) && applyQueue.isEmpty()) {
@@ -970,6 +972,8 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private void fail(Throwable error) {
         if (cancelled.get())
             return;
+        if (error instanceof TransientReplicationException transientSource)
+            error = new SyncBlockedException("BLOCKED_SOURCE_TRANSIENT", transientSource.getMessage());
         stoppedByFailure.set(true);
         if (fullProgress != null)
             fullProgress.failed();
@@ -1045,8 +1049,9 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     }
 
     private void prepareSpool() throws IOException {
-        EncryptedSpool primary = new EncryptedSpool(dataDirectory, originalTask.id(),
-                spoolKeys.taskKey(originalTask.id()), segmentBytes, originalTask.spoolLimitBytes());
+        EncryptedSpool primary = new EncryptedSpool(dataDirectory, originalTask.id(), null,
+                spoolKeys.taskKey(originalTask.id()), spoolKeys.encryption(), segmentBytes,
+                originalTask.spoolLimitBytes());
         if (transactionBatcher != null)
             primary.limitCommandRecordReads(32L * 1024 * 1024);
         try {
@@ -1058,8 +1063,9 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                 throw error;
             spoolFallback = true;
             Path takeoverDirectory = dataDirectory.resolve("takeover-" + java.util.UUID.randomUUID());
-            spool = new EncryptedSpool(takeoverDirectory, originalTask.id(),
-                    spoolKeys.taskKey(originalTask.id()), segmentBytes, originalTask.spoolLimitBytes());
+            spool = new EncryptedSpool(takeoverDirectory, originalTask.id(), null,
+                    spoolKeys.taskKey(originalTask.id()), spoolKeys.encryption(), segmentBytes,
+                    originalTask.spoolLimitBytes());
             if (transactionBatcher != null)
                 spool.limitCommandRecordReads(32L * 1024 * 1024);
             spool.prepare();

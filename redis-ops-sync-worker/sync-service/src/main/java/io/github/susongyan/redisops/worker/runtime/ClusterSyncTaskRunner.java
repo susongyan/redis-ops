@@ -47,6 +47,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     private final int fullQueueCapacity;
     private final int fullPipelineSize;
     private final long fullTransactionBytes;
+    private final long fullQueueMaxBytes;
     private final Duration metricInterval;
     private final LeaseGuard leaseGuard;
     private final AtomicBoolean cancelled = new AtomicBoolean();
@@ -54,7 +55,6 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     private final AtomicInteger activeApplies = new AtomicInteger();
     private final Object applyGate = new Object();
     private final Object throttleGate = new Object();
-    private final Semaphore targetApplyPermits;
     private final List<Channel> channels = new CopyOnWriteArrayList<>();
     private volatile WorkerSyncTask limits;
     private volatile String phase = "CREATED";
@@ -70,7 +70,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
             WorkerSyncExecutionPort sync, SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys,
             RedisDataEndpointResolver endpoints, ObjectMapper json, Path dataDirectory, long segmentBytes,
             Duration connectTimeout, int fullConcurrency, int fullQueueCapacity, int fullPipelineSize,
-            long fullTransactionBytes, Duration leaseSafetyMargin, Duration metricInterval) {
+            long fullTransactionBytes, long fullQueueMaxBytes, Duration leaseSafetyMargin, Duration metricInterval) {
         this.task = task;
         this.recovery = recovery;
         this.profiles = profiles;
@@ -86,11 +86,9 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         this.fullQueueCapacity = fullQueueCapacity;
         this.fullPipelineSize = fullPipelineSize;
         this.fullTransactionBytes = fullTransactionBytes;
+        this.fullQueueMaxBytes = fullQueueMaxBytes;
         this.metricInterval = metricInterval;
         this.leaseGuard = new LeaseGuard(leaseSafetyMargin);
-        this.targetApplyPermits = new Semaphore(task.fullApplyConcurrency() > 0
-                ? task.fullApplyConcurrency()
-                : fullConcurrency);
         this.limits = task;
     }
 
@@ -106,19 +104,24 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
             if (sourceProfile.mode() == WorkerClusterMode.CLUSTER && task.sourceDb() != 0
                     || targetProfile.mode() == WorkerClusterMode.CLUSTER && task.targetDb() != 0)
                 throw new SyncBlockedException("BLOCKED_INVALID_DATABASE", "Redis Cluster supports DB 0 only");
+            if (!recovery)
+                // A fresh start carries a new full sync epoch and supersedes the finished attempt.
+                clearSupersededTargetState();
             KeyFilter filter = new KeyFilter(patterns(task.includePatternsJson()),
                     patterns(task.excludePatternsJson()));
             List<SourceSpec> sources = sourceSpecs();
             long perChannelLimit = Math.max(segmentBytes, task.spoolLimitBytes() / Math.max(1, sources.size()));
             int taskConcurrency = task.fullApplyConcurrency() > 0 ? task.fullApplyConcurrency() : fullConcurrency;
-            int baseConcurrency = Math.max(1, taskConcurrency / sources.size());
-            int extraConcurrency = Math.max(0, taskConcurrency - baseConcurrency * sources.size());
+            // Lanes are borrowed dynamically: each channel may run the full task budget. Skewed channels
+            // are not starved by a static division, and channels that finish restore release their lanes
+            // for the remaining ones. Concurrent apply writes are serialized per target master connection,
+            // so the effective concurrency is bounded by the target topology.
             int perChannelQueue = Math.max(1,
                     (int) Math.ceil((double) fullQueueCapacity / sources.size()));
-            for (int index = 0; index < sources.size(); index++) {
-                int channelConcurrency = baseConcurrency + (index < extraConcurrency ? 1 : 0);
-                Channel channel = new Channel(sources.get(index), filter, perChannelLimit, channelConcurrency,
-                        Math.max(perChannelQueue, channelConcurrency));
+            long perChannelQueueMaxBytes = Math.max(1024, fullQueueMaxBytes / sources.size());
+            for (SourceSpec source : sources) {
+                Channel channel = new Channel(source, filter, perChannelLimit, taskConcurrency,
+                        Math.max(perChannelQueue, taskConcurrency), perChannelQueueMaxBytes);
                 channels.add(channel);
                 channel.initialize();
             }
@@ -129,6 +132,30 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         } catch (RuntimeException error) {
             close();
             throw error;
+        }
+    }
+
+    /**
+     * A fresh start carries a new full sync epoch and supersedes the finished attempt, so the
+     * previous attempt's own-task keys (fence/checkpoint/cursor/full progress, spread across
+     * slots and channels) are stale state that would block fence publication or checkpoint
+     * writes. Recovery must never clean - it continues the current attempt.
+     */
+    private void clearSupersededTargetState() throws IOException {
+        if (targetProfile.mode() == WorkerClusterMode.CLUSTER) {
+            java.util.Set<RedisEndpoint> masters = new java.util.LinkedHashSet<>();
+            for (RedisDataEndpointResolver.ClusterMaster master : endpoints.resolveClusterMasters(targetProfile))
+                masters.add(master.endpoint());
+            for (RedisEndpoint master : masters)
+                try (TargetCommandSession session = TargetCommandSession.clusterSlot(targetProfile, master,
+                        task.id(), connectTimeout, "cleanup", 0)) {
+                    session.deleteOwnReservedKeys();
+                }
+            return;
+        }
+        try (TargetCommandSession session = new TargetCommandSession(targetProfile,
+                endpoints.resolvePrimary(targetProfile), task.targetDb(), task.id(), connectTimeout)) {
+            session.deleteOwnReservedKeys();
         }
     }
 
@@ -247,9 +274,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         List<RedisDataEndpointResolver.ClusterMaster> ranges = endpoints.resolveClusterMasters(sourceProfile);
         Map<String, SourceSpecBuilder> grouped = new LinkedHashMap<>();
         for (RedisDataEndpointResolver.ClusterMaster range : ranges) {
-            String identity = range.nodeId() == null || range.nodeId().isBlank()
-                    ? range.endpoint().host() + "-" + range.endpoint().port()
-                    : range.nodeId();
+            String identity = range.endpoint().host() + "-" + range.endpoint().port();
             String channel = "master-" + identity.replaceAll("[^A-Za-z0-9._-]", "_");
             SourceSpecBuilder builder = grouped.computeIfAbsent(identity,
                     ignored -> new SourceSpecBuilder(channel, range.endpoint()));
@@ -294,11 +319,9 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     private void beforeApply() {
         while (!cancelled.get()) {
             leaseGuard.assertValid();
-            synchronized (applyGate) {
-                if (!paused.get() && targetApplyPermits.tryAcquire()) {
-                    activeApplies.incrementAndGet();
-                    return;
-                }
+            if (!paused.get()) {
+                activeApplies.incrementAndGet();
+                return;
             }
             LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(10));
         }
@@ -307,7 +330,6 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
 
     private void afterApply() {
         activeApplies.decrementAndGet();
-        targetApplyPermits.release();
     }
 
     private void throttle(ReplicationCommand command, int operations) {
@@ -347,6 +369,8 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     private synchronized void channelFailed(Channel channel, Throwable error) {
         if (cancelled.get())
             return;
+        if (error instanceof TransientReplicationException transientSource)
+            error = new SyncBlockedException("BLOCKED_SOURCE_TRANSIENT", transientSource.getMessage());
         channel.fullProgress.failed();
         String safe = safe(error);
         lastFailure = channel.spec.channel() + " (" + channel.sourceEndpoint + ", RDB "
@@ -393,6 +417,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         private final ReplicationQueueBudget queueBudget = new ReplicationQueueBudget();
         private final int restoreConcurrency;
         private final int restoreQueueCapacity;
+        private final long restoreQueueMaxBytes;
         private final byte[] heartbeatKey;
         private final EncryptedSpool spool;
         private final FullSyncProgressTracker fullProgress;
@@ -423,11 +448,12 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         private Instant lastMetricAt = Instant.now();
 
         private Channel(SourceSpec spec, KeyFilter filter, long spoolLimit, int restoreConcurrency,
-                int restoreQueueCapacity) {
+                int restoreQueueCapacity, long restoreQueueMaxBytes) {
             this.spec = spec;
             this.filter = filter;
             this.restoreConcurrency = restoreConcurrency;
             this.restoreQueueCapacity = restoreQueueCapacity;
+            this.restoreQueueMaxBytes = restoreQueueMaxBytes;
             this.sourceEndpoint = spec.endpoint();
             int heartbeatSlot = spec.slots().nextSetBit(0);
             this.heartbeatKey = sourceProfile.mode() == WorkerClusterMode.CLUSTER
@@ -441,7 +467,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                     targetProfile.mode() == WorkerClusterMode.CLUSTER,
                     commandPolicy(), task.sourceDb());
             this.spool = new EncryptedSpool(dataDirectory, task.id(), spec.channel(),
-                    spoolKeys.taskKey(task.id()), segmentBytes, spoolLimit);
+                    spoolKeys.taskKey(task.id()), spoolKeys.encryption(), segmentBytes, spoolLimit);
             if (transactionBatcher != null)
                 this.spool.limitCommandRecordReads(32L * 1024 * 1024);
             this.fullProgress = new FullSyncProgressTracker(task.id(), task.fullSyncEpoch(), spec.channel(),
@@ -564,7 +590,9 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         private void applyClusterRdb() throws IOException {
             try (var restores = new ClusterFullRestorePool(routedTarget, channelFence, leaseGuard,
                     restoreConcurrency,
-                    restoreQueueCapacity, ClusterSyncTaskRunner.this::beforeApply,
+                    restoreQueueCapacity, restoreQueueMaxBytes,
+                    limits.fullApplyPipelineSize() > 0 ? limits.fullApplyPipelineSize() : fullPipelineSize,
+                    fullTransactionBytes, ClusterSyncTaskRunner.this::beforeApply,
                     ClusterSyncTaskRunner.this::afterApply, fullProgress::applied);
                     var input = spool.openRdb()) {
                 parseRdb(input, restores::submit, payload -> routedTarget.loadFunction(payload, channelFence,
@@ -576,6 +604,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         private void applySingleRdb() throws IOException {
             try (var restores = new FullRestorePool(targetProfile, endpoints, task.targetDb(), task.id(),
                     spec.channel(), connectTimeout, restoreConcurrency, restoreQueueCapacity,
+                    restoreQueueMaxBytes,
                     limits.fullApplyPipelineSize() > 0 ? limits.fullApplyPipelineSize() : fullPipelineSize,
                     fullTransactionBytes, channelFence, leaseGuard,
                     ClusterSyncTaskRunner.this::beforeApply, ClusterSyncTaskRunner.this::afterApply,
@@ -624,15 +653,13 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                 try {
                     leaseGuard.assertValid();
                     ReplicationCommand command = source.readCommand(transactionBatcher != null);
-                    if (transactionBatcher != null)
-                        queueBudget.acquire(command);
+                    queueBudget.acquire(command);
                     try {
                         spool.append(command);
                         received.set(command.endOffset());
                         queue.put(command);
                     } catch (Exception | Error failure) {
-                        if (transactionBatcher != null)
-                            queueBudget.release(command);
+                        queueBudget.release(command);
                         throw failure;
                     }
                     source.acknowledge(command.endOffset());
@@ -680,9 +707,8 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                     List<ReplicationCommand> batch = new ArrayList<>(100);
                     batch.add(first);
                     queue.drainTo(batch, 99);
-                    if (transactionBatcher != null)
-                        for (var command : batch)
-                            queueBudget.release(command);
+                    for (var command : batch)
+                        queueBudget.release(command);
                     applyBatch(batch);
                 }
                 if (finishing && (reader == null || reader.isDone()) && queue.isEmpty()) {

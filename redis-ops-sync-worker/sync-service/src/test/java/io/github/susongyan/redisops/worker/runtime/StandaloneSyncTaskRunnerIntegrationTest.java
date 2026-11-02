@@ -316,7 +316,8 @@ class StandaloneSyncTaskRunnerIntegrationTest {
         Instant now = Instant.now();
         return new WorkerSyncTask(id, "SYNC-IT-" + id, null, 1, 2, "MIGRATION", "FULL_AND_INCREMENTAL",
                 SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0,
-                includes, excludes, v3() ? "{\"policyVersion\":\"v3\",\"allowSafeSplit\":true}" : "{}", 50_000,
+                includes, excludes, v3() ? "{\"policyVersion\":\"v3\",\"allowSafeSplit\":true}" : "{}", "PRESERVE",
+                50_000,
                 100_000_000, 50 * 1024 * 1024, 4, 8, "START", true, "integration",
                 null, epoch, null, null, 0, now, now, null);
     }
@@ -327,7 +328,7 @@ class StandaloneSyncTaskRunnerIntegrationTest {
                 mock(SyncRunnerStateReporter.class), new SpoolKeyProvider(keyRing),
                 new RedisDataEndpointResolver(5000), new ObjectMapper(),
                 dataDirectory, 1024 * 1024, Duration.ofSeconds(5), 4, 32, 8,
-                4 * 1024 * 1024L, Duration.ofSeconds(2), Duration.ofSeconds(1));
+                4 * 1024 * 1024L, 64 * 1024 * 1024L, Duration.ofSeconds(2), Duration.ofSeconds(1));
     }
 
     private static boolean v3() {

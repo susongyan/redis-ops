@@ -29,7 +29,10 @@ public final class ReplicationHandshake {
         commandExpectOk("REPLCONF", "listening-port", "0");
         commandExpectOk("REPLCONF", "capa", "eof", "capa", "psync2");
         codec.writeCommand("PSYNC", replicationId == null ? "?" : replicationId, Long.toString(offset));
-        String response = simple(readPsyncReply());
+        RespValue psyncReply = readPsyncReply();
+        if (psyncReply instanceof RespValue.Error error && transientSourceCondition(error.value()))
+            throw new TransientReplicationException("Redis error: " + error.value());
+        String response = simple(psyncReply);
         if (response.startsWith("FULLRESYNC ")) {
             String[] parts = response.split(" ");
             if (parts.length != 3)
@@ -49,9 +52,21 @@ public final class ReplicationHandshake {
 
     private ReplicationReply.RdbTransfer readRdbHeader() throws IOException {
         InputStream input = codec.input();
-        int marker = input.read();
+        // Masters emit '\n' keepalives while the full-sync RDB is being generated (non-diskless
+        // BGSAVE can take minutes); skip them before expecting the bulk marker, as replicas do.
+        int marker;
+        int keepalives = 0;
+        while ((marker = input.read()) == '\n')
+            if (++keepalives > 100_000)
+                throw new RespProtocolException("RDB bulk marker keepalive limit exceeded: " + keepalives);
         if (marker != '$')
-            throw new RespProtocolException("RDB transfer does not start with bulk marker");
+            throw new RespProtocolException("RDB transfer does not start with bulk marker: "
+                    + (marker < 0
+                            ? "EOF"
+                            : marker >= 32 && marker < 127
+                                    ? "'" + (char) marker + "'"
+                                    : "0x"
+                                            + Integer.toHexString(marker)));
         String header = line(input);
         if (header.startsWith("EOF:")) {
             String markerValue = header.substring(4);
@@ -101,6 +116,11 @@ public final class ReplicationHandshake {
         String value = simple(codec.read());
         if (!expected.equalsIgnoreCase(value))
             throw new RespProtocolException(command[0] + " failed: " + value);
+    }
+    /** -NOMASTERLINK/-LOADING are retryable per the official replica (fixed 1s reconnect); others are hard failures. */
+    private static boolean transientSourceCondition(String value) {
+        String code = value.split(" ", 2)[0];
+        return "NOMASTERLINK".equals(code) || "LOADING".equals(code);
     }
     private static String simple(RespValue value) {
         if (value instanceof RespValue.Simple s)

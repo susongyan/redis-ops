@@ -9,6 +9,7 @@ import io.github.susongyan.redisops.worker.domain.WorkerSyncTask;
 import io.github.susongyan.redisops.worker.domain.WorkerClusterView;
 import io.github.susongyan.redisops.worker.persistence.WorkerAssetReadPort;
 import io.github.susongyan.redisops.worker.persistence.WorkerSyncExecutionPort;
+import io.github.susongyan.redisops.worker.persistence.WorkerSyncStatePort;
 import io.github.susongyan.redisops.worker.persistence.WorkerTopologyPort;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -23,6 +24,7 @@ public class SyncPrecheckExecutor {
     private final WorkerAssetReadPort clusters;
     private final WorkerRedisConnectionProfilePort profiles;
     private final WorkerTopologyPort topology;
+    private final WorkerSyncStatePort state;
     private final WorkerSyncExecutionPort execution;
     private final ObjectMapper json;
     private final RedisDataEndpointResolver endpoints;
@@ -30,13 +32,14 @@ public class SyncPrecheckExecutor {
     private final long segmentBytes;
 
     public SyncPrecheckExecutor(WorkerAssetReadPort clusters, WorkerRedisConnectionProfilePort profiles,
-            WorkerTopologyPort topology, WorkerSyncExecutionPort execution, ObjectMapper json,
-            RedisDataEndpointResolver endpoints,
+            WorkerTopologyPort topology, WorkerSyncStatePort state, WorkerSyncExecutionPort execution,
+            ObjectMapper json, RedisDataEndpointResolver endpoints,
             @Value("${sync.engine.data-dir:./data/sync}") Path dataDirectory,
             @Value("${sync.engine.segment-bytes:268435456}") long segmentBytes) {
         this.clusters = clusters;
         this.profiles = profiles;
         this.topology = topology;
+        this.state = state;
         this.execution = execution;
         this.json = json;
         this.endpoints = endpoints;
@@ -57,8 +60,10 @@ public class SyncPrecheckExecutor {
         passed &= check(checks, "SOURCE_CONNECTION", () -> discover(task.sourceClusterId()));
         passed &= check(checks, "TARGET_CONNECTION", () -> discover(task.targetClusterId()));
         passed &= check(checks, "RESERVED_NAMESPACE", () -> reservedNamespace(task));
+        passed &= check(checks, "TARGET_RESET_MODE", () -> targetResetMode(task));
         passed &= check(checks, "WORKER_SPOOL_STORAGE", this::spoolStorage);
         commandHistoryRisk(checks, task);
+        targetDataRisk(checks, task);
         Instant checked = Instant.now();
         String report;
         try {
@@ -173,26 +178,78 @@ public class SyncPrecheckExecutor {
     }
     private String reservedNamespace(WorkerSyncTask task) throws Exception {
         try (WorkerRedisConnectionProfile profile = profiles.get(task.targetClusterId())) {
-            if (profile.mode() == WorkerClusterMode.CLUSTER) {
-                int inspected = 0;
-                Set<RedisEndpoint> masters = new LinkedHashSet<>();
-                for (RedisDataEndpointResolver.ClusterMaster master : endpoints.resolveClusterMasters(profile))
-                    masters.add(master.endpoint());
-                for (RedisEndpoint master : masters) {
-                    try (TargetCommandSession target = TargetCommandSession.clusterSlot(profile, master, task.id(),
-                            java.time.Duration.ofSeconds(10), "precheck", 0)) {
-                        target.assertReservedNamespaceAvailable();
-                        inspected++;
-                    }
+            List<TargetCommandSession> sessions = new ArrayList<>();
+            try {
+                if (profile.mode() == WorkerClusterMode.CLUSTER) {
+                    Set<RedisEndpoint> masters = new LinkedHashSet<>();
+                    for (RedisDataEndpointResolver.ClusterMaster master : endpoints.resolveClusterMasters(profile))
+                        masters.add(master.endpoint());
+                    for (RedisEndpoint master : masters)
+                        sessions.add(TargetCommandSession.clusterSlot(profile, master, task.id(),
+                                java.time.Duration.ofSeconds(10), "precheck", 0));
+                } else {
+                    sessions.add(new TargetCommandSession(profile, endpoints.resolvePrimary(profile),
+                            task.targetDb(), task.id(), java.time.Duration.ofSeconds(10)));
                 }
-                return "no conflicting __redis_ops_sync_* keys on " + inspected + " Cluster masters";
-            }
-            try (TargetCommandSession target = new TargetCommandSession(profile, endpoints.resolvePrimary(profile),
-                    task.targetDb(), task.id(), java.time.Duration.ofSeconds(10))) {
-                target.assertReservedNamespaceAvailable();
-                return "no conflicting __redis_ops_sync_* keys";
+                return reconcileReservedKeys(task, sessions);
+            } finally {
+                for (TargetCommandSession session : sessions)
+                    session.close();
             }
         }
+    }
+
+    /**
+     * Foreign reserved keys whose owning task is gone from the control table or already terminal
+     * (FAILED/FINISHED/CANCELLED) are stale garbage from an interrupted or completed sync; they are
+     * deleted so rebuilding a task never stays blocked on its predecessor's leftovers. Keys owned by
+     * tasks that may still recover (any other status) keep blocking, as do keys whose owner cannot be
+     * parsed. DELETE is limited to keys matching __redis_ops_sync_* with an attributed, dead owner.
+     */
+    private String reconcileReservedKeys(WorkerSyncTask task, List<TargetCommandSession> sessions) throws Exception {
+        Map<Long, Boolean> alive = new HashMap<>();
+        List<String> conflicts = new ArrayList<>();
+        int inspected = 0;
+        int cleaned = 0;
+        for (TargetCommandSession target : sessions) {
+            Map<Long, List<byte[]>> byOwner = new LinkedHashMap<>();
+            for (byte[] key : target.foreignReservedKeys()) {
+                OptionalLong owner = TargetCommandSession.ownerTaskId(key);
+                byOwner.computeIfAbsent(owner.isPresent() ? owner.getAsLong() : Long.MIN_VALUE,
+                        id -> new ArrayList<>()).add(key);
+            }
+            for (Map.Entry<Long, List<byte[]>> entry : byOwner.entrySet()) {
+                long owner = entry.getKey();
+                if (owner == Long.MIN_VALUE) { // unparsable: never delete, keep blocking
+                    conflicts.add("unattributed reserved key(s) on node " + inspected);
+                    continue;
+                }
+                Boolean ownerAlive = alive.computeIfAbsent(owner, this::ownerAlive);
+                if (ownerAlive) {
+                    conflicts.add("task " + owner);
+                    continue;
+                }
+                cleaned += target.deleteKeys(entry.getValue());
+            }
+            inspected++;
+        }
+        if (!conflicts.isEmpty())
+            throw new SyncBlockedException("BLOCKED_RESERVED_NAMESPACE",
+                    "target contains reserved keys owned by active task(s): " + String.join(", ",
+                            conflicts.stream().distinct().toList())
+                            + "; cancel or finish that task first");
+        return cleaned == 0
+                ? "no conflicting __redis_ops_sync_* keys on " + inspected + " target node(s)"
+                : "cleaned " + cleaned + " stale __redis_ops_sync_* key(s) left by finished task(s) on "
+                        + inspected + " target node(s)";
+    }
+
+    /** True when the owning task still exists and is not terminal; a purged task row counts as dead. */
+    private boolean ownerAlive(long taskId) {
+        return state.findTasks(List.of(taskId)).stream().anyMatch(found -> switch (found.status()) {
+            case FAILED, FINISHED, CANCELLED -> false;
+            default -> true;
+        });
     }
     private String spoolStorage() throws Exception {
         Files.createDirectories(dataDirectory);
@@ -200,6 +257,85 @@ public class SyncPrecheckExecutor {
         if (usable < segmentBytes)
             throw new IllegalStateException("worker data volume cannot hold one configured spool segment");
         return "usableBytes=" + usable + ", segmentBytes=" + segmentBytes;
+    }
+
+    private String targetResetMode(WorkerSyncTask task) throws Exception {
+        if (!task.flushTarget())
+            return "resetMode=PRESERVE; target data is kept";
+        try (WorkerRedisConnectionProfile profile = profiles.get(task.targetClusterId())) {
+            int inspected = 0;
+            if (profile.mode() == WorkerClusterMode.CLUSTER) {
+                Set<RedisEndpoint> masters = new LinkedHashSet<>();
+                for (RedisDataEndpointResolver.ClusterMaster master : endpoints.resolveClusterMasters(profile))
+                    masters.add(master.endpoint());
+                for (RedisEndpoint master : masters) {
+                    try (TargetCommandSession target = TargetCommandSession.clusterSlot(profile, master, task.id(),
+                            java.time.Duration.ofSeconds(10), "precheck", 0)) {
+                        requireFlushdbAvailable(target, master);
+                        inspected++;
+                    }
+                }
+            } else {
+                RedisEndpoint primary = endpoints.resolvePrimary(profile);
+                try (TargetCommandSession target = new TargetCommandSession(profile, primary, task.targetDb(),
+                        task.id(), java.time.Duration.ofSeconds(10))) {
+                    requireFlushdbAvailable(target, primary);
+                    inspected = 1;
+                }
+            }
+            return "resetMode=FLUSH; FLUSHDB available on " + inspected + " target node(s)";
+        }
+    }
+
+    private void requireFlushdbAvailable(TargetCommandSession target, RedisEndpoint endpoint)
+            throws java.io.IOException {
+        if (!target.commandAvailable("FLUSHDB"))
+            throw new IllegalStateException("FLUSHDB is unavailable on target " + endpoint.host() + ":"
+                    + endpoint.port() + " (renamed or disabled); use PRESERVE reset mode or enable the command");
+    }
+
+    private void targetDataRisk(List<Map<String, Object>> checks, WorkerSyncTask task) {
+        if (task.flushTarget()) {
+            checks.add(Map.of("name", "TARGET_DATA_POLICY", "status", "PASSED",
+                    "message", "resetMode=FLUSH；任务启动时将清空目标整库（不区分同步范围）"));
+            return;
+        }
+        try {
+            long keys = targetKeyCount(task);
+            if (keys > 0)
+                checks.add(Map.of("name", "TARGET_DATA_POLICY", "status", "WARNING",
+                        "message", "目标端已有 " + keys + " 个 key；PRESERVE 模式不会清理目标已有数据，"
+                                + "源端在任务开始前已删除的 key 将残留在目标上，切换前请自行核对或清理"));
+            else
+                checks.add(Map.of("name", "TARGET_DATA_POLICY", "status", "PASSED",
+                        "message", "目标端为空库；PRESERVE 模式收敛后目标与源一致"));
+        } catch (Exception error) {
+            checks.add(Map.of("name", "TARGET_DATA_POLICY", "status", "WARNING",
+                    "message", "无法探测目标库是否为空，不影响预检查通过：" + safe(error.getMessage())));
+        }
+    }
+
+    private long targetKeyCount(WorkerSyncTask task) throws Exception {
+        try (WorkerRedisConnectionProfile profile = profiles.get(task.targetClusterId())) {
+            if (profile.mode() == WorkerClusterMode.CLUSTER) {
+                long total = 0;
+                Set<RedisEndpoint> masters = new LinkedHashSet<>();
+                for (RedisDataEndpointResolver.ClusterMaster master : endpoints.resolveClusterMasters(profile))
+                    masters.add(master.endpoint());
+                for (RedisEndpoint master : masters) {
+                    try (TargetCommandSession target = TargetCommandSession.clusterSlot(profile, master, task.id(),
+                            java.time.Duration.ofSeconds(10), "precheck", 0)) {
+                        total += target.dbsize();
+                    }
+                }
+                return total;
+            }
+            RedisEndpoint primary = endpoints.resolvePrimary(profile);
+            try (TargetCommandSession target = new TargetCommandSession(profile, primary, task.targetDb(),
+                    task.id(), java.time.Duration.ofSeconds(10))) {
+                return target.dbsize();
+            }
+        }
     }
 
     private String commandPolicySummary(WorkerSyncTask task) throws Exception {

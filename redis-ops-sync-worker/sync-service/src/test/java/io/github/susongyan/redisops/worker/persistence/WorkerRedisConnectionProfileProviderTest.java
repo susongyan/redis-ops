@@ -86,7 +86,7 @@ class WorkerRedisConnectionProfileProviderTest {
     private static WorkerAssetMapper.WorkerCredentialRow credential(UUID secretUuid, String status,
             byte[] ciphertext) {
         WorkerAssetMapper.WorkerCredentialRow row = new WorkerAssetMapper.WorkerCredentialRow();
-        row.secretUuid = secretUuid;
+        row.secretUuid = secretUuid.toString();
         row.encryptedSecret = ciphertext;
         row.keyId = "k1";
         row.username = "user";

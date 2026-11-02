@@ -81,7 +81,7 @@ class StandaloneTransactionExecutionTest {
             var sync = mock(WorkerSyncExecutionPort.class);
             runner = new StandaloneSyncTaskRunner(task, false, null, sync, mock(SyncRunnerStateReporter.class), null,
                     null, new ObjectMapper(), Path.of("unused"), 1024, Duration.ofSeconds(1), 1, 1, 1, 1024,
-                    Duration.ZERO, Duration.ofSeconds(1));
+                    64 * 1024 * 1024L, Duration.ZERO, Duration.ofSeconds(1));
             var filter = new KeyFilter(List.of("biz:*"), List.of());
             var policy = new SyncCommandPolicy(false, true, Set.of(), "v3");
             ReflectionTestUtils.setField(runner, "planner", new CommandPlanner(filter, false, null, policy));

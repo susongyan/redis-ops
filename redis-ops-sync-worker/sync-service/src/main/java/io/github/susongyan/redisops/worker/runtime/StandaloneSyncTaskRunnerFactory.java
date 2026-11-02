@@ -24,6 +24,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
     private final int fullApplyQueueCapacity;
     private final int fullApplyPipelineSize;
     private final long fullApplyTransactionMaxBytes;
+    private final long fullApplyQueueMaxBytes;
     private final Duration leaseSafetyMargin;
     private final Duration metricInterval;
 
@@ -37,6 +38,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
             @Value("${sync.engine.full-apply-queue-capacity:2000}") int fullApplyQueueCapacity,
             @Value("${sync.engine.full-apply-pipeline-size:100}") int fullApplyPipelineSize,
             @Value("${sync.engine.full-apply-transaction-max-bytes:4194304}") long fullApplyTransactionMaxBytes,
+            @Value("${sync.engine.full-apply-queue-max-bytes:67108864}") long fullApplyQueueMaxBytes,
             @Value("${sync.engine.lease-safety-margin-ms:2000}") long leaseSafetyMarginMillis,
             @Value("${sync.engine.metric-interval-ms:1000}") long metricIntervalMillis) {
         if (fullApplyConcurrency < 1 || fullApplyConcurrency > 64)
@@ -47,6 +49,8 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
             throw new IllegalArgumentException("full apply pipeline size must be between 1 and 10000");
         if (fullApplyTransactionMaxBytes < 1024)
             throw new IllegalArgumentException("full apply transaction max bytes must be at least 1024");
+        if (fullApplyQueueMaxBytes < 1024)
+            throw new IllegalArgumentException("full apply queue max bytes must be at least 1024");
         if (leaseSafetyMarginMillis < 0)
             throw new IllegalArgumentException("lease safety margin cannot be negative");
         if (metricIntervalMillis < 1)
@@ -64,6 +68,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
         this.fullApplyQueueCapacity = fullApplyQueueCapacity;
         this.fullApplyPipelineSize = fullApplyPipelineSize;
         this.fullApplyTransactionMaxBytes = fullApplyTransactionMaxBytes;
+        this.fullApplyQueueMaxBytes = fullApplyQueueMaxBytes;
         this.leaseSafetyMargin = Duration.ofMillis(leaseSafetyMarginMillis);
         this.metricInterval = Duration.ofMillis(metricIntervalMillis);
     }
@@ -92,12 +97,13 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
             if (source.mode() == WorkerClusterMode.CLUSTER || target.mode() == WorkerClusterMode.CLUSTER)
                 return new ClusterSyncTaskRunner(task, recovery, profiles, sync, reporter, spoolKeys, endpoints, json,
                         dataDirectory, segmentBytes, connectTimeout, fullApplyConcurrency, fullApplyQueueCapacity,
-                        fullApplyPipelineSize, fullApplyTransactionMaxBytes, leaseSafetyMargin, metricInterval);
+                        fullApplyPipelineSize, fullApplyTransactionMaxBytes, fullApplyQueueMaxBytes,
+                        leaseSafetyMargin, metricInterval);
         }
         return new StandaloneSyncTaskRunner(task, recovery, profiles, sync, reporter, spoolKeys, endpoints, json,
                 dataDirectory, segmentBytes, connectTimeout, fullApplyConcurrency,
-                fullApplyQueueCapacity, fullApplyPipelineSize, fullApplyTransactionMaxBytes, leaseSafetyMargin,
-                metricInterval);
+                fullApplyQueueCapacity, fullApplyPipelineSize, fullApplyTransactionMaxBytes, fullApplyQueueMaxBytes,
+                leaseSafetyMargin, metricInterval);
     }
     private void requireMultiKeyVersion(WorkerRedisConnectionProfile profile, int database, long taskId,
             io.github.susongyan.redisops.sync.contract.SyncCommandPolicy policy) {

@@ -50,24 +50,14 @@ public class NativeSyncCoordinator {
                 return;
             }
             runners.prepare(task, instanceId, leaseSeconds, false);
-            List<TargetResetter.ResetResult> resetResults = resetter.flush(task.targetClusterId(), task.targetDb());
-            if (resetResults == null)
-                resetResults = List.of();
-            for (TargetResetter.ResetResult result : resetResults)
-                service.appendEngineEvent(taskId,
-                        "TARGET_FLUSH endpoint=" + result.endpoint() + " db=" + result.database()
-                                + " result=" + (result.success() ? "SUCCESS" : "FAILED")
-                                + (result.error() == null ? "" : " error=" + result.error()),
-                        "sync:" + instanceId);
-            if (resetResults.stream().anyMatch(result -> !result.success()))
-                throw new IllegalStateException("one or more target Redis nodes failed to flush");
+            resetTarget(task);
             // Publish before starting channels: a runner may report its phase synchronously.
             service.engineTransition(taskId, task.version(), SyncContractStatus.FULL_SYNCING, null, null, null,
                     "target reset completed; starting replication runner", "sync:" + instanceId);
             runners.start(taskId);
         } catch (RuntimeException error) {
             runners.abort(taskId, error);
-            failIfPossible(taskId, error);
+            failIfPossible(taskId, error, "sync runner failed");
             throw error;
         }
     }
@@ -84,7 +74,31 @@ public class NativeSyncCoordinator {
             runners.resume(task, instanceId, leaseSeconds);
         } catch (RuntimeException error) {
             runners.abort(taskId, error);
-            failIfPossible(taskId, error);
+            failIfPossible(taskId, error, "sync runner failed");
+            throw error;
+        }
+    }
+    public void restartFull(long taskId) {
+        WorkerSyncTask task = service.get(taskId);
+        if (task.status() != SyncContractStatus.RESUMING)
+            throw new IllegalStateException("sync task must be RESUMING to restart full sync");
+        try {
+            // A zombie runner from the blocked attempt may still hold the runtime lease (BLOCKED tasks
+            // renew indefinitely) and prepare() silently no-ops on a same-owner runner — abort it first.
+            if (runners.isManaged(taskId))
+                runners.abort(taskId, new IllegalStateException("full resync restart requested"));
+            // recovery=false: fresh prepare clears this task's fence/checkpoint keys and claims the
+            // runtime with an incremented fencing generation, fencing out any old writer.
+            runners.prepare(task, instanceId, leaseSeconds, false);
+            resetTarget(task);
+            // Publish before starting channels: a runner may report its phase synchronously.
+            service.engineTransition(taskId, task.version(), SyncContractStatus.FULL_SYNCING, null, null, null,
+                    "full resync restart; fresh fullSyncEpoch published, starting replication runner",
+                    "sync:" + instanceId);
+            runners.start(taskId);
+        } catch (RuntimeException error) {
+            runners.abort(taskId, error);
+            failIfPossible(taskId, error, "sync runner failed");
             throw error;
         }
     }
@@ -108,8 +122,23 @@ public class NativeSyncCoordinator {
         }
     }
     public void finish(long taskId) {
-        runners.finish(taskId);
-        transition(taskId, SyncContractStatus.FINISHED, "final source offset applied");
+        WorkerSyncTask task = service.get(taskId);
+        // Late or duplicate delivery after an earlier attempt already closed the task: ack quietly
+        // instead of throwing "no active runner" on every retry.
+        if (task.status() == SyncContractStatus.FINISHED || task.status() == SyncContractStatus.FAILED
+                || task.status() == SyncContractStatus.CANCELLED)
+            return;
+        try {
+            runners.finish(taskId);
+            transition(taskId, SyncContractStatus.FINISHED, "final source offset applied");
+        } catch (RuntimeException error) {
+            // A channel that cannot drain must fail the task closed. runners.finish already removed
+            // the runner and released its lease, so without this the task would sit in STOPPING
+            // forever with an unclaimable retry job (test-env task 29).
+            runners.abort(taskId, error);
+            failIfPossible(taskId, error, "final offset drain failed");
+            throw error;
+        }
     }
     public void cancel(long taskId) {
         runners.cancel(taskId);
@@ -117,17 +146,39 @@ public class NativeSyncCoordinator {
     public void limits(long taskId) {
         runners.updateLimits(service.get(taskId));
     }
+    private void resetTarget(WorkerSyncTask task) {
+        long taskId = task.id();
+        if (task.flushTarget()) {
+            List<TargetResetter.ResetResult> resetResults = resetter.flush(task.targetClusterId(),
+                    task.targetDb());
+            if (resetResults == null)
+                resetResults = List.of();
+            for (TargetResetter.ResetResult result : resetResults)
+                service.appendEngineEvent(taskId,
+                        "TARGET_FLUSH endpoint=" + result.endpoint() + " db=" + result.database()
+                                + " result=" + (result.success() ? "SUCCESS" : "FAILED")
+                                + (result.error() == null ? "" : " error=" + result.error()),
+                        "sync:" + instanceId);
+            if (resetResults.stream().anyMatch(result -> !result.success()))
+                throw new IllegalStateException("one or more target Redis nodes failed to flush");
+        } else {
+            service.appendEngineEvent(taskId,
+                    "TARGET_RESET_SKIPPED mode=PRESERVE; pre-existing target keys are kept and keys deleted on "
+                            + "the source before this task started will remain on the target",
+                    "sync:" + instanceId);
+        }
+    }
     private void transition(long taskId, SyncContractStatus status, String message) {
         WorkerSyncTask task = service.get(taskId);
         service.engineTransition(taskId, task.version(), status, task.lastRpoSeconds(), null, null, message,
                 "sync:" + instanceId);
     }
-    private void failIfPossible(long taskId, RuntimeException error) {
+    private void failIfPossible(long taskId, RuntimeException error, String message) {
         WorkerSyncTask current = service.get(taskId);
         if (current.status() != SyncContractStatus.FAILED
                 && service.canTransitionTo(taskId, SyncContractStatus.FAILED))
             service.engineTransition(taskId, current.version(), SyncContractStatus.FAILED, null, null, safe(error),
-                    "sync runner failed to start", "sync:" + instanceId);
+                    message, "sync:" + instanceId);
     }
     private static String safe(Throwable error) {
         String value = error.getMessage();

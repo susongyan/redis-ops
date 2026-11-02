@@ -11,8 +11,15 @@ interface WorkerControlJobMapper {
             WHERE job_type=#{type} AND status IN ('PENDING','RETRY','RUNNING') AND next_run_at<=CURRENT_TIMESTAMP(3)
               AND (lease_until IS NULL OR lease_until<CURRENT_TIMESTAMP(3))
               AND EXISTS (SELECT 1 FROM sync_task capability_task WHERE capability_task.id=async_job.biz_id AND
-            """ + WorkerPolicySql.SUPPORTED + ") ORDER BY id LIMIT 1")
-    int claim(@Param("type") String type, @Param("owner") String owner, @Param("leaseSeconds") long leaseSeconds);
+            """ + WorkerPolicySql.SUPPORTED + """
+              AND (capability_task.assigned_worker IS NULL
+                OR capability_task.assigned_worker=#{instanceName}
+                OR NOT EXISTS (SELECT 1 FROM sync_worker_registry assigned
+                     WHERE assigned.instance_name=capability_task.assigned_worker
+                       AND assigned.heartbeat_at>=DATE_SUB(CURRENT_TIMESTAMP(3),INTERVAL #{staleSeconds} SECOND))))
+            ORDER BY id LIMIT 1""")
+    int claim(@Param("type") String type, @Param("owner") String owner, @Param("leaseSeconds") long leaseSeconds,
+            @Param("instanceName") String instanceName, @Param("staleSeconds") long staleSeconds);
 
     @Update("""
             UPDATE async_job SET status='RUNNING',lease_owner=#{owner},

@@ -7,8 +7,12 @@ import io.github.susongyan.redisops.worker.protocol.RespProtocolException;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 
-final class ClusterTargetRouter implements AutoCloseable {
+// Non-final so unit tests can substitute the restore path with a Mockito subclass mock
+// (the project pins mock-maker-subclass).
+class ClusterTargetRouter implements AutoCloseable {
     private final WorkerRedisConnectionProfile profile;
     private final RedisDataEndpointResolver endpoints;
     private final long taskId;
@@ -72,14 +76,63 @@ final class ClusterTargetRouter implements AutoCloseable {
 
     void restore(TargetCommandSession.RestoreRequest request, TargetFence fence, LeaseGuard leaseGuard, int lane)
             throws IOException {
-        int slot = RedisSlot.of(request.key());
-        ensureFence(slot, fence, leaseGuard);
-        try {
-            connection(slot).restore(List.of(request), fence, leaseGuard, slot, lane);
-        } catch (IOException | RespProtocolException error) {
-            refreshTopology();
-            ensureFence(slot, fence, leaseGuard);
-            connection(slot).restore(List.of(request), fence, leaseGuard, slot, lane);
+        restore(List.of(request), fence, leaseGuard, lane);
+    }
+
+    /**
+     * Restores a batch by grouping it per target master and applying one multi-slot transaction per
+     * node. Transient cluster-wide states (a CLUSTERDOWN failover window, LOADING after a restart)
+     * are retried with backoff instead of failing the full sync — RESTORE is idempotent under
+     * REPLACE and the fence still guards ownership. Other errors keep a single topology-refresh
+     * retry.
+     */
+    void restore(List<TargetCommandSession.RestoreRequest> requests, TargetFence fence, LeaseGuard leaseGuard,
+            int lane) throws IOException {
+        if (requests.isEmpty())
+            return;
+        for (int attempt = 0;; attempt++) {
+            try {
+                restoreGrouped(requests, fence, leaseGuard, lane);
+                return;
+            } catch (IOException | RespProtocolException error) {
+                // Topology may have moved slots between nodes: re-group against the fresh mapping.
+                refreshTopology();
+                boolean transientClusterState = error instanceof RespProtocolException protocol
+                        && isTransientClusterState(protocol.getMessage());
+                int maxAttempts = transientClusterState ? 5 : 2;
+                if (attempt >= maxAttempts - 1)
+                    throw error;
+                if (transientClusterState && !backoff(attempt))
+                    throw new IOException("interrupted while waiting for the Cluster target", error);
+            }
+        }
+    }
+
+    private static boolean isTransientClusterState(String message) {
+        return message != null && (message.contains("CLUSTERDOWN") || message.contains("LOADING"));
+    }
+
+    /** Sleeps 1s, 2s, 4s, 8s before the next transient-state retry; false when interrupted. */
+    private static boolean backoff(int attempt) {
+        if (Thread.interrupted())
+            return false;
+        LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1000L << attempt));
+        return !Thread.currentThread().isInterrupted();
+    }
+
+    private void restoreGrouped(List<TargetCommandSession.RestoreRequest> requests, TargetFence fence,
+            LeaseGuard leaseGuard, int lane) throws IOException {
+        Map<MasterConnection, List<TargetCommandSession.RestoreRequest>> byNode = new LinkedHashMap<>();
+        for (TargetCommandSession.RestoreRequest request : requests)
+            byNode.computeIfAbsent(connection(RedisSlot.of(request.key())), ignored -> new ArrayList<>())
+                    .add(request);
+        for (Map.Entry<MasterConnection, List<TargetCommandSession.RestoreRequest>> entry : byNode.entrySet()) {
+            List<TargetCommandSession.RestoreRequest> nodeRequests = entry.getValue();
+            int[] nodeSlots = nodeRequests.stream().mapToInt(request -> RedisSlot.of(request.key()))
+                    .distinct().toArray();
+            for (int slot : nodeSlots)
+                ensureFence(slot, fence, leaseGuard);
+            entry.getKey().restoreNodeBatch(nodeRequests, fence, leaseGuard, lane);
         }
     }
 
@@ -186,6 +239,16 @@ final class ClusterTargetRouter implements AutoCloseable {
             } catch (IOException error) {
                 reconnect();
                 session().restoreBatch(requests, fence, lane, leaseGuard, taskId, channel, slot);
+            }
+        }
+
+        synchronized void restoreNodeBatch(List<TargetCommandSession.RestoreRequest> requests,
+                TargetFence fence, LeaseGuard leaseGuard, int lane) throws IOException {
+            try {
+                session().restoreNodeBatch(requests, fence, lane, leaseGuard, taskId, channel);
+            } catch (IOException error) {
+                reconnect();
+                session().restoreNodeBatch(requests, fence, lane, leaseGuard, taskId, channel);
             }
         }
 

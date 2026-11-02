@@ -52,6 +52,11 @@ class WorkerPolicyMysqlTest {
                 phase VARCHAR(32),lease_owner VARCHAR(160),lease_until DATETIME(3),fencing_generation BIGINT DEFAULT 0,
                 heartbeat_at DATETIME(3),started_at DATETIME(3))
                 """);
+        execute("""
+                CREATE TABLE sync_worker_registry (instance_name VARCHAR(128) PRIMARY KEY,worker_ip VARCHAR(64),
+                version VARCHAR(128),started_at DATETIME(3) NULL,heartbeat_at DATETIME(3) NOT NULL,
+                updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3))
+                """);
     }
     @AfterEach
     void cleanup() throws Exception {
@@ -74,9 +79,9 @@ class WorkerPolicyMysqlTest {
         var tasks = session.getMapper(WorkerSyncMapper.class);
         var jobs = session.getMapper(WorkerControlJobMapper.class);
         assertEquals(List.of(100L), tasks.findExpiredRecoverableTasks(50).stream().map(WorkerSyncTask::id).toList());
-        assertEquals(1, jobs.claim("SYNC_START", "job-owner", 30));
+        assertEquals(1, jobs.claim("SYNC_START", "job-owner", 30, "me", 60));
         assertEquals(100, jobs.findClaimed("job-owner").taskId());
-        assertEquals(0, jobs.claim("SYNC_START", "another-job-owner", 30));
+        assertEquals(0, jobs.claim("SYNC_START", "another-job-owner", 30, "me", 60));
         for (int i = 0; i < incompatible.size(); i++)
             assertEquals(0, tasks.claimRuntime(i + 1, "new-runtime", "worker", 30, "127.0.0.1"));
         assertEquals(1, tasks.claimRuntime(100, "new-runtime", "worker", 30, "127.0.0.1"));
@@ -92,9 +97,38 @@ class WorkerPolicyMysqlTest {
                 "{\"policyVersion\":\"v2\"}", "{\"policyVersion\":\"v3\"}");
         for (int i = 0; i < legacy.size(); i++) {
             insert(i + 1, legacy.get(i));
-            assertEquals(1, jobs.claim("SYNC_START", "legacy-" + i, 30));
+            assertEquals(1, jobs.claim("SYNC_START", "legacy-" + i, 30, "me", 60));
             assertEquals(i + 1, jobs.findClaimed("legacy-" + i).taskId());
         }
+    }
+    @Test
+    void assignmentRestrictsClaimingToTheAssignedWorkerUnlessItIsDead() throws Exception {
+        var jobs = session.getMapper(WorkerControlJobMapper.class);
+        // NULL assignment -> any worker.
+        insert(1, "{\"policyVersion\":\"v1\"}");
+        assertEquals(1, jobs.claim("SYNC_START", "any-worker", 30, "me", 60));
+        assertEquals(1, jobs.findClaimed("any-worker").taskId());
+        execute("UPDATE async_job SET status='PENDING',lease_owner=NULL,lease_until=NULL WHERE id=1");
+        // Assigned to a live other worker -> not claimable.
+        execute("INSERT INTO sync_worker_registry(instance_name,heartbeat_at) VALUES ('other',CURRENT_TIMESTAMP(3))");
+        execute("UPDATE sync_task SET assigned_worker='other' WHERE id=1");
+        assertEquals(0, jobs.claim("SYNC_START", "me", 30, "me", 60));
+        // Assigned to me -> claimable.
+        execute("UPDATE sync_task SET assigned_worker='me' WHERE id=1");
+        assertEquals(1, jobs.claim("SYNC_START", "me", 30, "me", 60));
+        assertEquals(1, jobs.findClaimed("me").taskId());
+        execute("UPDATE async_job SET status='PENDING',lease_owner=NULL,lease_until=NULL WHERE id=1");
+        // Assignee heartbeat stale -> escape hatch allows claiming.
+        execute("UPDATE sync_task SET assigned_worker='other' WHERE id=1");
+        execute("UPDATE sync_worker_registry SET heartbeat_at=DATE_SUB(CURRENT_TIMESTAMP(3),INTERVAL 10 MINUTE)"
+                + " WHERE instance_name='other'");
+        assertEquals(1, jobs.claim("SYNC_START", "third", 30, "third", 60));
+        assertEquals(1, jobs.findClaimed("third").taskId());
+        execute("UPDATE async_job SET status='PENDING',lease_owner=NULL,lease_until=NULL WHERE id=1");
+        // Assignee with no registry row at all -> claimable (no deadlock on registry wipes).
+        execute("UPDATE sync_task SET assigned_worker='ghost' WHERE id=1");
+        assertEquals(1, jobs.claim("SYNC_START", "fourth", 30, "fourth", 60));
+        assertEquals(1, jobs.findClaimed("fourth").taskId());
     }
     private void insert(long id, String policy) throws Exception {
         try (var insert = session.getConnection().prepareStatement(

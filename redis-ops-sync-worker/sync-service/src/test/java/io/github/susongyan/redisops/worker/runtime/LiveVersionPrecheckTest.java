@@ -31,7 +31,8 @@ class LiveVersionPrecheckTest {
         when(endpoints.readServerVersion(any(), eq(source))).thenReturn("5.0.14");
         when(endpoints.readServerVersion(any(), eq(extra))).thenReturn("6.2.6");
         when(endpoints.readServerVersion(any(), eq(target))).thenReturn("7.4.2");
-        return new SyncPrecheckExecutor(assets, profiles, null, null, new ObjectMapper(), endpoints, Path.of("data"),
+        return new SyncPrecheckExecutor(assets, profiles, null, null, null, new ObjectMapper(), endpoints,
+                Path.of("data"),
                 1024);
     }
 
@@ -39,7 +40,8 @@ class LiveVersionPrecheckTest {
         Instant now = Instant.now();
         var task = new WorkerSyncTask(1L, "SYNC", relation, 1, 2, "MIGRATION", "FULL_AND_INCREMENTAL",
                 SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0, "[\"*\"]", "[]", "{\"policyVersion\":\"v3\"}",
-                50000, 100000000, 1048576, 4, 8, "START", true, "test", null, "epoch", null, null, 0, now, now, null);
+                "PRESERVE", 50000, 100000000, 1048576, 4, 8, "START", true, "test", null, "epoch", null, null, 0,
+                now, now, null);
         var method = SyncPrecheckExecutor.class.getDeclaredMethod("compatibleVersions", WorkerSyncTask.class);
         method.setAccessible(true);
         return (String) method.invoke(executor, task);

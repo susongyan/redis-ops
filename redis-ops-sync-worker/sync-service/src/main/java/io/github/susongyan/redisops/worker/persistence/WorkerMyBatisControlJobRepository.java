@@ -16,8 +16,9 @@ public class WorkerMyBatisControlJobRepository implements WorkerControlJobPort {
     }
     @Override
     @Transactional
-    public Optional<WorkerControlJob> claim(String type, String owner, Duration duration) {
-        return mapper.claim(type, owner, duration.toSeconds()) == 1
+    public Optional<WorkerControlJob> claim(String type, String owner, Duration duration, String instanceName,
+            long staleSeconds) {
+        return mapper.claim(type, owner, duration.toSeconds(), instanceName, staleSeconds) == 1
                 ? Optional.ofNullable(mapper.findClaimed(owner))
                 : Optional.empty();
     }
