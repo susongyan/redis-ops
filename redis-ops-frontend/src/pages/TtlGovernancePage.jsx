@@ -1,7 +1,8 @@
 import GovernanceTaskDrawer from '../components/GovernanceTaskDrawer.jsx'
 import GovernancePreflightActions from '../components/GovernancePreflightActions.jsx'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Card, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, message } from 'antd'
+import { Alert, Button, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, message } from 'antd'
+import { PlusOutlined } from '@ant-design/icons'
 import { api } from '../api.js'
 
 const statusColor = { CREATED: 'default', DRY_RUN_PAUSED: 'orange', DRY_RUN: 'processing', AWAITING_APPROVAL: 'gold', APPROVED: 'blue', RUNNING: 'processing', PAUSED: 'orange', COMPLETED: 'success', CANCELLED: 'default', FAILED: 'error' }
@@ -85,10 +86,10 @@ export default function TtlGovernancePage() {
     }
   }
 
-  return <Space direction="vertical" size={16} style={{ width: '100%' }}>
-    <Card title="TTL 治理" extra={<Button type="primary" onClick={() => { form.resetFields(); form.setFieldsValue({ databaseNo: 0, includePattern: '*', targetTtlSeconds: 86400, scanRatePerSecond: 5000, maxKeys: 100000 }); setOpen(true) }}>新建治理任务</Button>}>
-      <Alert type="info" showIcon message="安全门禁" description="可预检后审批执行，或填写原因并确认跳过预检直接执行。所有执行保留限速和数量限制，可暂停或取消。" />
-      <Table loading={loading} style={{ marginTop: 16 }} rowKey="id" dataSource={tasks} scroll={{ x: 1100 }} columns={[
+  return <>
+    <div className="toolbar"><Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ databaseNo: 0, includePattern: '*', targetTtlSeconds: 86400, scanRatePerSecond: 5000, maxKeys: 100000 }); setOpen(true) }}>新建治理任务</Button></div>
+    <Alert type="info" showIcon message="安全门禁" description="可预检后审批执行，或填写原因并确认跳过预检直接执行。所有执行保留限速和数量限制，可暂停或取消。" />
+    <Table loading={loading} rowKey="id" dataSource={tasks} scroll={{ x: 1100 }} columns={[
         { title: '任务', dataIndex: 'taskNo', render: (v,row) => <Button type="link" onClick={()=>show(row.id)}>{v}</Button> },
         { title: '集群', dataIndex: 'clusterId', render: value => clusters.find(cluster => cluster.id === value)?.name || `#${value}` },
         { title: '目标 TTL', dataIndex: 'targetTtlSeconds', render: value => `${value}s` },
@@ -97,7 +98,6 @@ export default function TtlGovernancePage() {
         { title: '审批', dataIndex: 'approvalStatus', render: value => <Tag color={value === 'APPROVED' ? 'green' : 'default'}>{value}</Tag> },
         { title: '创建时间', dataIndex: 'createdAt', render: formatTime }
       ]} pagination={false} />
-    </Card>
 
     <GovernanceTaskDrawer detail={detail} clusters={clusters} kind="ttl" actions={action} onClose={() => setDetail(null)} />
 
@@ -113,5 +113,5 @@ export default function TtlGovernancePage() {
         <Form.Item style={{ margin: '16px 0 0', textAlign: 'right' }}><Space><Button onClick={() => setOpen(false)}>取消</Button><Button type="primary" htmlType="submit">创建任务</Button></Space></Form.Item>
       </Form>
     </Modal>
-  </Space>
+  </>
 }

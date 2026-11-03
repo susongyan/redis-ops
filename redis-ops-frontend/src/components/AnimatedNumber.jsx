@@ -35,9 +35,8 @@ export default function AnimatedNumber({ value, duration = 600 }) {
       cancelAnimationFrame(cool)
     }
   }, [value, duration])
-  const flash = hot === 'up' ? '#389e0d' : '#fa541c'
   return (
-    <span style={hot ? { color: flash, transition: 'none' } : { color: 'inherit', transition: 'color 900ms ease' }}>
+    <span className={hot ? `trend-${hot}` : undefined} style={hot ? { transition: 'none' } : { transition: 'color 900ms ease' }}>
       {display == null ? '-' : display.toLocaleString()}
     </span>
   )

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Form, Input, Modal, Select, Space, Table, Tag, message } from 'antd'
+import { Button, Form, Input, Modal, Select, Space, Table, Tag, message } from 'antd'
+import { PlusOutlined } from '@ant-design/icons'
 import { request } from '../api.js'
 import { randomUuid } from '../uuid.js'
 
@@ -19,8 +20,8 @@ export default function UsersPage(){
       });setEdit(null);form.resetFields();message.success('已保存');refresh()
     }catch(e){message.error(e.message)}finally{setBusy(false)}
   }
-  return <Card title="用户管理" extra={<Button type="primary" onClick={()=>open('create')}>添加本地用户</Button>}>
-    <p className="muted">管理员负责用户授权；运维用户拥有现有运维功能。企业认证为后续扩展，当前仅支持本地账号。</p>
+  return <>
+    <div className="toolbar"><div className="muted">管理员负责用户授权；运维用户拥有现有运维功能。企业认证为后续扩展，当前仅支持本地账号。</div><Button type="primary" icon={<PlusOutlined/>} onClick={()=>open('create')}>添加本地用户</Button></div>
     <Table rowKey={r=>r.user.id} dataSource={data.items} scroll={{x:780}} pagination={{current:page,total:data.total,pageSize:20,onChange:setPage,showSizeChanger:false}} columns={[
       {title:'账号 / 来源',render:(_,r)=><>{r.login}<br/><span className="muted">{r.source}</span></>},
       {title:'显示名称',render:(_,r)=>r.user.displayName},{title:'角色',render:(_,r)=>r.user.role==='ADMIN'?'管理员':'运维用户'},
@@ -35,5 +36,5 @@ export default function UsersPage(){
         {edit?.mode==='edit'?<Form.Item name="status" label="状态"><Select options={[{value:'ACTIVE',label:'启用'},{value:'DISABLED',label:'禁用'}]}/></Form.Item>:<Form.Item name="password" label="临时密码（至少 6 个字符，最多 72 UTF-8 字节，首次登录需修改）" rules={[{required:true}]}><Input.Password maxLength={72} autoComplete="new-password"/></Form.Item>}
       </Form>
     </Modal>
-  </Card>
+  </>
 }

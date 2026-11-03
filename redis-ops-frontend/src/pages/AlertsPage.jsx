@@ -1,6 +1,7 @@
 import IconActionButton from '../components/IconActionButton.jsx'
 import {useCallback,useEffect,useState} from 'react'
 import {Button,Card,Form,Input,InputNumber,Modal,Select,Space,Table,Tag,message,Switch} from 'antd'
+import {PlusOutlined} from '@ant-design/icons'
 import {api} from '../api.js'
 import {actorLabel} from '../actor.js'
 
@@ -13,7 +14,7 @@ export default function AlertsPage(){
   const action=async(fn)=>{try{await fn();message.success('操作已提交');load()}catch(e){message.error(e.message)}}
   const analyze=async row=>{try{await api.analyze({type:'ALERT',resourceType:row.resourceType,resourceId:String(row.resourceId),facts:{title:row.title,severity:row.severity,status:row.status},evidence:[{reference:`alert-event:${row.id}`,kind:'ALERT_EVENT',summary:`${row.title||'告警'}，状态 ${row.status}`}]});message.success('分析已完成');window.location.hash='/analysisRuns'}catch(e){message.error(e.message)}}
   return <Space direction="vertical" size="middle" style={{width:'100%'}}>
-    <Card title="告警中心" extra={<Space><Button onClick={()=>{setEditingChannel(null);channelForm.resetFields();setChannelOpen(true)}}>Webhook 通道</Button><Select allowClear placeholder="全部状态" style={{width:130}} onChange={v=>{setStatus(v);setEvents(x=>({...x,page:1}))}} options={['OPEN','ACKNOWLEDGED','RESOLVED'].map(x=>({value:x,label:x}))}/><Button type="primary" onClick={()=>setOpen(true)}>新建规则</Button></Space>}>
+    <div className="toolbar"><div className="toolbar-row"><Space wrap><Select allowClear placeholder="全部状态" style={{width:130}} onChange={v=>{setStatus(v);setEvents(x=>({...x,page:1}))}} options={['OPEN','ACKNOWLEDGED','RESOLVED'].map(x=>({value:x,label:x}))}/><Button onClick={()=>{setEditingChannel(null);channelForm.resetFields();setChannelOpen(true)}}>Webhook 通道</Button></Space><Button type="primary" icon={<PlusOutlined/>} onClick={()=>setOpen(true)}>新建规则</Button></div></div>
       <Table rowKey="id" dataSource={events.items} scroll={{x:1100}} pagination={{current:events.page,pageSize:events.size,total:events.total,onChange:p=>setEvents(x=>({...x,page:p}))}} columns={[
         {title:'告警',dataIndex:'title'}, {title:'级别',dataIndex:'severity',render:v=><Tag color={v==='P1'?'red':v==='P2'?'orange':'blue'}>{v}</Tag>},
         {title:'状态',dataIndex:'status',render:v=><Tag color={statusColor[v]}>{v}</Tag>},{title:'资源',render:(_,r)=>`${r.resourceType} #${r.resourceId}`},
@@ -21,7 +22,6 @@ export default function AlertsPage(){
         {title:'确认人',dataIndex:'acknowledgedBy',render:(value,row)=>actorLabel(value,row.acknowledgedBySnapshot)},
         {title:'操作',fixed:'right',width:230,align:'center',render:(_,r)=><Space onClick={e=>e.stopPropagation()}><Button size="small" onClick={()=>analyze(r)}>辅助分析</Button>{r.status==='OPEN'&&<Button size="small" onClick={()=>action(()=>api.acknowledgeAlert(r.id,r.version))}>确认</Button>}{r.status!=='RESOLVED'&&<Button size="small" onClick={()=>action(()=>api.resolveAlert(r.id,r.version))}>恢复</Button>}</Space>}
       ]}/>
-    </Card>
     <Card title="告警规则"><Table rowKey="id" size="small" pagination={false} dataSource={rules} columns={[{title:'名称',dataIndex:'name'},{title:'类型',dataIndex:'ruleType'},{title:'阈值',dataIndex:'thresholdValue'},{title:'持续秒数',dataIndex:'durationSeconds'},{title:'级别',dataIndex:'severity'},{title:'启用',dataIndex:'enabled',render:(v,r)=><Switch size="small" checked={v} onChange={enabled=>action(()=>api.updateAlertRule(r.id,r.version,{name:r.name,ruleType:r.ruleType,severity:r.severity,enabled,thresholdValue:r.thresholdValue,durationSeconds:r.durationSeconds,channelId:r.channelId}))}/>} ]}/></Card>
     <Modal open={open} title="新建告警规则" onCancel={()=>setOpen(false)} onOk={()=>form.validateFields().then(v=>action(async()=>{await api.createAlertRule(v);setOpen(false);form.resetFields()}))}>
       <Form form={form} layout="vertical" initialValues={{ruleType:'COLLECTOR_UNAVAILABLE',severity:'P2',durationSeconds:0}}>

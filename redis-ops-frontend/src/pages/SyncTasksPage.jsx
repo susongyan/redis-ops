@@ -737,7 +737,7 @@ export default function SyncTasksPage() {
     <>
       <div className="toolbar">
         <div className="muted">全量阶段支持任务级并发 RESTORE；增量阶段保持 offset 有序提交</div>
-        <Space wrap size={8}>
+        <div className="toolbar-row"><Space wrap size={8}>
           <Input allowClear style={{ width: 230 }} placeholder="任务号 / ID / 集群 / 关系名"
             value={filters.keyword} onChange={e => setFilters(f => ({ ...f, keyword: e.target.value }))} />
           <Select allowClear mode="multiple" maxTagCount="responsive" style={{ minWidth: 170 }} placeholder="状态"
@@ -750,8 +750,8 @@ export default function SyncTasksPage() {
               { value: '__none__', label: '（暂无执行 Worker）' },
             ]} />
           <Button onClick={() => setFilters({ keyword: '', worker: '', statuses: [] })}>重置</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增同步任务</Button>
         </Space>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建同步任务</Button></div>
       </div>
       <Table className="sync-task-list" rowKey="id" dataSource={filteredRows} columns={columns} tableLayout="fixed" scroll={{ x: 900 }}
         pagination={{ pageSize: 20, showSizeChanger: true, showTotal: total => `共 ${total} 条` }} />
