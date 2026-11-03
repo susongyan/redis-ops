@@ -1,6 +1,6 @@
 import { Component,lazy,Suspense,useEffect,useState } from 'react'
-import { AlertOutlined, AppstoreOutlined, AuditOutlined, ClockCircleOutlined, ClusterOutlined, CodeOutlined, DatabaseOutlined, DeleteOutlined, DesktopOutlined, EnvironmentOutlined, FileSearchOutlined, FileTextOutlined, FundProjectionScreenOutlined, LineChartOutlined, RobotOutlined, SafetyCertificateOutlined, SearchOutlined, SettingOutlined, SwapOutlined, SyncOutlined, TeamOutlined } from '@ant-design/icons'
-import { Layout, Menu, Typography, Button, Select, Space } from 'antd'
+import { AlertOutlined, AppstoreOutlined, AuditOutlined, ClockCircleOutlined, ClusterOutlined, CodeOutlined, DatabaseOutlined, DeleteOutlined, DesktopOutlined, EnvironmentOutlined, FileSearchOutlined, FileTextOutlined, FundProjectionScreenOutlined, LineChartOutlined, MoonOutlined, RobotOutlined, SafetyCertificateOutlined, SearchOutlined, SettingOutlined, SunOutlined, SwapOutlined, SyncOutlined, TeamOutlined } from '@ant-design/icons'
+import { Layout, Menu, Typography, Button, Select, Space, Tooltip } from 'antd'
 const ClustersPage=lazy(()=>import('./pages/ClustersPage.jsx'))
 const ApplicationsPage=lazy(()=>import('./pages/ApplicationsPage.jsx'))
 const LocationsPage=lazy(()=>import('./pages/LocationsPage.jsx'))
@@ -31,7 +31,7 @@ class PageErrorBoundary extends Component{
   static getDerivedStateFromError(error){return{error}}
   render(){return this.state.error?<div className="muted">页面加载失败：{this.state.error.message}</div>:this.props.children}
 }
-export default function App({user,onLogout,onPassword}){
+export default function App({user,onLogout,onPassword,themeMode,onToggleTheme}){
   const [page,setPage]=useState(pageFromHash)
   const [openMenuKeys,setOpenMenuKeys]=useState(['assets','observability','governance','platform'])
   const pages={users:user.role==='ADMIN'?<UsersPage/>:<div>无用户管理权限</div>,clusters:<ClustersPage/>,applications:<ApplicationsPage/>,locations:<LocationsPage/>,relations:<RelationsPage/>,syncTasks:<SyncTasksPage/>,syncWorkers:<SyncWorkersPage/>,validations:<ValidationTasksPage/>,keyDistributions:<KeyDistributionsPage/>,riskScans:<RiskScansPage/>,metrics:<MetricsPage/>,alerts:<AlertsPage/>,ttlGovernance:<TtlGovernancePage/>,cleanupGovernance:<CleanupGovernancePage/>,redisOperations:<RedisOperationsPage/>,commandCatalog:<CommandCatalogPage/>,audits:<AuditsPage/>,analysisAgents:<AnalysisAgentsPage/>,analysisRuns:<AnalysisRunsPage/>}
@@ -56,7 +56,7 @@ export default function App({user,onLogout,onPassword}){
     {value:'analysisAgents',label:'AI Agent'},
     {value:'analysisRuns',label:'分析结果'},
   ]
-  const pageTitle=page==='redisOperations'?'Redis Console':'Redis 资源管理'
+  const pageTitle=page==='redisOperations'?'Redis Console':pageOptions.find(option=>option.value===page)?.label||'Redis 资源管理'
   useEffect(()=>{
     const onHashChange=()=>setPage(pageFromHash())
     window.addEventListener('hashchange',onHashChange)
@@ -97,7 +97,7 @@ export default function App({user,onLogout,onPassword}){
     </Sider>
     <Layout><Header className="topbar"><Typography.Title level={4} className="page-title">{pageTitle}</Typography.Title>
       <Select className="mobile-page-select" value={page} onChange={navigate} options={pageOptions}/>
-      <Space wrap><span>{user.displayName}</span><Button onClick={onPassword}>修改密码</Button><Button onClick={onLogout}>退出</Button></Space>
+      <Space wrap><Tooltip title={themeMode==='dark'?'切换为明亮主题':'切换为深色主题'}><Button type="text" aria-label="切换深色/明亮主题" icon={themeMode==='dark'?<SunOutlined/>:<MoonOutlined/>} onClick={onToggleTheme}/></Tooltip><span>{user.displayName}</span><Button onClick={onPassword}>修改密码</Button><Button onClick={onLogout}>退出</Button></Space>
     </Header><Content className="content"><PageErrorBoundary key={page}><Suspense fallback={<div className="muted">加载中…</div>}>{pages[page]}</Suspense></PageErrorBoundary></Content></Layout>
   </Layout>
 }

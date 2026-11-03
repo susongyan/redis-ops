@@ -1,6 +1,7 @@
 import IconActionButton from '../components/IconActionButton.jsx'
 import {useEffect,useState} from 'react'
-import {Alert,Button,Card,Collapse,Empty,Form,Input,InputNumber,Modal,Select,Space,Spin,Switch,Table,Tag,message} from 'antd'
+import {Alert,Button,Collapse,Empty,Form,Input,InputNumber,Modal,Select,Space,Spin,Switch,Table,Tag,message} from 'antd'
+import {PlusOutlined} from '@ant-design/icons'
 import {api} from '../api.js'
 import {editableParameters,encodeDefinition,groupCommands} from '../commandDefinition.js'
 const access=[{value:'READ',label:'只读'},{value:'WRITE',label:'写入'},{value:'MANAGE',label:'管理'}]
@@ -24,9 +25,8 @@ export default function CommandCatalogPage(){
   const sections=groupCommands(rows,{search,groupId:groupFilter,enabled:enabledFilter})
   const sectionKeys=sections.map(g=>g.key).join(',')
   useEffect(()=>{if(search.trim()||groupFilter!==undefined||enabledFilter!==undefined)setExpanded(sectionKeys?sectionKeys.split(','):[])},[search,groupFilter,enabledFilter,sectionKeys])
-  return <Space direction="vertical" size="large" style={{width:'100%'}}>
-    <Card title="命令配置" extra={<Space wrap><Button onClick={load}>刷新</Button><Button onClick={()=>setGroupsOpen(true)}>管理分组</Button><Button type="primary" onClick={()=>edit(null)}>新增命令</Button></Space>}>
-      <Space wrap style={{marginBottom:16}}><Input aria-label="搜索命令" placeholder="搜索命令" value={search} onChange={e=>setSearch(e.target.value)}/><Select aria-label="筛选分组" style={{minWidth:160}} placeholder="全部分组" allowClear value={groupFilter} onChange={setGroupFilter} options={[{value:0,label:'未分组'},...groups.map(g=>({value:g.id,label:g.commandName}))]}/><Select aria-label="筛选状态" style={{minWidth:120}} placeholder="全部状态" allowClear value={enabledFilter} onChange={setEnabledFilter} options={[{value:true,label:'已启用'},{value:false,label:'已禁用'}]}/></Space>
+  return <>
+    <div className="toolbar"><div className="toolbar-row"><Space wrap><Input aria-label="搜索命令" placeholder="搜索命令" value={search} onChange={e=>setSearch(e.target.value)}/><Select aria-label="筛选分组" style={{minWidth:160}} placeholder="全部分组" allowClear value={groupFilter} onChange={setGroupFilter} options={[{value:0,label:'未分组'},...groups.map(g=>({value:g.id,label:g.commandName}))]}/><Select aria-label="筛选状态" style={{minWidth:120}} placeholder="全部状态" allowClear value={enabledFilter} onChange={setEnabledFilter} options={[{value:true,label:'已启用'},{value:false,label:'已禁用'}]}/><Button onClick={load}>刷新</Button><Button onClick={()=>setGroupsOpen(true)}>管理分组</Button></Space><Button type="primary" icon={<PlusOutlined/>} onClick={()=>edit(null)}>新增命令</Button></div></div>
       <Space wrap style={{marginBottom:12}}><Button size="small" onClick={()=>setExpanded(sections.map(g=>g.key))}>全部展开</Button><Button size="small" onClick={()=>setExpanded([])}>全部收起</Button><span className="muted">共 {sections.length} 个分组，{sections.reduce((n,g)=>n+g.commands.length,0)} 条命令</span></Space>
       <Spin spinning={loading}>{sections.length?<Collapse activeKey={expanded} onChange={setExpanded} items={sections.map(group=>({key:group.key,label:<Space wrap><strong>{group.name}</strong><Tag>{group.commands.length} 条命令</Tag></Space>,children:<Table rowKey="id" size="middle" dataSource={group.commands} pagination={group.commands.length>20?{pageSize:20}:false} scroll={{x:760}} columns={[
         {title:'命令',dataIndex:'commandName',render:v=><code>{v}</code>},
@@ -36,7 +36,6 @@ export default function CommandCatalogPage(){
         {title:'状态',dataIndex:'enabled',render:v=><Tag color={v?'green':'default'}>{v?'已启用':'已禁用'}</Tag>},
         {title:'操作',fixed:'right',width:96,align:'center',render:(_,r)=><Space><IconActionButton action="edit" onClick={()=>edit(r)}/><IconActionButton action="delete" onClick={()=>deletion(r)}/></Space>}
       ]}/>}))}/>:<Empty description="没有匹配的命令分组"/>}</Spin>
-    </Card>
     <Modal title="管理分组" open={groupsOpen} onCancel={()=>setGroupsOpen(false)} footer={null} width={600}>
       <p>分组仅用于归类展示，不影响命令执行策略。</p><Button type="primary" onClick={()=>edit(null,true)}>新增分组</Button>
       <Table rowKey="id" dataSource={groups} scroll={{x:500}} pagination={{pageSize:8}} columns={[{title:'分组名称',dataIndex:'commandName'},{title:'命令数',render:(_,r)=>rows.filter(c=>c.parentId===r.id).length},{title:'操作',fixed:'right',width:96,align:'center',render:(_,r)=><Space wrap><IconActionButton action="edit" label="重命名" onClick={()=>edit(r,true)}/><IconActionButton action="delete" onClick={()=>deletion(r)}/></Space>}]}/>
@@ -75,5 +74,5 @@ export default function CommandCatalogPage(){
       <p>{removing?.nodeKind==='CATEGORY'?'组内命令将移入未分组，不会删除命令。':'删除后不再允许执行，待执行确认失效；已发送的命令不会撤回。历史记录保留。'}</p>
       <Input.TextArea aria-label="删除原因" placeholder="请填写删除原因" maxLength={512} value={reason} onChange={e=>setReason(e.target.value)}/>
     </Modal>
-  </Space>
+  </>
 }

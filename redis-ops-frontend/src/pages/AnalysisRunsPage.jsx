@@ -1,5 +1,5 @@
 import {useEffect,useState} from 'react'
-import {Button,Space,Card,Descriptions,Drawer,Table,Tag,message} from 'antd'
+import {Button,Space,Descriptions,Drawer,Table,Tag,message} from 'antd'
 import DeleteExecutionRecordButton from '../components/DeleteExecutionRecordButton.jsx'
 import {api} from '../api.js'
 
@@ -8,8 +8,8 @@ export default function AnalysisRunsPage(){
   const load=()=>api.analysisRuns().then(setRows).catch(e=>message.error(e.message))
   useEffect(()=>{load()},[])
   return <>
-    <Card title="AI 分析结果" extra="点击时间查看详情">
-      <Table scroll={{x:1000}} rowKey={row=>row.id||row.result.requestId} dataSource={rows} columns={[
+    <div className="toolbar"><div className="muted">点击时间查看详情</div></div>
+    <Table scroll={{x:1000}} rowKey={row=>row.id||row.result.requestId} dataSource={rows} columns={[
         {title:'时间',render:(_,r)=><Button type="link" onClick={()=>setDetail(r)}>{new Date(r.result.createdAt).toLocaleString()}</Button>},
         {title:'场景',render:(_,r)=>r.request.type},
         {title:'资源',render:(_,r)=>`${r.request.resourceType||'-'} #${r.request.resourceId||'-'}`},
@@ -19,7 +19,6 @@ export default function AnalysisRunsPage(){
         {title:'下一步建议',render:(_,r)=>r.result.recommendations?.map(x=>x.action).join('、')||'-'},
         {title:'操作',fixed:'right',width:80, align: 'center', render:(_,r)=><Space wrap><DeleteExecutionRecordButton type="ANALYSIS" record={r} onDeleted={id=>{if(detail?.id===id)setDetail(null);load()}}/></Space>}
       ]}/>
-    </Card>
     <Drawer width="min(680px, 100vw)" title="分析详情" open={!!detail} onClose={()=>setDetail(null)}>
       {detail&&<>
         <Descriptions bordered size="small" column={1}>

@@ -69,7 +69,7 @@ export default function GovernanceTaskDrawer({ detail, clusters, kind, actions, 
         <div key={`governance-progress-${flash}`} className={`sync-live-panel ${flash > 0 ? 'sync-live-panel-updated' : ''}`}>
           {denominator ? <div style={{ marginBottom: 12 }}>
             <Progress percent={progress} size="small" status={run.status === 'FAILED' ? 'exception' : executing ? 'active' : 'success'} format={p => `${p.toFixed(1)}%`} />
-            <div style={{ color: 'rgba(0,0,0,0.45)', fontSize: 12, marginTop: 2 }}>
+            <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
               {executing ? `速率 ${rate > 0 ? rate.toFixed(1) : '—'} key/s · 预计剩余 ${duration(remaining)}` : `总耗时 ${duration(elapsed)}`}
               {hitCap && ' · 达到处理上限，未遍历全库'}
             </div>

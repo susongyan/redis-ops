@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Card, Form, Input, Space, Spin, message } from 'antd'
+import { Alert, Button, Card, ConfigProvider, Form, Input, Space, Spin, message, theme as antdTheme } from 'antd'
 import { request } from './api.js'
 import App from './App.jsx'
+import { themeToken } from './theme.js'
 import { ClusterOutlined, LockOutlined, UserOutlined, ArrowRightOutlined } from '@ant-design/icons'
 
-export default function IdentityGate() {
+// 登录/改密/加载分支永远明亮：嵌套 Provider 强制 default 算法，与未迁移的 identity-* 明色 CSS 一致
+const lightTheme={algorithm:antdTheme.defaultAlgorithm,token:themeToken('light')}
+
+export default function IdentityGate({themeMode,onToggleTheme}) {
   const [user,setUser]=useState(null), [loading,setLoading]=useState(true), [changing,setChanging]=useState(false), [busy,setBusy]=useState(false)
   const [form]=Form.useForm()
   useEffect(()=>{
@@ -24,9 +28,9 @@ export default function IdentityGate() {
       form.resetFields()
     } catch(e){message.error(e.message);form.setFieldsValue({password:'',oldPassword:'',confirm:''})} finally{setBusy(false)}
   }
-  if(loading)return <div className="identity-login"><Spin tip="检查登录状态"/></div>
-  if(user&&!user.passwordChangeRequired&&!changing)return <App user={user} onLogout={logout} onPassword={()=>{form.resetFields();setChanging(true)}}/>
-  return <main className="identity-page">
+  if(loading)return <ConfigProvider theme={lightTheme}><div className="identity-login"><Spin tip="检查登录状态"/></div></ConfigProvider>
+  if(user&&!user.passwordChangeRequired&&!changing)return <App user={user} onLogout={logout} onPassword={()=>{form.resetFields();setChanging(true)}} themeMode={themeMode} onToggleTheme={onToggleTheme}/>
+  return <ConfigProvider theme={lightTheme}><main className="identity-page">
     <section className="identity-story" aria-label="Redis Ops 平台介绍">
       <div className="identity-brand"><span className="identity-brand-icon"><ClusterOutlined/></span><span>Redis Ops<small>运维与治理平台</small></span></div>
       <div className="identity-story-content"><div className="identity-eyebrow">ONE PLACE. CLEAR CONTROL.</div><h1>让 Redis 运维<br/>更清晰，更从容。</h1><p>从资产到同步，从观测到治理。<br/>在一个工作台中，掌握每个集群。</p>
@@ -46,5 +50,5 @@ export default function IdentityGate() {
     </Form>
       {!user&&<div className="identity-help">账号由平台管理员开通。<br/>如需访问权限或重置密码，请联系管理员。</div>}
     </Card><footer className="identity-access-footer">仅限授权用户访问 · 请妥善保管您的登录凭据</footer></section>
-  </main>
+  </main></ConfigProvider>
 }

@@ -232,7 +232,7 @@ export default function KeyDistributionsPage() {
         <div key={`distribution-progress-${flash}`} className={`sync-live-panel ${flash > 0 ? 'sync-live-panel-updated' : ''}`}>
           {progress.percent != null && <div style={{ marginBottom: 12 }}>
             <Progress percent={progress.percent} size="small" status={selected.status === 'FAILED' ? 'exception' : progress.running ? 'active' : undefined} format={p => `${p.toFixed(1)}%`} />
-            <div style={{ color: 'rgba(0,0,0,0.45)', fontSize: 12, marginTop: 2 }}>
+            <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
               {progress.running ? `速率 ${progress.rate > 0 ? progress.rate.toFixed(1) : '—'} key/s · 预计剩余 ${formatDuration(progress.remaining)}` : `有效执行 ${Math.round(selected.elapsedMillis / 1000)} 秒`}
               {progress.budgetCapped && ' · 已达观测上限，未遍历全库'}
             </div>
