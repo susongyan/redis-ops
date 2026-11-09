@@ -20,6 +20,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
     private final Path dataDirectory;
     private final long segmentBytes;
     private final Duration connectTimeout;
+    private final Duration fullApplySocketTimeout;
     private final int fullApplyConcurrency;
     private final int fullApplyQueueCapacity;
     private final int fullApplyPipelineSize;
@@ -34,6 +35,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
             @Value("${sync.engine.data-dir:./data/sync}") Path dataDirectory,
             @Value("${sync.engine.segment-bytes:268435456}") long segmentBytes,
             @Value("${sync.engine.connect-timeout-ms:10000}") long connectTimeoutMillis,
+            @Value("${sync.engine.full-apply-socket-timeout-ms:300000}") long fullApplySocketTimeoutMillis,
             @Value("${sync.engine.full-apply-concurrency:4}") int fullApplyConcurrency,
             @Value("${sync.engine.full-apply-queue-capacity:2000}") int fullApplyQueueCapacity,
             @Value("${sync.engine.full-apply-pipeline-size:100}") int fullApplyPipelineSize,
@@ -51,6 +53,8 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
             throw new IllegalArgumentException("full apply transaction max bytes must be at least 1024");
         if (fullApplyQueueMaxBytes < 1024)
             throw new IllegalArgumentException("full apply queue max bytes must be at least 1024");
+        if (fullApplySocketTimeoutMillis < 1000)
+            throw new IllegalArgumentException("full apply socket timeout must be at least 1000ms");
         if (leaseSafetyMarginMillis < 0)
             throw new IllegalArgumentException("lease safety margin cannot be negative");
         if (metricIntervalMillis < 1)
@@ -64,6 +68,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
         this.dataDirectory = dataDirectory;
         this.segmentBytes = segmentBytes;
         this.connectTimeout = Duration.ofMillis(connectTimeoutMillis);
+        this.fullApplySocketTimeout = Duration.ofMillis(fullApplySocketTimeoutMillis);
         this.fullApplyConcurrency = fullApplyConcurrency;
         this.fullApplyQueueCapacity = fullApplyQueueCapacity;
         this.fullApplyPipelineSize = fullApplyPipelineSize;
@@ -96,12 +101,12 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
             }
             if (source.mode() == WorkerClusterMode.CLUSTER || target.mode() == WorkerClusterMode.CLUSTER)
                 return new ClusterSyncTaskRunner(task, recovery, profiles, sync, reporter, spoolKeys, endpoints, json,
-                        dataDirectory, segmentBytes, connectTimeout, fullApplyConcurrency, fullApplyQueueCapacity,
-                        fullApplyPipelineSize, fullApplyTransactionMaxBytes, fullApplyQueueMaxBytes,
-                        leaseSafetyMargin, metricInterval);
+                        dataDirectory, segmentBytes, connectTimeout, fullApplySocketTimeout, fullApplyConcurrency,
+                        fullApplyQueueCapacity, fullApplyPipelineSize, fullApplyTransactionMaxBytes,
+                        fullApplyQueueMaxBytes, leaseSafetyMargin, metricInterval);
         }
         return new StandaloneSyncTaskRunner(task, recovery, profiles, sync, reporter, spoolKeys, endpoints, json,
-                dataDirectory, segmentBytes, connectTimeout, fullApplyConcurrency,
+                dataDirectory, segmentBytes, connectTimeout, fullApplySocketTimeout, fullApplyConcurrency,
                 fullApplyQueueCapacity, fullApplyPipelineSize, fullApplyTransactionMaxBytes, fullApplyQueueMaxBytes,
                 leaseSafetyMargin, metricInterval);
     }
@@ -111,13 +116,13 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
             if (profile.mode() == WorkerClusterMode.CLUSTER) {
                 for (var master : endpoints.resolveClusterMasters(profile)) {
                     try (var session = TargetCommandSession.clusterSlot(profile, master.endpoint(), taskId,
-                            connectTimeout, "version-check", master.slotStart())) {
+                            connectTimeout, fullApplySocketTimeout, "version-check", master.slotStart())) {
                         session.requireMultiKeyVersion(policy);
                     }
                 }
             } else {
                 try (var session = new TargetCommandSession(profile, endpoints.resolvePrimary(profile), database,
-                        taskId, connectTimeout)) {
+                        taskId, connectTimeout, fullApplySocketTimeout)) {
                     session.requireMultiKeyVersion(policy);
                 }
             }

@@ -18,18 +18,20 @@ class ClusterTargetRouter implements AutoCloseable {
     private final long taskId;
     private final String channel;
     private final Duration connectTimeout;
+    private final Duration socketTimeout;
     private final MasterConnection[] slots = new MasterConnection[16384];
     private final Map<RedisEndpoint, MasterConnection> connections = new LinkedHashMap<>();
     private final BitSet publishedFences = new BitSet(16384);
     private int anchorSlot = -1;
 
     ClusterTargetRouter(WorkerRedisConnectionProfile profile, RedisDataEndpointResolver endpoints, long taskId,
-            String channel, Duration connectTimeout) throws IOException {
+            String channel, Duration connectTimeout, Duration socketTimeout) throws IOException {
         this.profile = profile;
         this.endpoints = endpoints;
         this.taskId = taskId;
         this.channel = channel;
         this.connectTimeout = connectTimeout;
+        this.socketTimeout = socketTimeout;
         refreshTopology();
     }
 
@@ -273,8 +275,8 @@ class ClusterTargetRouter implements AutoCloseable {
 
         private TargetCommandSession session() throws IOException {
             if (session == null)
-                session = TargetCommandSession.clusterSlot(profile, endpoint, taskId, connectTimeout, channel,
-                        bootstrapSlot);
+                session = TargetCommandSession.clusterSlot(profile, endpoint, taskId, connectTimeout,
+                        socketTimeout, channel, bootstrapSlot);
             return session;
         }
 

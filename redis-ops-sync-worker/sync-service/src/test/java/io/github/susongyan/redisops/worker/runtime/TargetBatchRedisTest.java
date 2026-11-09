@@ -242,7 +242,8 @@ class TargetBatchRedisTest {
     }
     TargetCommandSession session() throws Exception {
         return new TargetCommandSession(new WorkerRedisConnectionProfile(1, WorkerClusterMode.STANDALONE,
-                List.of(endpoint), null, null, "NONE", null), 0, taskId, Duration.ofSeconds(2));
+                List.of(endpoint), null, null, "NONE", null), 0, taskId, Duration.ofSeconds(2),
+                Duration.ofSeconds(10));
     }
     String key(String suffix) {
         return "batch-fixture:" + taskId + ":" + suffix;

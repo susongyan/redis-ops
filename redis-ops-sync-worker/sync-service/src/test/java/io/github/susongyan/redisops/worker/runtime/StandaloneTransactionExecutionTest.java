@@ -80,7 +80,9 @@ class StandaloneTransactionExecutionTest {
             when(task.fullSyncEpoch()).thenReturn("test-epoch");
             var sync = mock(WorkerSyncExecutionPort.class);
             runner = new StandaloneSyncTaskRunner(task, false, null, sync, mock(SyncRunnerStateReporter.class), null,
-                    null, new ObjectMapper(), Path.of("unused"), 1024, Duration.ofSeconds(1), 1, 1, 1, 1024,
+                    null, new ObjectMapper(), Path.of("unused"), 1024, Duration.ofSeconds(1), Duration.ofSeconds(10), 1,
+                    1, 1,
+                    1024,
                     64 * 1024 * 1024L, Duration.ZERO, Duration.ofSeconds(1));
             var filter = new KeyFilter(List.of("biz:*"), List.of());
             var policy = new SyncCommandPolicy(false, true, Set.of(), "v3");

@@ -20,7 +20,7 @@ final class FullRestoreQueueBudget {
      * it, so a huge key still passes once the queue drains instead of being rejected.
      */
     int permits(TargetCommandSession.RestoreRequest request) {
-        return (int) Math.min(request.key().length + request.payload().length + 128L, limit);
+        return (int) Math.min(request.estimatedBytes(), limit);
     }
 
     boolean tryAcquire(int permits, long timeout, TimeUnit unit) throws InterruptedException {

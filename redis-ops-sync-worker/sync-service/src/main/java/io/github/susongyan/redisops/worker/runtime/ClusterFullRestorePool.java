@@ -111,7 +111,7 @@ final class ClusterFullRestorePool implements AutoCloseable {
                     return;
                 batch.add(first.request());
                 applied.add(first);
-                long batchBytes = estimatedBytes(first.request());
+                long batchBytes = first.request().estimatedBytes();
                 boolean stopAfterBatch = false;
                 while (batch.size() < pipelineSize) {
                     Item next = queue.poll();
@@ -121,7 +121,7 @@ final class ClusterFullRestorePool implements AutoCloseable {
                         stopAfterBatch = true;
                         break;
                     }
-                    long nextBytes = estimatedBytes(next.request());
+                    long nextBytes = next.request().estimatedBytes();
                     if (batchBytes + nextBytes > transactionMaxBytes) {
                         carry = next;
                         break;
@@ -168,9 +168,5 @@ final class ClusterFullRestorePool implements AutoCloseable {
     }
 
     private record Item(TargetCommandSession.RestoreRequest request, int permits) {
-    }
-
-    private static long estimatedBytes(TargetCommandSession.RestoreRequest request) {
-        return request.key().length + request.payload().length + 128L;
     }
 }

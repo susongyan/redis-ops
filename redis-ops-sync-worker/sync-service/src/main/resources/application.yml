@@ -67,3 +67,10 @@ sync:
     full-apply-queue-capacity: ${SYNC_ENGINE_FULL_APPLY_QUEUE_CAPACITY:2000}
     full-apply-pipeline-size: ${SYNC_ENGINE_FULL_APPLY_PIPELINE_SIZE:100}
     full-apply-transaction-max-bytes: ${SYNC_ENGINE_FULL_APPLY_TRANSACTION_MAX_BYTES:4194304}
+    # Byte budget of the full-apply queue (in addition to its item count): submits block once the
+    # queued encoded bytes reach this limit, so one huge key cannot pile up behind more of them.
+    # A single item larger than the whole budget reserves all of it and passes once the queue drains.
+    full-apply-queue-max-bytes: ${SYNC_ENGINE_FULL_APPLY_QUEUE_MAX_BYTES:67108864}
+    # Read timeout applied to every target command connection (restore pools, runners, precheck).
+    # Must comfortably exceed the slowest single command (a near-capacity RESTORE on a busy master).
+    full-apply-socket-timeout-ms: ${SYNC_ENGINE_FULL_APPLY_SOCKET_TIMEOUT_MS:300000}

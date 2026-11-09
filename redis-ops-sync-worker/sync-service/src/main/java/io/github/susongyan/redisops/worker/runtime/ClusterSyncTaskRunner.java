@@ -43,6 +43,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     private final Path dataDirectory;
     private final long segmentBytes;
     private final Duration connectTimeout;
+    private final Duration fullApplySocketTimeout;
     private final int fullConcurrency;
     private final int fullQueueCapacity;
     private final int fullPipelineSize;
@@ -69,7 +70,8 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     ClusterSyncTaskRunner(WorkerSyncTask task, boolean recovery, WorkerRedisConnectionProfilePort profiles,
             WorkerSyncExecutionPort sync, SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys,
             RedisDataEndpointResolver endpoints, ObjectMapper json, Path dataDirectory, long segmentBytes,
-            Duration connectTimeout, int fullConcurrency, int fullQueueCapacity, int fullPipelineSize,
+            Duration connectTimeout, Duration fullApplySocketTimeout, int fullConcurrency,
+            int fullQueueCapacity, int fullPipelineSize,
             long fullTransactionBytes, long fullQueueMaxBytes, Duration leaseSafetyMargin, Duration metricInterval) {
         this.task = task;
         this.recovery = recovery;
@@ -82,6 +84,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         this.dataDirectory = dataDirectory;
         this.segmentBytes = segmentBytes;
         this.connectTimeout = connectTimeout;
+        this.fullApplySocketTimeout = fullApplySocketTimeout;
         this.fullConcurrency = fullConcurrency;
         this.fullQueueCapacity = fullQueueCapacity;
         this.fullPipelineSize = fullPipelineSize;
@@ -148,13 +151,14 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                 masters.add(master.endpoint());
             for (RedisEndpoint master : masters)
                 try (TargetCommandSession session = TargetCommandSession.clusterSlot(targetProfile, master,
-                        task.id(), connectTimeout, "cleanup", 0)) {
+                        task.id(), connectTimeout, fullApplySocketTimeout, "cleanup", 0)) {
                     session.deleteOwnReservedKeys();
                 }
             return;
         }
         try (TargetCommandSession session = new TargetCommandSession(targetProfile,
-                endpoints.resolvePrimary(targetProfile), task.targetDb(), task.id(), connectTimeout)) {
+                endpoints.resolvePrimary(targetProfile), task.targetDb(), task.id(), connectTimeout,
+                fullApplySocketTimeout)) {
             session.deleteOwnReservedKeys();
         }
     }
@@ -483,10 +487,10 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
             spool.prepare();
             if (targetProfile.mode() == WorkerClusterMode.CLUSTER)
                 routedTarget = new ClusterTargetRouter(targetProfile, endpoints, task.id(), spec.channel(),
-                        connectTimeout);
+                        connectTimeout, fullApplySocketTimeout);
             else
                 singleTarget = new TargetCommandSession(targetProfile, endpoints.resolvePrimary(targetProfile),
-                        task.targetDb(), task.id(), connectTimeout, spec.channel());
+                        task.targetDb(), task.id(), connectTimeout, fullApplySocketTimeout, spec.channel());
             heartbeatSource = heartbeatSession();
         }
 
@@ -603,8 +607,8 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
 
         private void applySingleRdb() throws IOException {
             try (var restores = new FullRestorePool(targetProfile, endpoints, task.targetDb(), task.id(),
-                    spec.channel(), connectTimeout, restoreConcurrency, restoreQueueCapacity,
-                    restoreQueueMaxBytes,
+                    spec.channel(), connectTimeout, fullApplySocketTimeout, restoreConcurrency,
+                    restoreQueueCapacity, restoreQueueMaxBytes,
                     limits.fullApplyPipelineSize() > 0 ? limits.fullApplyPipelineSize() : fullPipelineSize,
                     fullTransactionBytes, channelFence, leaseGuard,
                     ClusterSyncTaskRunner.this::beforeApply, ClusterSyncTaskRunner.this::afterApply,
@@ -884,9 +888,9 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         private TargetCommandSession heartbeatSession() throws IOException {
             if (sourceProfile.mode() == WorkerClusterMode.CLUSTER)
                 return TargetCommandSession.clusterSlot(sourceProfile, sourceEndpoint, task.id(), connectTimeout,
-                        spec.channel(), spec.slots().nextSetBit(0));
+                        fullApplySocketTimeout, spec.channel(), spec.slots().nextSetBit(0));
             return new TargetCommandSession(sourceProfile, sourceEndpoint, task.sourceDb(), task.id(),
-                    connectTimeout, spec.channel());
+                    connectTimeout, fullApplySocketTimeout, spec.channel());
         }
 
         private void writeHeartbeat() throws IOException {

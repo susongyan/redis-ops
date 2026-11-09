@@ -41,6 +41,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private final Path dataDirectory;
     private final long segmentBytes;
     private final Duration connectTimeout;
+    private final Duration fullApplySocketTimeout;
     private final int fullApplyConcurrency;
     private final int fullApplyQueueCapacity;
     private final int fullApplyPipelineSize;
@@ -101,7 +102,8 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     StandaloneSyncTaskRunner(WorkerSyncTask task, boolean recovery, WorkerRedisConnectionProfilePort profiles,
             WorkerSyncExecutionPort sync, SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys,
             RedisDataEndpointResolver endpoints, ObjectMapper json,
-            Path dataDirectory, long segmentBytes, Duration connectTimeout, int fullApplyConcurrency,
+            Path dataDirectory, long segmentBytes, Duration connectTimeout, Duration fullApplySocketTimeout,
+            int fullApplyConcurrency,
             int fullApplyQueueCapacity, int fullApplyPipelineSize, long fullApplyTransactionMaxBytes,
             long fullApplyQueueMaxBytes, Duration leaseSafetyMargin, Duration metricInterval) {
         this.originalTask = task;
@@ -115,6 +117,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         this.dataDirectory = dataDirectory;
         this.segmentBytes = segmentBytes;
         this.connectTimeout = connectTimeout;
+        this.fullApplySocketTimeout = fullApplySocketTimeout;
         this.fullApplyConcurrency = fullApplyConcurrency;
         this.fullApplyQueueCapacity = fullApplyQueueCapacity;
         this.fullApplyPipelineSize = fullApplyPipelineSize;
@@ -158,9 +161,9 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             }
             prepareSpool();
             target = new TargetCommandSession(targetProfile, targetEndpoint, originalTask.targetDb(), originalTask.id(),
-                    connectTimeout);
+                    connectTimeout, fullApplySocketTimeout);
             heartbeatSource = new TargetCommandSession(sourceProfile, sourceEndpoint, originalTask.sourceDb(),
-                    originalTask.id(), connectTimeout);
+                    originalTask.id(), connectTimeout, fullApplySocketTimeout);
             target.assertReservedNamespaceAvailable();
             if (!recovery)
                 // A fresh start carries a new full sync epoch and supersedes the finished attempt.
@@ -383,8 +386,8 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         int restoreQueueCapacity = Math.max(fullApplyQueueCapacity, restoreConcurrency);
         try (var input = spool.openRdb()) {
             try (var restores = new FullRestorePool(targetProfile, endpoints, originalTask.targetDb(),
-                    originalTask.id(), connectTimeout, restoreConcurrency, restoreQueueCapacity,
-                    fullApplyQueueMaxBytes, taskFullApplyPipelineSize(),
+                    originalTask.id(), connectTimeout, fullApplySocketTimeout, restoreConcurrency,
+                    restoreQueueCapacity, fullApplyQueueMaxBytes, taskFullApplyPipelineSize(),
                     fullApplyTransactionMaxBytes, targetFence, leaseGuard,
                     this::waitForApplyPermission, this::targetApplyFinished, fullProgress::applied)) {
                 try {
@@ -858,7 +861,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         RedisEndpoint previous = targetEndpoint;
         targetEndpoint = endpoints.resolvePrimary(targetProfile);
         target = new TargetCommandSession(targetProfile, targetEndpoint, originalTask.targetDb(),
-                originalTask.id(), connectTimeout);
+                originalTask.id(), connectTimeout, fullApplySocketTimeout);
         if (previous != null && !previous.equals(targetEndpoint)) {
             sync.appendTaskEvent(originalTask.id(), "sync:" + targetFence.workerId(),
                     "TARGET_MASTER_CHANGED from=" + address(previous) + " to=" + address(targetEndpoint));
@@ -870,7 +873,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         RedisEndpoint current = endpoints.resolvePrimary(sourceProfile);
         sourceEndpoint = current;
         heartbeatSource = new TargetCommandSession(sourceProfile, current, originalTask.sourceDb(),
-                originalTask.id(), connectTimeout);
+                originalTask.id(), connectTimeout, fullApplySocketTimeout);
     }
 
     private void refreshSourceMasterIfNeeded() throws IOException {

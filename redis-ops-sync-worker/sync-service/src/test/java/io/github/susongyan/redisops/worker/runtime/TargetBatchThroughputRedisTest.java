@@ -47,7 +47,7 @@ class TargetBatchThroughputRedisTest {
         var operation = new CommandPlan.PlannedCommand(-1, List.of(bytes("INCR"), counter));
         var batch = Collections.nCopies(size, operation);
         var address = RedisEndpoint.parse(endpoint);
-        try (var target = new TargetCommandSession(profile, 0, taskId, Duration.ofSeconds(2));
+        try (var target = new TargetCommandSession(profile, 0, taskId, Duration.ofSeconds(2), Duration.ofSeconds(10));
                 var socket = new Socket(address.host(), address.port())) {
             socket.setTcpNoDelay(true);
             socket.setSoTimeout(3000);

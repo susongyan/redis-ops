@@ -30,12 +30,14 @@ public class SyncPrecheckExecutor {
     private final RedisDataEndpointResolver endpoints;
     private final Path dataDirectory;
     private final long segmentBytes;
+    private final java.time.Duration socketTimeout;
 
     public SyncPrecheckExecutor(WorkerAssetReadPort clusters, WorkerRedisConnectionProfilePort profiles,
             WorkerTopologyPort topology, WorkerSyncStatePort state, WorkerSyncExecutionPort execution,
             ObjectMapper json, RedisDataEndpointResolver endpoints,
             @Value("${sync.engine.data-dir:./data/sync}") Path dataDirectory,
-            @Value("${sync.engine.segment-bytes:268435456}") long segmentBytes) {
+            @Value("${sync.engine.segment-bytes:268435456}") long segmentBytes,
+            @Value("${sync.engine.full-apply-socket-timeout-ms:300000}") long socketTimeoutMillis) {
         this.clusters = clusters;
         this.profiles = profiles;
         this.topology = topology;
@@ -45,6 +47,7 @@ public class SyncPrecheckExecutor {
         this.endpoints = endpoints;
         this.dataDirectory = dataDirectory;
         this.segmentBytes = segmentBytes;
+        this.socketTimeout = java.time.Duration.ofMillis(socketTimeoutMillis);
     }
 
     public WorkerSyncPrecheckReport execute(WorkerSyncTask task) {
@@ -186,10 +189,10 @@ public class SyncPrecheckExecutor {
                         masters.add(master.endpoint());
                     for (RedisEndpoint master : masters)
                         sessions.add(TargetCommandSession.clusterSlot(profile, master, task.id(),
-                                java.time.Duration.ofSeconds(10), "precheck", 0));
+                                java.time.Duration.ofSeconds(10), socketTimeout, "precheck", 0));
                 } else {
                     sessions.add(new TargetCommandSession(profile, endpoints.resolvePrimary(profile),
-                            task.targetDb(), task.id(), java.time.Duration.ofSeconds(10)));
+                            task.targetDb(), task.id(), java.time.Duration.ofSeconds(10), socketTimeout));
                 }
                 return reconcileReservedKeys(task, sessions);
             } finally {
@@ -270,7 +273,7 @@ public class SyncPrecheckExecutor {
                     masters.add(master.endpoint());
                 for (RedisEndpoint master : masters) {
                     try (TargetCommandSession target = TargetCommandSession.clusterSlot(profile, master, task.id(),
-                            java.time.Duration.ofSeconds(10), "precheck", 0)) {
+                            java.time.Duration.ofSeconds(10), socketTimeout, "precheck", 0)) {
                         requireFlushdbAvailable(target, master);
                         inspected++;
                     }
@@ -278,7 +281,7 @@ public class SyncPrecheckExecutor {
             } else {
                 RedisEndpoint primary = endpoints.resolvePrimary(profile);
                 try (TargetCommandSession target = new TargetCommandSession(profile, primary, task.targetDb(),
-                        task.id(), java.time.Duration.ofSeconds(10))) {
+                        task.id(), java.time.Duration.ofSeconds(10), socketTimeout)) {
                     requireFlushdbAvailable(target, primary);
                     inspected = 1;
                 }
@@ -324,7 +327,7 @@ public class SyncPrecheckExecutor {
                     masters.add(master.endpoint());
                 for (RedisEndpoint master : masters) {
                     try (TargetCommandSession target = TargetCommandSession.clusterSlot(profile, master, task.id(),
-                            java.time.Duration.ofSeconds(10), "precheck", 0)) {
+                            java.time.Duration.ofSeconds(10), socketTimeout, "precheck", 0)) {
                         total += target.dbsize();
                     }
                 }
@@ -332,7 +335,7 @@ public class SyncPrecheckExecutor {
             }
             RedisEndpoint primary = endpoints.resolvePrimary(profile);
             try (TargetCommandSession target = new TargetCommandSession(profile, primary, task.targetDb(),
-                    task.id(), java.time.Duration.ofSeconds(10))) {
+                    task.id(), java.time.Duration.ofSeconds(10), socketTimeout)) {
                 return target.dbsize();
             }
         }
@@ -391,14 +394,14 @@ public class SyncPrecheckExecutor {
                     masters.add(master.endpoint());
                 for (RedisEndpoint master : masters) {
                     try (TargetCommandSession source = TargetCommandSession.clusterSlot(profile, master, task.id(),
-                            java.time.Duration.ofSeconds(10), "precheck-source", 0)) {
+                            java.time.Duration.ofSeconds(10), socketTimeout, "precheck-source", 0)) {
                         source.commandStats().forEach((command, calls) -> aggregated.merge(command, calls, Long::sum));
                     }
                 }
             } else {
                 try (TargetCommandSession source = new TargetCommandSession(profile,
                         endpoints.resolvePrimary(profile), task.sourceDb(), task.id(),
-                        java.time.Duration.ofSeconds(10))) {
+                        java.time.Duration.ofSeconds(10), socketTimeout)) {
                     aggregated.putAll(source.commandStats());
                 }
             }

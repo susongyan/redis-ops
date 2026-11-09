@@ -91,8 +91,8 @@ class SourceTransactionsRedisTest {
             var fence = new TargetFence("effects", 1, "runtime", "fixture", Instant.now());
             try (var target = cluster
                     ? TargetCommandSession.clusterSlot(profile, RedisEndpoint.parse(endpoint), taskId,
-                            Duration.ofSeconds(2), "effects", 0)
-                    : new TargetCommandSession(profile, 0, taskId, Duration.ofSeconds(2))) {
+                            Duration.ofSeconds(2), Duration.ofSeconds(10), "effects", 0)
+                    : new TargetCommandSession(profile, 0, taskId, Duration.ofSeconds(2), Duration.ofSeconds(10))) {
                 target.publishFence(fence, guard);
                 for (var unit : transactions) {
                     var plan = new SourceTransactionPlanner(new KeyFilter(List.of(), List.of()), cluster, policy, 0)

@@ -44,7 +44,7 @@ class ClusterRestoreNodeBatchRedisTest {
         var profile = new WorkerRedisConnectionProfile(1, WorkerClusterMode.CLUSTER, List.of(endpoint),
                 null, null, "NONE", null);
         target = TargetCommandSession.clusterSlot(profile, RedisEndpoint.parse(endpoint), taskId,
-                Duration.ofSeconds(2), CHANNEL, 0);
+                Duration.ofSeconds(2), Duration.ofSeconds(10), CHANNEL, 0);
     }
 
     @AfterEach

@@ -33,7 +33,7 @@ class LiveVersionPrecheckTest {
         when(endpoints.readServerVersion(any(), eq(target))).thenReturn("7.4.2");
         return new SyncPrecheckExecutor(assets, profiles, null, null, null, new ObjectMapper(), endpoints,
                 Path.of("data"),
-                1024);
+                1024, 300000);
     }
 
     private String check(SyncPrecheckExecutor executor, Long relation) throws Exception {

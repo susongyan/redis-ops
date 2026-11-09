@@ -41,7 +41,7 @@ class StandaloneSyncTaskRunnerFactoryTest {
         org.mockito.Mockito.when(endpoints.readServerVersion(org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.eq(target))).thenReturn("5.0.14");
         var precheck = new SyncPrecheckExecutor(assets, profiles, null, null, null,
-                new com.fasterxml.jackson.databind.ObjectMapper(), endpoints, Path.of("data"), 1024);
+                new com.fasterxml.jackson.databind.ObjectMapper(), endpoints, Path.of("data"), 1024, 300000);
         var method = SyncPrecheckExecutor.class.getDeclaredMethod("compatibleVersions", WorkerSyncTask.class);
         method.setAccessible(true);
         org.junit.jupiter.api.Assertions.assertEquals("INFO server: source=[5.0.14] -> target=[5.0.14]",
@@ -107,7 +107,7 @@ class StandaloneSyncTaskRunnerFactoryTest {
             int concurrency, int queueCapacity, int pipelineSize) {
         return new StandaloneSyncTaskRunnerFactory(profiles, null, null, null,
                 new RedisDataEndpointResolver(1000), new com.fasterxml.jackson.databind.ObjectMapper(),
-                Path.of("data"), 1024, 1000, concurrency, queueCapacity, pipelineSize,
+                Path.of("data"), 1024, 1000, 300000, concurrency, queueCapacity, pipelineSize,
                 4 * 1024 * 1024L, 64 * 1024 * 1024L, 2000, 1000);
     }
 

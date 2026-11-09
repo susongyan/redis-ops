@@ -97,7 +97,8 @@ class ClusterBatchRecoveryRedisTest {
     }
 
     private ClusterTargetRouter router() throws Exception {
-        return new ClusterTargetRouter(profile, resolver, taskId, "fixture", Duration.ofSeconds(2));
+        return new ClusterTargetRouter(profile, resolver, taskId, "fixture", Duration.ofSeconds(2),
+                Duration.ofSeconds(10));
     }
     private TargetCheckpoint checkpoint(long offset, long generation) {
         return new TargetCheckpoint("epoch", generation, "repl", offset, 0, Instant.now());

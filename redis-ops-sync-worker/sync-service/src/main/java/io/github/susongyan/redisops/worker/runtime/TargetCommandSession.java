@@ -34,38 +34,49 @@ public final class TargetCommandSession implements AutoCloseable {
             "full_progress");
 
     public TargetCommandSession(WorkerRedisConnectionProfile profile, int database, long taskId,
-            Duration connectTimeout)
+            Duration connectTimeout, Duration socketTimeout)
             throws IOException {
-        this(profile, RedisEndpoint.parse(profile.seedEndpoints().get(0)), database, taskId, connectTimeout);
+        this(profile, RedisEndpoint.parse(profile.seedEndpoints().get(0)), database, taskId, connectTimeout,
+                socketTimeout);
     }
 
     public TargetCommandSession(WorkerRedisConnectionProfile profile, RedisEndpoint endpoint, int database,
-            long taskId, Duration connectTimeout) throws IOException {
-        this(profile, endpoint, database, taskId, connectTimeout, standaloneKeyspace(taskId, "standalone"), true);
+            long taskId, Duration connectTimeout, Duration socketTimeout) throws IOException {
+        this(profile, endpoint, database, taskId, connectTimeout, socketTimeout,
+                standaloneKeyspace(taskId, "standalone"), true);
     }
 
     TargetCommandSession(WorkerRedisConnectionProfile profile, RedisEndpoint endpoint, int database,
-            long taskId, Duration connectTimeout, String channel) throws IOException {
-        this(profile, endpoint, database, taskId, connectTimeout, standaloneKeyspace(taskId, channel), true);
+            long taskId, Duration connectTimeout, Duration socketTimeout, String channel) throws IOException {
+        this(profile, endpoint, database, taskId, connectTimeout, socketTimeout,
+                standaloneKeyspace(taskId, channel), true);
     }
 
     static TargetCommandSession clusterSlot(WorkerRedisConnectionProfile profile, RedisEndpoint endpoint,
-            long taskId, Duration connectTimeout, String channel, int slot) throws IOException {
+            long taskId, Duration connectTimeout, Duration socketTimeout, String channel, int slot)
+            throws IOException {
         byte[] progress = ClusterSlotKeyspace.fullProgress(taskId, channel, slot, 0);
         int separator = lastIndexOf(progress, (byte) ':');
         Keyspace keyspace = new Keyspace(ClusterSlotKeyspace.checkpoint(taskId, channel, slot),
                 heartbeatKey(taskId, channel, slot), ClusterSlotKeyspace.fence(taskId, channel, slot),
                 java.util.Arrays.copyOf(progress, separator + 1));
-        return new TargetCommandSession(profile, endpoint, 0, taskId, connectTimeout, keyspace, false);
+        return new TargetCommandSession(profile, endpoint, 0, taskId, connectTimeout, socketTimeout, keyspace,
+                false);
     }
 
     private TargetCommandSession(WorkerRedisConnectionProfile profile, RedisEndpoint endpoint, int database,
-            long taskId, Duration connectTimeout, Keyspace keyspace, boolean selectDatabase) throws IOException {
+            long taskId, Duration connectTimeout, Duration socketTimeout, Keyspace keyspace,
+            boolean selectDatabase) throws IOException {
+        if (socketTimeout.isZero() || socketTimeout.isNegative())
+            throw new IllegalArgumentException("socket timeout must be positive");
         socket = new Socket();
         socket.setKeepAlive(true);
         socket.setTcpNoDelay(true);
         socket.connect(new InetSocketAddress(endpoint.host(), endpoint.port()),
                 Math.toIntExact(connectTimeout.toMillis()));
+        // A target that accepts the connection but never replies (huge RESTORE stuck on a slow
+        // master, half-open TCP) must surface as a read timeout instead of hanging the worker.
+        socket.setSoTimeout(Math.toIntExact(socketTimeout.toMillis()));
         codec = new RespCodec(new BufferedInputStream(socket.getInputStream(), 64 * 1024),
                 new BufferedOutputStream(socket.getOutputStream(), 64 * 1024));
         checkpointKey = keyspace.checkpoint();
@@ -780,20 +791,20 @@ public final class TargetCommandSession implements AutoCloseable {
     public record FencePublication(TargetFence fence, Optional<TargetCheckpoint> checkpoint) {
     }
 
+    /**
+     * Owns its key and payload: the constructor takes one defensive copy, and accessors return the
+     * stored arrays directly (a copy per access would multiply the heap cost of every large key
+     * flowing through the restore queue — callers only read them).
+     */
     public record RestoreRequest(byte[] key, long absoluteExpireMillis, byte[] payload) {
         public RestoreRequest {
             key = key.clone();
             payload = payload.clone();
         }
 
-        @Override
-        public byte[] key() {
-            return key.clone();
-        }
-
-        @Override
-        public byte[] payload() {
-            return payload.clone();
+        /** Wire-level size estimate used for queue budgeting and transaction byte caps. */
+        public long estimatedBytes() {
+            return key.length + payload.length + 128L;
         }
     }
 

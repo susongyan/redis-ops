@@ -199,7 +199,7 @@ class ClusterSyncTaskRunnerIntegrationTest {
         return new ClusterSyncTaskRunner(task, recovery, profiles, mock(WorkerSyncExecutionPort.class),
                 mock(SyncRunnerStateReporter.class), new SpoolKeyProvider(keyRing),
                 new RedisDataEndpointResolver(5000), new ObjectMapper(),
-                dataDirectory, 1024 * 1024, Duration.ofSeconds(5), 4, 32, 8,
+                dataDirectory, 1024 * 1024, Duration.ofSeconds(5), Duration.ofSeconds(10), 4, 32, 8,
                 4 * 1024 * 1024L, 64 * 1024 * 1024L, Duration.ofSeconds(2), Duration.ofMillis(200));
     }
 

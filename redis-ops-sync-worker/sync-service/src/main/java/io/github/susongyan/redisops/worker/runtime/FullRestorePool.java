@@ -19,6 +19,7 @@ final class FullRestorePool implements AutoCloseable {
     private final long taskId;
     private final String channel;
     private final Duration connectTimeout;
+    private final Duration socketTimeout;
     private final int pipelineSize;
     private final long transactionMaxBytes;
     private final TargetFence fence;
@@ -34,17 +35,17 @@ final class FullRestorePool implements AutoCloseable {
     private final AtomicBoolean completed = new AtomicBoolean();
 
     FullRestorePool(WorkerRedisConnectionProfile profile, RedisDataEndpointResolver endpoints, int database,
-            long taskId, Duration connectTimeout,
+            long taskId, Duration connectTimeout, Duration socketTimeout,
             int concurrency, int queueCapacity, long queueMaxBytes, int pipelineSize, long transactionMaxBytes,
             TargetFence fence, LeaseGuard leaseGuard, Runnable beforeApply, Runnable afterApply,
             FullRestoreProgressListener progress) {
-        this(profile, endpoints, database, taskId, "standalone", connectTimeout, concurrency, queueCapacity,
-                queueMaxBytes, pipelineSize, transactionMaxBytes, fence, leaseGuard, beforeApply, afterApply,
-                progress);
+        this(profile, endpoints, database, taskId, "standalone", connectTimeout, socketTimeout, concurrency,
+                queueCapacity, queueMaxBytes, pipelineSize, transactionMaxBytes, fence, leaseGuard, beforeApply,
+                afterApply, progress);
     }
 
     FullRestorePool(WorkerRedisConnectionProfile profile, RedisDataEndpointResolver endpoints, int database,
-            long taskId, String channel, Duration connectTimeout,
+            long taskId, String channel, Duration connectTimeout, Duration socketTimeout,
             int concurrency, int queueCapacity, long queueMaxBytes, int pipelineSize, long transactionMaxBytes,
             TargetFence fence, LeaseGuard leaseGuard, Runnable beforeApply, Runnable afterApply,
             FullRestoreProgressListener progress) {
@@ -62,6 +63,7 @@ final class FullRestorePool implements AutoCloseable {
         this.taskId = taskId;
         this.channel = channel;
         this.connectTimeout = connectTimeout;
+        this.socketTimeout = socketTimeout;
         this.pipelineSize = pipelineSize;
         this.transactionMaxBytes = transactionMaxBytes;
         this.fence = fence;
@@ -144,7 +146,7 @@ final class FullRestorePool implements AutoCloseable {
                     return;
                 batch.add(first.request());
                 applied.add(first);
-                long batchBytes = estimatedBytes(first.request());
+                long batchBytes = first.request().estimatedBytes();
                 boolean stopAfterBatch = false;
                 while (batch.size() < pipelineSize) {
                     RestoreItem next = queue.poll();
@@ -154,7 +156,7 @@ final class FullRestorePool implements AutoCloseable {
                         stopAfterBatch = true;
                         break;
                     }
-                    long nextBytes = estimatedBytes(next.request());
+                    long nextBytes = next.request().estimatedBytes();
                     if (!batch.isEmpty() && batchBytes + nextBytes > transactionMaxBytes) {
                         carry = next;
                         break;
@@ -190,7 +192,7 @@ final class FullRestorePool implements AutoCloseable {
             leaseGuard.assertValid();
             RedisEndpoint endpoint = endpoints.resolvePrimary(profile);
             try (TargetCommandSession session = new TargetCommandSession(profile, endpoint, database,
-                    taskId, connectTimeout, channel)) {
+                    taskId, connectTimeout, socketTimeout, channel)) {
                 session.restoreBatch(batch, fence, lane, leaseGuard);
                 return;
             } catch (IOException | RespProtocolException error) {
@@ -209,10 +211,6 @@ final class FullRestorePool implements AutoCloseable {
         if (error instanceof RuntimeException runtime)
             throw runtime;
         throw new IOException("full RDB apply failed", error);
-    }
-
-    private static long estimatedBytes(TargetCommandSession.RestoreRequest request) {
-        return request.key().length + request.payload().length + 128L;
     }
 
     private record RestoreItem(TargetCommandSession.RestoreRequest request, int permits) {

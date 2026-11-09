@@ -17,7 +17,7 @@ class ClusterTargetBatchRedisTest extends TargetBatchRedisTest {
         var profile = new WorkerRedisConnectionProfile(1, WorkerClusterMode.CLUSTER,
                 List.of(endpoint), null, null, "NONE", null);
         return TargetCommandSession.clusterSlot(profile, RedisEndpoint.parse(endpoint), taskId,
-                Duration.ofSeconds(2), "fixture", 0);
+                Duration.ofSeconds(2), Duration.ofSeconds(10), "fixture", 0);
     }
 
     @Override

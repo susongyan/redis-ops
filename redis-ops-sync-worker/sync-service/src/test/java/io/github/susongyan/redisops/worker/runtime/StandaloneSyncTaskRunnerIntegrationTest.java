@@ -222,7 +222,7 @@ class StandaloneSyncTaskRunnerIntegrationTest {
 
                 try (WorkerRedisConnectionProfile targetProfile = profiles.get(2);
                         TargetCommandSession targetSession = new TargetCommandSession(
-                                targetProfile, 0, task.id(), Duration.ofSeconds(5))) {
+                                targetProfile, 0, task.id(), Duration.ofSeconds(5), Duration.ofSeconds(10))) {
                     LeaseGuard validLease = new LeaseGuard(Duration.ZERO);
                     validLease.grant(Duration.ofSeconds(30));
                     TargetFence oldFence = new TargetFence(task.fullSyncEpoch(), 1,
@@ -327,7 +327,7 @@ class StandaloneSyncTaskRunnerIntegrationTest {
         return new StandaloneSyncTaskRunner(task, recovery, profiles, mock(WorkerSyncExecutionPort.class),
                 mock(SyncRunnerStateReporter.class), new SpoolKeyProvider(keyRing),
                 new RedisDataEndpointResolver(5000), new ObjectMapper(),
-                dataDirectory, 1024 * 1024, Duration.ofSeconds(5), 4, 32, 8,
+                dataDirectory, 1024 * 1024, Duration.ofSeconds(5), Duration.ofSeconds(10), 4, 32, 8,
                 4 * 1024 * 1024L, 64 * 1024 * 1024L, Duration.ofSeconds(2), Duration.ofSeconds(1));
     }
 
