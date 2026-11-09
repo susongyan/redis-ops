@@ -2,16 +2,26 @@ package io.github.susongyan.redisops.worker.protocol;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
 
 /**
  * Streaming Redis RDB reader. It preserves the encoded value and produces a DUMP-compatible payload,
  * avoiding materializing large collections. Unsupported/module encodings fail closed.
+ *
+ * <p>
+ * Split mode ({@link #parse(Consumer, SplitOptions)}) additionally routes values by size: at or
+ * below the RESTORE threshold nothing changes; splittable values between threshold and hard cap are
+ * re-emitted as element streams ({@code BigKeyValueBegin}/{@code KeyElement}/{@code BigKeyValueEnd});
+ * anything above the hard cap, or an unsupported type the operator opted into skipping, arrives as
+ * {@code SkippedKey} after its bytes have been consumed. Values are recorded into a growable buffer
+ * only up to the crossing element, so peak heap stays O(threshold), never O(key).
  */
 public final class RdbStreamParser {
-    private static final int TYPE_STRING = 0, TYPE_LIST = 1, TYPE_SET = 2, TYPE_ZSET = 3, TYPE_HASH = 4,
+    static final int TYPE_STRING = 0, TYPE_LIST = 1, TYPE_SET = 2, TYPE_ZSET = 3, TYPE_HASH = 4,
             TYPE_ZSET_2 = 5;
-    private static final int TYPE_MODULE = 6, TYPE_MODULE_2 = 7, TYPE_HASH_ZIPMAP = 9, TYPE_LIST_ZIPLIST = 10,
+    static final int TYPE_MODULE = 6, TYPE_MODULE_2 = 7, TYPE_HASH_ZIPMAP = 9, TYPE_LIST_ZIPLIST = 10,
             TYPE_SET_INTSET = 11, TYPE_ZSET_ZIPLIST = 12, TYPE_HASH_ZIPLIST = 13, TYPE_LIST_QUICKLIST = 14,
             TYPE_STREAM_LISTPACKS = 15, TYPE_HASH_LISTPACK = 16, TYPE_ZSET_LISTPACK = 17,
             TYPE_LIST_QUICKLIST_2 = 18, TYPE_STREAM_LISTPACKS_2 = 19, TYPE_SET_LISTPACK = 20,
@@ -21,8 +31,25 @@ public final class RdbStreamParser {
             OPCODE_MODULE_AUX = 247, OPCODE_IDLE = 248, OPCODE_FREQ = 249, OPCODE_AUX = 250,
             OPCODE_RESIZEDB = 251, OPCODE_EXPIRETIME_MS = 252, OPCODE_EXPIRETIME = 253,
             OPCODE_SELECTDB = 254, OPCODE_EOF = 255;
+    private static final int MODULE_OPCODE_EOF = 0, MODULE_OPCODE_SINT = 1, MODULE_OPCODE_UINT = 2,
+            MODULE_OPCODE_FLOAT = 3, MODULE_OPCODE_DOUBLE = 4, MODULE_OPCODE_STRING = 5;
+    private static final byte[] SCORE_NEG_INF = "-inf".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] SCORE_POS_INF = "+inf".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] SCORE_NAN = "nan".getBytes(StandardCharsets.US_ASCII);
 
     private final InputStream input;
+    private long decodeFallbacks;
+
+    /**
+     * Times a value over the split threshold could not be decoded and was re-emitted as a plain
+     * {@code KeyValue} for the RESTORE path (LZF, compact-blob or prefix decode failure). The
+     * sync runner polls this to feed {@code sync_split_fallback_total}.
+     */
+    public long decodeFallbacks() {
+        return decodeFallbacks;
+    }
+
+    private final byte[] transferBuffer = new byte[8 * 1024];
     private int rdbVersion, database;
     private long expireAt = -1;
     private long crc;
@@ -37,6 +64,10 @@ public final class RdbStreamParser {
     }
 
     public void parse(Consumer<RdbEvent> consumer) throws IOException {
+        parse(consumer, null);
+    }
+
+    public void parse(Consumer<RdbEvent> consumer, SplitOptions options) throws IOException {
         byte[] header = readExact(9, null);
         String signature = new String(header, StandardCharsets.US_ASCII);
         if (!signature.startsWith("REDIS"))
@@ -84,22 +115,472 @@ public final class RdbStreamParser {
                 case OPCODE_FUNCTION2 -> consumer.accept(new RdbEvent.FunctionLibrary(readString(null)));
                 case OPCODE_FUNCTION_PRE_GA ->
                     throw new UnsupportedRdbTypeException(type, "pre-GA Redis Functions encoding is not supported");
-                case OPCODE_MODULE_AUX, TYPE_MODULE, TYPE_MODULE_2 ->
+                case OPCODE_MODULE_AUX, TYPE_MODULE ->
                     throw new UnsupportedRdbTypeException(type, "Redis Module data is not supported");
-                default -> readKeyValue(type, consumer);
+                default -> readKeyValue(type, consumer, options);
             }
         }
     }
 
-    private void readKeyValue(int type, Consumer<RdbEvent> consumer) throws IOException {
+    private void readKeyValue(int type, Consumer<RdbEvent> consumer, SplitOptions options) throws IOException {
         byte[] key = readString(null);
+        long valueStart = position;
+        try {
+            if (options == null)
+                legacyValue(type, consumer, key);
+            else
+                splitValue(type, consumer, options, key, valueStart);
+        } finally {
+            expireAt = -1;
+        }
+    }
+
+    private void legacyValue(int type, Consumer<RdbEvent> consumer, byte[] key) throws IOException {
+        if (type == TYPE_MODULE_2)
+            throw new UnsupportedRdbTypeException(type, "Redis Module data is not supported");
         ByteArrayOutputStream encoded = new ByteArrayOutputStream();
         encoded.write(type);
         skipObject(type, encoded);
         byte[] payload = toDumpPayload(encoded.toByteArray());
         consumer.accept(new RdbEvent.KeyValue(database, key, expireAt, payload));
-        expireAt = -1;
     }
+
+    private void splitValue(int type, Consumer<RdbEvent> consumer, SplitOptions options, byte[] key,
+            long valueStart) throws IOException {
+        if (type == TYPE_MODULE_2) {
+            if (!options.skipUnsupportedTypes())
+                throw new UnsupportedRdbTypeException(type, "Redis Module data is not supported");
+            skipModule2Payload();
+            consumer.accept(new RdbEvent.SkippedKey(key, type, position - valueStart,
+                    RdbEvent.SkipReason.UNSUPPORTED_TYPE));
+            return;
+        }
+        if (type == TYPE_MODULE)
+            throw new UnsupportedRdbTypeException(type, "Redis Module data is not supported");
+        switch (type) {
+            case TYPE_STRING, TYPE_HASH_ZIPMAP, TYPE_LIST_ZIPLIST, TYPE_SET_INTSET, TYPE_ZSET_ZIPLIST,
+                    TYPE_HASH_ZIPLIST, TYPE_HASH_LISTPACK, TYPE_ZSET_LISTPACK, TYPE_SET_LISTPACK ->
+                readBlobValue(type, consumer, options, key, valueStart);
+            case TYPE_LIST, TYPE_SET, TYPE_ZSET, TYPE_HASH, TYPE_ZSET_2 ->
+                readElementValue(type, consumer, options, key, valueStart);
+            case TYPE_LIST_QUICKLIST, TYPE_LIST_QUICKLIST_2 ->
+                readQuicklistValue(type, consumer, options, key, valueStart);
+            case TYPE_STREAM_LISTPACKS, TYPE_STREAM_LISTPACKS_2, TYPE_STREAM_LISTPACKS_3, TYPE_HASH_METADATA,
+                    TYPE_HASH_LISTPACK_EX ->
+                readCappedValue(type, consumer, key, options, valueStart);
+            case TYPE_HASH_METADATA_PRE_GA, TYPE_HASH_LISTPACK_EX_PRE_GA ->
+                throw new UnsupportedRdbTypeException(type, "pre-GA hash field expiration encoding is not supported");
+            default -> throw new UnsupportedRdbTypeException(type, "unknown RDB value type: " + type);
+        }
+    }
+
+    /** Types the split path can rebuild with element commands; everything else falls back to RESTORE. */
+    static boolean splittableType(int type) {
+        return switch (type) {
+            case TYPE_LIST, TYPE_SET, TYPE_ZSET, TYPE_HASH, TYPE_ZSET_2, TYPE_HASH_ZIPMAP, TYPE_LIST_ZIPLIST,
+                    TYPE_SET_INTSET, TYPE_ZSET_ZIPLIST, TYPE_HASH_ZIPLIST, TYPE_HASH_LISTPACK,
+                    TYPE_ZSET_LISTPACK, TYPE_LIST_QUICKLIST, TYPE_LIST_QUICKLIST_2, TYPE_SET_LISTPACK ->
+                true;
+            default -> false;
+        };
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Split mode: single length-prefixed blobs (string + compact container encodings)
+    // ---------------------------------------------------------------------------------------------
+
+    private void readBlobValue(int type, Consumer<RdbEvent> consumer, SplitOptions options, byte[] key,
+            long valueStart) throws IOException {
+        ByteArrayOutputStream record = new ByteArrayOutputStream();
+        record.write(type);
+        Length length = readLengthValue(record);
+        if (length.encoded && length.value == 3) { // LZF blob; the wire size is the compressed size
+            long compressed = readLength(record);
+            long uncompressed = readLength(record);
+            if (compressed > options.hardCapBytes()) {
+                transferBytes(compressed, null);
+                consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+                return;
+            }
+            byte[] blob = readExact(Math.toIntExact(compressed), record);
+            if (type == TYPE_STRING || !splittableType(type) || compressed <= options.maxRestoreBytes()) {
+                acceptKeyValue(consumer, key, record.toByteArray());
+                return;
+            }
+            byte[] plain;
+            try {
+                plain = Lzf.decompress(blob, Math.toIntExact(uncompressed));
+            } catch (RuntimeException e) { // undecompressable here — let the target judge the wire form
+                decodeFallbacks++;
+                acceptKeyValue(consumer, key, record.toByteArray());
+                return;
+            }
+            emitDecodedBlob(type, key, plain, record, consumer, position - valueStart);
+            return;
+        }
+        if (!length.encoded) {
+            long len = length.value;
+            if (len > options.hardCapBytes()) {
+                transferBytes(len, null);
+                consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+                return;
+            }
+            if (type == TYPE_STRING || !splittableType(type) || len <= options.maxRestoreBytes()) {
+                transferBytes(len, record);
+                acceptKeyValue(consumer, key, record.toByteArray());
+                return;
+            }
+            byte[] blob = readExact(Math.toIntExact(len), record);
+            emitDecodedBlob(type, key, blob, record, consumer, len);
+            return;
+        }
+        switch ((int) length.value) { // int-encoded string: tiny by construction
+            case 0 -> transferBytes(1, record);
+            case 1 -> transferBytes(2, record);
+            case 2 -> transferBytes(4, record);
+            default -> throw new RespProtocolException("unknown encoded RDB string: " + length.value);
+        }
+        acceptKeyValue(consumer, key, record.toByteArray());
+    }
+
+    private void emitDecodedBlob(int type, byte[] key, byte[] plain, ByteArrayOutputStream record,
+            Consumer<RdbEvent> consumer, long payloadBytes) {
+        int arity = arityOf(type);
+        List<byte[]> entries;
+        try {
+            entries = RdbValueDecoder.decode(type, plain);
+            if (arity == 2 && entries.size() % 2 != 0)
+                throw new RespProtocolException("odd entry count for paired compact encoding");
+        } catch (RuntimeException e) { // decoder disagrees with the blob — fall back to RESTORE
+            decodeFallbacks++;
+            acceptKeyValue(consumer, key, record.toByteArray());
+            return;
+        }
+        consumer.accept(new RdbEvent.BigKeyValueBegin(database, key, expireAt, type, entries.size() / arity));
+        for (int i = 0; i < entries.size(); i += arity) {
+            if (arity == 1)
+                consumer.accept(new RdbEvent.KeyElement(entries.get(i), null, null));
+            else if (type == TYPE_ZSET_ZIPLIST || type == TYPE_ZSET_LISTPACK)
+                consumer.accept(new RdbEvent.KeyElement(entries.get(i), null, entries.get(i + 1)));
+            else
+                consumer.accept(new RdbEvent.KeyElement(entries.get(i), entries.get(i + 1), null));
+        }
+        consumer.accept(new RdbEvent.BigKeyValueEnd(key, payloadBytes, entries.size() / arity));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Split mode: plain element-wise collections (list / set / zset / hash)
+    // ---------------------------------------------------------------------------------------------
+
+    private void readElementValue(int type, Consumer<RdbEvent> consumer, SplitOptions options, byte[] key,
+            long valueStart) throws IOException {
+        ByteArrayOutputStream record = new ByteArrayOutputStream();
+        record.write(type);
+        long count = readLength(record);
+        int arity = arityOf(type);
+        boolean scored = type == TYPE_ZSET || type == TYPE_ZSET_2;
+        long i = 0;
+        boolean oversize = false;
+        for (; i < count; i++) { // phase 1: record without materializing any element
+            transferElement(type, arity, scored, record);
+            if (record.size() > options.hardCapBytes()) {
+                oversize = true;
+                break;
+            }
+            if (record.size() > options.maxRestoreBytes())
+                break;
+        }
+        if (oversize) {
+            discardElements(type, arity, scored, count - i - 1);
+            consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+            return;
+        }
+        if (i == count) { // never crossed the threshold — same as legacy
+            acceptKeyValue(consumer, key, record.toByteArray());
+            return;
+        }
+        long recordedElements = i + 1;
+        List<RdbEvent.KeyElement> prefix = null;
+        try { // phase 2a: recover the recorded elements from the buffer copy
+            prefix = PrefixReader.readElements(record.toByteArray(), type, recordedElements);
+        } catch (RuntimeException e) { // prefix decode failure before any event — fall back to RESTORE
+            decodeFallbacks++;
+        }
+        if (prefix == null) {
+            for (long j = recordedElements; j < count; j++) {
+                transferElement(type, arity, scored, record);
+                if (record.size() > options.hardCapBytes()) {
+                    discardElements(type, arity, scored, count - j - 1);
+                    consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+                    return;
+                }
+            }
+            acceptKeyValue(consumer, key, record.toByteArray());
+            return;
+        }
+        consumer.accept(new RdbEvent.BigKeyValueBegin(database, key, expireAt, type, count));
+        long emitted = 0;
+        for (RdbEvent.KeyElement element : prefix) {
+            consumer.accept(element);
+            emitted++;
+        }
+        for (long j = recordedElements; j < count; j++) { // phase 2b: stream the remainder unrecorded
+            RdbEvent.KeyElement element = readElementStreaming(type, arity);
+            if (position - valueStart > options.hardCapBytes()) {
+                discardElements(type, arity, scored, count - j - 1);
+                consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+                return;
+            }
+            consumer.accept(element);
+            emitted++;
+        }
+        consumer.accept(new RdbEvent.BigKeyValueEnd(key, position - valueStart, emitted));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Split mode: quicklists (type 14 = ziplist nodes, type 18 = listpack/plain nodes)
+    // ---------------------------------------------------------------------------------------------
+
+    private void readQuicklistValue(int type, Consumer<RdbEvent> consumer, SplitOptions options, byte[] key,
+            long valueStart) throws IOException {
+        boolean v2 = type == TYPE_LIST_QUICKLIST_2;
+        ByteArrayOutputStream record = new ByteArrayOutputStream();
+        record.write(type);
+        long nodeCount = readLength(record);
+        long i = 0;
+        boolean oversize = false;
+        for (; i < nodeCount; i++) { // phase 1: record node blobs whole
+            if (v2)
+                readContainer(record);
+            transferString(record);
+            if (record.size() > options.hardCapBytes()) {
+                oversize = true;
+                break;
+            }
+            if (record.size() > options.maxRestoreBytes())
+                break;
+        }
+        if (oversize) {
+            discardQuicklistNodes(v2, nodeCount - i - 1);
+            consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+            return;
+        }
+        if (i == nodeCount) {
+            acceptKeyValue(consumer, key, record.toByteArray());
+            return;
+        }
+        long recordedNodes = i + 1;
+        List<byte[]> prefixElements = null;
+        try { // phase 2a: recover node blobs and decode them from the buffer copy
+            List<QuicklistNode> nodes = PrefixReader.readQuicklistNodes(record.toByteArray(), type, recordedNodes);
+            prefixElements = new ArrayList<>();
+            for (QuicklistNode node : nodes)
+                prefixElements.addAll(decodeQuicklistNode(type, node));
+        } catch (RuntimeException e) { // prefix decode failure before any event — fall back to RESTORE
+            decodeFallbacks++;
+        }
+        if (prefixElements == null) {
+            for (long j = recordedNodes; j < nodeCount; j++) {
+                if (v2)
+                    readContainer(record);
+                transferString(record);
+                if (record.size() > options.hardCapBytes()) {
+                    discardQuicklistNodes(v2, nodeCount - j - 1);
+                    consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+                    return;
+                }
+            }
+            acceptKeyValue(consumer, key, record.toByteArray());
+            return;
+        }
+        consumer.accept(new RdbEvent.BigKeyValueBegin(database, key, expireAt, type, nodeCount));
+        long emitted = 0;
+        for (byte[] element : prefixElements) {
+            consumer.accept(new RdbEvent.KeyElement(element, null, null));
+            emitted++;
+        }
+        for (long j = recordedNodes; j < nodeCount; j++) { // phase 2b: stream the remaining nodes
+            int container = v2 ? (int) readContainer(null) : 1;
+            byte[] blob = readString(null);
+            List<byte[]> elements = decodeQuicklistNode(type, new QuicklistNode(container, blob));
+            if (position - valueStart > options.hardCapBytes()) {
+                discardQuicklistNodes(v2, nodeCount - j - 1);
+                consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+                return;
+            }
+            for (byte[] element : elements) {
+                consumer.accept(new RdbEvent.KeyElement(element, null, null));
+                emitted++;
+            }
+        }
+        consumer.accept(new RdbEvent.BigKeyValueEnd(key, position - valueStart, emitted));
+    }
+
+    private long readContainer(OutputStream record) throws IOException {
+        long container = readLength(record);
+        if (container != 1 && container != 2)
+            throw new RespProtocolException("invalid quicklist node container: " + container);
+        return container;
+    }
+
+    private List<byte[]> decodeQuicklistNode(int type, QuicklistNode node) {
+        if (node.container() == 2) // plain node: the blob is one element
+            return List.of(node.blob());
+        return type == TYPE_LIST_QUICKLIST_2
+                ? RdbValueDecoder.listpackEntries(node.blob())
+                : RdbValueDecoder.ziplistEntries(node.blob());
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Split mode: values that can only be RESTOREd (streams, field-TTL hashes) under a hard cap
+    // ---------------------------------------------------------------------------------------------
+
+    private void readCappedValue(int type, Consumer<RdbEvent> consumer, byte[] key, SplitOptions options,
+            long valueStart) throws IOException {
+        CappedRecord record = new CappedRecord(options.hardCapBytes());
+        record.write(type);
+        skipObject(type, record);
+        if (record.overflow)
+            consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+        else
+            acceptKeyValue(consumer, key, record.bytes());
+    }
+
+    /** Skips a MODULE_2 value: length-encoded module id, then the opcode envelope until EOF. */
+    private void skipModule2Payload() throws IOException {
+        readLength(null); // module id
+        while (true) {
+            long opcode = readLength(null);
+            switch ((int) opcode) {
+                case MODULE_OPCODE_EOF -> {
+                    return;
+                }
+                case MODULE_OPCODE_SINT, MODULE_OPCODE_UINT -> readLength(null);
+                case MODULE_OPCODE_FLOAT -> transferBytes(4, null);
+                case MODULE_OPCODE_DOUBLE -> transferBytes(8, null);
+                case MODULE_OPCODE_STRING -> transferString(null);
+                default -> throw new RespProtocolException("unknown module opcode " + opcode);
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Split-mode plumbing
+    // ---------------------------------------------------------------------------------------------
+
+    private void acceptKeyValue(Consumer<RdbEvent> consumer, byte[] key, byte[] encoded) {
+        consumer.accept(new RdbEvent.KeyValue(database, key, expireAt, toDumpPayload(encoded)));
+    }
+
+    private RdbEvent.SkippedKey skipped(byte[] key, int type, long valueStart, RdbEvent.SkipReason reason) {
+        return new RdbEvent.SkippedKey(key, type, position - valueStart, reason);
+    }
+
+    private static int arityOf(int type) {
+        return type == TYPE_HASH ? 2 : 1;
+    }
+
+    private void transferElement(int type, int arity, boolean scored, OutputStream record) throws IOException {
+        for (int a = 0; a < arity; a++)
+            transferString(record);
+        if (scored)
+            transferScore(type, record);
+    }
+
+    private void discardElements(int type, int arity, boolean scored, long count) throws IOException {
+        for (long i = 0; i < count; i++)
+            transferElement(type, arity, scored, null);
+    }
+
+    private void discardQuicklistNodes(boolean v2, long count) throws IOException {
+        for (long i = 0; i < count; i++) {
+            if (v2)
+                readContainer(null);
+            transferString(null);
+        }
+    }
+
+    /** Reads one string into {@code record} without keeping a materialized copy of the payload. */
+    private void transferString(OutputStream record) throws IOException {
+        Length length = readLengthValue(record);
+        if (!length.encoded) {
+            transferBytes(length.value, record);
+            return;
+        }
+        switch ((int) length.value) {
+            case 0 -> transferBytes(1, record);
+            case 1 -> transferBytes(2, record);
+            case 2 -> transferBytes(4, record);
+            case 3 -> {
+                long compressed = readLength(record);
+                readLength(record); // uncompressed size — irrelevant without decompression
+                transferBytes(compressed, record);
+            }
+            default -> throw new RespProtocolException("unknown encoded RDB string: " + length.value);
+        }
+    }
+
+    private void transferBytes(long count, OutputStream record) throws IOException {
+        if (count < 0)
+            throw new RespProtocolException("negative RDB length");
+        while (count > 0) {
+            int n = (int) Math.min(transferBuffer.length, count);
+            int read = input.readNBytes(transferBuffer, 0, n);
+            if (read != n)
+                throw truncated(n, read);
+            position += read;
+            crc = RedisCrc64.update(crc, transferBuffer, 0, read);
+            if (record != null)
+                record.write(transferBuffer, 0, read);
+            count -= read;
+        }
+    }
+
+    private void transferScore(int type, OutputStream record) throws IOException {
+        if (type == TYPE_ZSET_2) {
+            transferBytes(8, record);
+            return;
+        }
+        int len = readUnsigned(record); // 253/254/255 specials carry no further bytes
+        if (len <= 252)
+            transferBytes(len, record);
+    }
+
+    private RdbEvent.KeyElement readElementStreaming(int type, int arity) throws IOException {
+        byte[] member = readString(null);
+        byte[] value = arity == 2 ? readString(null) : null;
+        byte[] score = null;
+        if (type == TYPE_ZSET)
+            score = readLegacyDoubleText(null);
+        else if (type == TYPE_ZSET_2)
+            score = scoreText(readLittleEndianLong(null));
+        return new RdbEvent.KeyElement(member, value, score);
+    }
+
+    private byte[] readLegacyDoubleText(OutputStream record) throws IOException {
+        int len = readUnsigned(record);
+        return switch (len) {
+            case 253 -> SCORE_NEG_INF.clone();
+            case 254 -> SCORE_POS_INF.clone();
+            case 255 -> SCORE_NAN.clone();
+            default -> readExact(len, record);
+        };
+    }
+
+    private static byte[] scoreText(long bits) {
+        double d = Double.longBitsToDouble(bits);
+        if (Double.isNaN(d))
+            return SCORE_NAN.clone();
+        if (d == Double.POSITIVE_INFINITY)
+            return SCORE_POS_INF.clone();
+        if (d == Double.NEGATIVE_INFINITY)
+            return SCORE_NEG_INF.clone();
+        return Double.toString(d).getBytes(StandardCharsets.US_ASCII);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Structure traversal shared with the legacy path
+    // ---------------------------------------------------------------------------------------------
 
     private void skipObject(int type, OutputStream record) throws IOException {
         switch (type) {
@@ -349,8 +830,209 @@ public final class RdbStreamParser {
         void run() throws IOException;
     }
 
-    private static final class Lzf {
-        private static byte[] decompress(byte[] input, int outputLength) {
+    /**
+     * ByteArrayOutputStream that stops retaining bytes once the hard cap is exceeded, letting the
+     * structural traversal continue (CRC and position still advance) so the remainder of an
+     * oversize value is consumed correctly before it is reported as skipped.
+     */
+    private static final class CappedRecord extends OutputStream {
+        private final ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        private final long cap;
+        private boolean overflow;
+
+        CappedRecord(long cap) {
+            this.cap = cap;
+        }
+
+        boolean overflow() {
+            return overflow;
+        }
+
+        byte[] bytes() {
+            return buf.toByteArray();
+        }
+
+        @Override
+        public void write(int b) {
+            if (overflow)
+                return;
+            buf.write(b);
+            if (buf.size() > cap)
+                overflow = true;
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) {
+            if (overflow)
+                return;
+            buf.write(b, off, len);
+            if (buf.size() > cap)
+                overflow = true;
+        }
+    }
+
+    private record QuicklistNode(int container, byte[] blob) {
+    }
+
+    /**
+     * Re-parses the bytes recorded before a threshold crossing to recover the elements/nodes they
+     * contain. Working from the recorded copy (instead of buffering parsed elements from the start)
+     * keeps the not-crossed common path allocation-free; failures here mean either a corrupt stream
+     * or a decoder bug and fall back to RESTORE.
+     */
+    private static final class PrefixReader {
+        private final byte[] buf;
+        private int pos;
+
+        private PrefixReader(byte[] buf) {
+            this.buf = buf;
+        }
+
+        static List<RdbEvent.KeyElement> readElements(byte[] prefix, int type, long expectedElements) {
+            PrefixReader r = new PrefixReader(prefix);
+            if (r.readUnsignedByte() != type)
+                throw corrupt("prefix type mismatch");
+            long count = r.readLength();
+            if (count < expectedElements)
+                throw corrupt("prefix element count smaller than recorded");
+            int arity = arityOf(type);
+            List<RdbEvent.KeyElement> out = new ArrayList<>(Math.toIntExact(expectedElements));
+            for (long i = 0; i < expectedElements; i++) {
+                byte[] member = r.readString();
+                byte[] value = arity == 2 ? r.readString() : null;
+                byte[] score = null;
+                if (type == TYPE_ZSET)
+                    score = r.readLegacyDoubleText();
+                else if (type == TYPE_ZSET_2)
+                    score = scoreText(r.readLittleEndianLong());
+                out.add(new RdbEvent.KeyElement(member, value, score));
+            }
+            return out;
+        }
+
+        static List<QuicklistNode> readQuicklistNodes(byte[] prefix, int type, long expectedNodes) {
+            PrefixReader r = new PrefixReader(prefix);
+            if (r.readUnsignedByte() != type)
+                throw corrupt("prefix type mismatch");
+            long count = r.readLength();
+            if (count < expectedNodes)
+                throw corrupt("prefix node count smaller than recorded");
+            List<QuicklistNode> out = new ArrayList<>(Math.toIntExact(expectedNodes));
+            for (long i = 0; i < expectedNodes; i++) {
+                int container = type == TYPE_LIST_QUICKLIST_2 ? (int) r.readLength() : 1;
+                if (container != 1 && container != 2)
+                    throw corrupt("invalid quicklist node container: " + container);
+                out.add(new QuicklistNode(container, r.readString()));
+            }
+            return out;
+        }
+
+        private int readUnsignedByte() {
+            if (pos >= buf.length)
+                throw corrupt("prefix underrun");
+            return buf[pos++] & 255;
+        }
+
+        private long readLength() {
+            Length length = readLengthValue();
+            if (length.encoded)
+                throw corrupt("encoded length where plain length expected");
+            return length.value;
+        }
+
+        private Length readLengthValue() {
+            int first = readUnsignedByte(), kind = (first & 0xc0) >>> 6;
+            return switch (kind) {
+                case 0 -> new Length(first & 0x3f, false);
+                case 1 -> new Length(((first & 0x3f) << 8) | readUnsignedByte(), false);
+                case 2 -> {
+                    int selector = first & 0x3f;
+                    if (selector == 0)
+                        yield new Length(readBigEndianInt() & 0xffffffffL, false);
+                    if (selector == 1)
+                        yield new Length(readBigEndianLong(), false);
+                    throw corrupt("invalid RDB length selector: " + selector);
+                }
+                case 3 -> new Length(first & 0x3f, true);
+                default -> throw new IllegalStateException();
+            };
+        }
+
+        private byte[] readString() {
+            Length length = readLengthValue();
+            if (!length.encoded)
+                return slice(Math.toIntExact(length.value));
+            return switch ((int) length.value) {
+                case 0 -> integerBytes((byte) readUnsignedByte());
+                case 1 -> integerBytes((short) readLittleEndian(2));
+                case 2 -> integerBytes((int) readLittleEndian(4));
+                case 3 -> {
+                    long compressed = readLength(), uncompressed = readLength();
+                    yield Lzf.decompress(slice(Math.toIntExact(compressed)), Math.toIntExact(uncompressed));
+                }
+                default -> throw corrupt("unknown encoded RDB string: " + length.value);
+            };
+        }
+
+        private byte[] readLegacyDoubleText() {
+            int len = readUnsignedByte();
+            return switch (len) {
+                case 253 -> SCORE_NEG_INF.clone();
+                case 254 -> SCORE_POS_INF.clone();
+                case 255 -> SCORE_NAN.clone();
+                default -> slice(len);
+            };
+        }
+
+        private byte[] slice(int len) {
+            if (len < 0 || pos + len > buf.length)
+                throw corrupt("string reaches past prefix end");
+            byte[] value = new byte[len];
+            System.arraycopy(buf, pos, value, 0, len);
+            pos += len;
+            return value;
+        }
+
+        private long readLittleEndian(int bytes) {
+            if (pos + bytes > buf.length)
+                throw corrupt("read reaches past prefix end");
+            long value = 0;
+            for (int i = bytes - 1; i >= 0; i--)
+                value = (value << 8) | (buf[pos + i] & 255L);
+            pos += bytes;
+            return value;
+        }
+
+        private long readLittleEndianLong() {
+            return readLittleEndian(8);
+        }
+
+        private int readBigEndianInt() {
+            if (pos + 4 > buf.length)
+                throw corrupt("read reaches past prefix end");
+            int value = ((buf[pos] & 255) << 24) | ((buf[pos + 1] & 255) << 16) | ((buf[pos + 2] & 255) << 8)
+                    | (buf[pos + 3] & 255);
+            pos += 4;
+            return value;
+        }
+
+        private long readBigEndianLong() {
+            if (pos + 8 > buf.length)
+                throw corrupt("read reaches past prefix end");
+            long value = 0;
+            for (int i = 0; i < 8; i++)
+                value = (value << 8) | (buf[pos + i] & 255L);
+            pos += 8;
+            return value;
+        }
+
+        private static RespProtocolException corrupt(String detail) {
+            return new RespProtocolException("corrupt recorded prefix: " + detail);
+        }
+    }
+
+    static final class Lzf {
+        static byte[] decompress(byte[] input, int outputLength) {
             byte[] output = new byte[outputLength];
             int in = 0, out = 0;
             while (in < input.length) {

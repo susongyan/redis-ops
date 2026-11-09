@@ -66,13 +66,16 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
     private long lastApplyNanos;
     private WorkerRedisConnectionProfile sourceProfile;
     private WorkerRedisConnectionProfile targetProfile;
+    private final SplitKeySettings splitSettings;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
 
     ClusterSyncTaskRunner(WorkerSyncTask task, boolean recovery, WorkerRedisConnectionProfilePort profiles,
             WorkerSyncExecutionPort sync, SyncRunnerStateReporter reporter, SpoolKeyProvider spoolKeys,
             RedisDataEndpointResolver endpoints, ObjectMapper json, Path dataDirectory, long segmentBytes,
             Duration connectTimeout, Duration fullApplySocketTimeout, int fullConcurrency,
             int fullQueueCapacity, int fullPipelineSize,
-            long fullTransactionBytes, long fullQueueMaxBytes, Duration leaseSafetyMargin, Duration metricInterval) {
+            long fullTransactionBytes, long fullQueueMaxBytes, Duration leaseSafetyMargin, Duration metricInterval,
+            SplitKeySettings splitSettings, io.micrometer.core.instrument.MeterRegistry meters) {
         this.task = task;
         this.recovery = recovery;
         this.profiles = profiles;
@@ -91,6 +94,8 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         this.fullTransactionBytes = fullTransactionBytes;
         this.fullQueueMaxBytes = fullQueueMaxBytes;
         this.metricInterval = metricInterval;
+        this.splitSettings = splitSettings;
+        this.meters = meters;
         this.leaseGuard = new LeaseGuard(leaseSafetyMargin);
         this.limits = task;
     }
@@ -425,6 +430,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
         private final byte[] heartbeatKey;
         private final EncryptedSpool spool;
         private final FullSyncProgressTracker fullProgress;
+        private final io.micrometer.core.instrument.Counter splitFallback;
         private final BlockingQueue<ReplicationCommand> queue = new LinkedBlockingQueue<>(10_000);
         private final ExecutorService executor;
         private final AtomicLong received = new AtomicLong(-1);
@@ -476,6 +482,7 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                 this.spool.limitCommandRecordReads(32L * 1024 * 1024);
             this.fullProgress = new FullSyncProgressTracker(task.id(), task.fullSyncEpoch(), spec.channel(),
                     restoreConcurrency, sync);
+            this.splitFallback = meters.counter("sync_split_fallback_total", "channel", spec.channel());
             this.executor = Executors.newFixedThreadPool(2, runnable -> {
                 Thread thread = new Thread(runnable, "redis-cluster-sync-" + task.id() + "-" + spec.channel());
                 thread.setDaemon(true);
@@ -597,10 +604,20 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                     restoreQueueCapacity, restoreQueueMaxBytes,
                     limits.fullApplyPipelineSize() > 0 ? limits.fullApplyPipelineSize() : fullPipelineSize,
                     fullTransactionBytes, ClusterSyncTaskRunner.this::beforeApply,
-                    ClusterSyncTaskRunner.this::afterApply, fullProgress::applied);
-                    var input = spool.openRdb()) {
-                parseRdb(input, restores::submit, payload -> routedTarget.loadFunction(payload, channelFence,
-                        leaseGuard));
+                    ClusterSyncTaskRunner.this::afterApply, fullProgress::applied)) {
+                try (var input = spool.openRdb()) {
+                    // Split events never fire with a null writer: a null options keeps the parser legacy.
+                    SplitOptions options = splitOptions();
+                    try (SplitKeyRestoreWriter splitWriter = options == null
+                            ? null
+                            : new SplitKeyRestoreWriter(new ClusterSplitChannel(routedTarget),
+                                    task.id(), spec.channel(), channelFence, leaseGuard, splitSettings,
+                                    ClusterSyncTaskRunner.this::beforeApply,
+                                    ClusterSyncTaskRunner.this::afterApply, fullProgress, sync, meters)) {
+                        parseRdb(input, restores::submit, payload -> routedTarget.loadFunction(payload,
+                                channelFence, leaseGuard), splitWriter, options);
+                    }
+                }
                 restores.awaitCompletion();
             }
         }
@@ -612,40 +629,82 @@ final class ClusterSyncTaskRunner implements SyncTaskRunner {
                     limits.fullApplyPipelineSize() > 0 ? limits.fullApplyPipelineSize() : fullPipelineSize,
                     fullTransactionBytes, channelFence, leaseGuard,
                     ClusterSyncTaskRunner.this::beforeApply, ClusterSyncTaskRunner.this::afterApply,
-                    fullProgress::applied);
-                    var input = spool.openRdb()) {
-                parseRdb(input, restores::submit,
-                        payload -> singleTarget.loadFunction(payload, channelFence, leaseGuard));
+                    fullProgress::applied)) {
+                try (var input = spool.openRdb()) {
+                    SplitOptions options = splitOptions();
+                    try (SplitKeyRestoreWriter splitWriter = options == null
+                            ? null
+                            : new SplitKeyRestoreWriter(new StandaloneSplitChannel(targetProfile, endpoints,
+                                    task.targetDb(), task.id(), spec.channel(), connectTimeout,
+                                    fullApplySocketTimeout),
+                                    task.id(), spec.channel(), channelFence, leaseGuard, splitSettings,
+                                    ClusterSyncTaskRunner.this::beforeApply,
+                                    ClusterSyncTaskRunner.this::afterApply, fullProgress, sync, meters)) {
+                        parseRdb(input, restores::submit,
+                                payload -> singleTarget.loadFunction(payload, channelFence, leaseGuard),
+                                splitWriter, options);
+                    }
+                }
                 restores.awaitCompletion();
             }
         }
 
-        private void parseRdb(java.io.InputStream input, RestoreConsumer restores, FunctionConsumer functions)
-                throws IOException {
+        private SplitOptions splitOptions() {
+            // Both gates must hold (design doc §3): engine-side threshold and task-side allowSafeSplit.
+            return splitSettings.enabled() && commandPolicy().allowSafeSplit()
+                    ? splitSettings.toParserOptions()
+                    : null;
+        }
+
+        private void parseRdb(java.io.InputStream input, RestoreConsumer restores, FunctionConsumer functions,
+                SplitKeyRestoreWriter splitWriter, SplitOptions options) throws IOException {
             try {
                 RdbStreamParser parser = new RdbStreamParser(input);
                 parser.parse(event -> {
                     try {
-                        boolean accepted = false;
-                        if (event instanceof RdbEvent.KeyValue keyValue
-                                && keyValue.database() == task.sourceDb()
-                                && filter.accepts(keyValue.key())
-                                && sourceOwns(keyValue.key())) {
-                            restores.accept(new TargetCommandSession.RestoreRequest(keyValue.key(),
-                                    keyValue.absoluteExpireMillis(), keyValue.dumpPayload()));
-                            accepted = true;
-                        } else if (event instanceof RdbEvent.FunctionLibrary function) {
-                            functions.accept(function.payload());
-                        }
+                        boolean accepted = applyRdbEvent(event, restores, functions, splitWriter);
                         fullProgress.parsed(parser.position(), accepted);
                     } catch (IOException error) {
                         throw new UncheckedIOException(error);
                     }
-                });
+                }, options);
                 fullProgress.parsingComplete(parser.position());
+                if (options != null)
+                    splitFallback.increment(parser.decodeFallbacks());
             } catch (UncheckedIOException error) {
                 throw error.getCause();
             }
+        }
+
+        private boolean applyRdbEvent(RdbEvent event, RestoreConsumer restores, FunctionConsumer functions,
+                SplitKeyRestoreWriter splitWriter) throws IOException {
+            boolean accepted = false;
+            if (event instanceof RdbEvent.KeyValue keyValue
+                    && keyValue.database() == task.sourceDb()
+                    && filter.accepts(keyValue.key())
+                    && sourceOwns(keyValue.key())) {
+                restores.accept(new TargetCommandSession.RestoreRequest(keyValue.key(),
+                        keyValue.absoluteExpireMillis(), keyValue.dumpPayload()));
+                accepted = true;
+            } else if (event instanceof RdbEvent.FunctionLibrary function) {
+                functions.accept(function.payload());
+            } else if (event instanceof RdbEvent.BigKeyValueBegin begin) {
+                if (splitWriter == null)
+                    throw new IllegalStateException("split begin without a split writer");
+                if (begin.database() == task.sourceDb() && filter.accepts(begin.key())
+                        && sourceOwns(begin.key()))
+                    splitWriter.begin(begin);
+                else
+                    splitWriter.skipPassively(); // filtered out or another channel's slot
+                accepted = true;
+            } else if (event instanceof RdbEvent.KeyElement element) {
+                splitWriter.element(element);
+            } else if (event instanceof RdbEvent.BigKeyValueEnd end) {
+                splitWriter.end(end);
+            } else if (event instanceof RdbEvent.SkippedKey skipped) {
+                splitWriter.skipped(skipped);
+            }
+            return accepted;
         }
 
         private boolean sourceOwns(byte[] key) {

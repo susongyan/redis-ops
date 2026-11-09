@@ -74,3 +74,17 @@ sync:
     # Read timeout applied to every target command connection (restore pools, runners, precheck).
     # Must comfortably exceed the slowest single command (a near-capacity RESTORE on a busy master).
     full-apply-socket-timeout-ms: ${SYNC_ENGINE_FULL_APPLY_SOCKET_TIMEOUT_MS:300000}
+    # Element-level split of oversized keys in the full RDB phase. Keys whose wire size stays at or
+    # below full-apply-max-restore-bytes keep using the RESTORE path; larger splittable collections
+    # are rebuilt element-by-element through a private temp key and atomically renamed into place.
+    # 0 disables splitting entirely (every key via RESTORE, as before).
+    full-apply-max-restore-bytes: ${SYNC_ENGINE_FULL_APPLY_MAX_RESTORE_BYTES:67108864}
+    # Byte/command caps of one split element batch; a non-positive byte cap inherits
+    # full-apply-transaction-max-bytes. Splitting also requires the task policy allowSafeSplit.
+    full-apply-split-batch-bytes: ${SYNC_ENGINE_FULL_APPLY_SPLIT_BATCH_BYTES:0}
+    full-apply-split-batch-commands: ${SYNC_ENGINE_FULL_APPLY_SPLIT_BATCH_COMMANDS:512}
+    # Total fallback cap for split or RESTORE; larger values are skipped with an alert and listed
+    # in the task events. MUST stay below the target's proto-max-bulk-len (default 512MB).
+    full-apply-split-hard-cap-bytes: ${SYNC_ENGINE_FULL_APPLY_SPLIT_HARD_CAP_BYTES:503316480}
+    # Parse-level unsupported types (MODULE_2): FAIL (default) fails the task, SKIP skips the key.
+    full-apply-unsupported-type-policy: ${SYNC_ENGINE_FULL_APPLY_UNSUPPORTED_TYPE_POLICY:FAIL}

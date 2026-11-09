@@ -74,6 +74,7 @@ RDB 解析
 | `full-apply-split-hard-cap-bytes` | `SYNC_ENGINE_FULL_APPLY_SPLIT_HARD_CAP_BYTES` | `503316480`（480MB） | 拆分/RESTORE 的总兜底上限：超过即跳过+告警（§5.3）。**必须小于目标端 `proto-max-bulk-len`**（默认 512MB），precheck 校验（§5.2 不变式） |
 | `full-apply-unsupported-type-policy` | `SYNC_ENGINE_FULL_APPLY_UNSUPPORTED_TYPE_POLICY` | `FAIL` | 解析级不支持类型（module 等）的处理：`FAIL` / `SKIP`（见 §5.3） |
 | `full-apply-socket-timeout-ms` | `SYNC_ENGINE_FULL_APPLY_SOCKET_TIMEOUT_MS` | `300000`（5 分钟） | 目标连接 SoTimeout（P0-3，覆盖所有恢复连接） |
+| `full-apply-precheck-sample-keys` | `SYNC_ENGINE_FULL_APPLY_PRECHECK_SAMPLE_KEYS` | `5000` | P3：precheck 源库 SCAN 采样预算（每节点 key 数）；**0 = 关闭采样**。`proto-max-bulk-len` 校验不受此开关控制（§5.4） |
 
 同时补录存量缺口：`full-apply-queue-max-bytes`（已实现但缺文档）写入 yml 注释与 env example。
 
@@ -87,9 +88,13 @@ RDB 解析
 // RdbEvent.java 新增
 record BigKeyValueBegin(int database, byte[] key, long expireAt,
                         int rdbType, long estimatedElements) implements RdbEvent {}
-record KeyElement(byte[] member, byte[] value, double score) implements RdbEvent {}   // 按 rdbType 语义化填充
+record KeyElement(byte[] member, byte[] value, byte[] score) implements RdbEvent {}   // 按 rdbType 语义化填充
 record BigKeyValueEnd(byte[] key, long payloadBytes, long elementCount) implements RdbEvent {}
 ```
+
+> **P1 落地勘误**：`KeyElement.score` 实现为 `byte[]`（解析侧已产出 `Double.toString` 文本，
+> 直接透传避免二次 `parseDouble`/`toString` 往返；±inf/nan 由解析侧按 wire 特殊值归一），
+> 下发侧 `SplitKeyRestoreWriter.appendCommand` 原样作为 ZADD 的 score 参数。
 
 - `parse(Consumer<RdbEvent>)` 保持现有签名与行为（不破坏增量恢复链路）；
 - 新增 `parse(Consumer<RdbEvent>, SplitOptions options)`：`options.splittableTypes()` 命中的类型走元素流，其余仍发完整 `KeyValue`；
@@ -124,6 +129,11 @@ record BigKeyValueEnd(byte[] key, long payloadBytes, long elementCount) implemen
 不可拆类型超阈值时**不** fail-closed：单条 RESTORE 在 `proto-max-bulk-len`（默认 512MB）内本就可行；
 只有超过 hard-cap（任何路径都必然失败）才跳过——跳过有显式告警与清单兜底（§5.3），不是静默缺数据。
 
+**路由尺寸 = wire 尺寸（P1 集成测试实测钉死）**：LZF 压缩 blob 按压缩后大小参与阈值/hard-cap 判定
+（`RdbStreamParser.readBlobValue`：`compressed > hardCap` 才跳过）；回退 RESTORE 的 `KeyValue` 事件
+携带**仍是压缩形态**的 wire 记录，目标 RESTORE 负载即压缩字节数。推论：一个内存 200MB 但压缩后
+低于阈值的 string 走的是"小 key"RESTORE 路径——合法且高效，不是漏网。
+
 **单元素超限不变式**：单条元素（如 hash 某 field 的 value）≤ 整 key payload。只要
 `hard-cap < proto-max-bulk-len` 成立（默认 480 < 512），则 ≤hard-cap 的 key 其任何元素都必然可写，
 "key 可拆但元素不可写"的死角不存在。该不变式由 **precheck 校验目标 `proto-max-bulk-len` > hard-cap**
@@ -149,12 +159,18 @@ blob 的元素解码。解码失败（含恶意/损坏数据）→ 该 key 回�
 | 老 MODULE（type 6）：模块自定义 IO 序列化，**无长度前缀** | **技术上不可能**——不实现模块编解码器就无法定位下一个 key 边界 | fail-closed（现状，不可配置） |
 | MODULE_2（type 7）：payload 为长度前缀字符串 | 技术上可行（读 blob 丢弃；实现阶段用真实 module 数据验证边界） | 默认 fail-closed，可经 `full-apply-unsupported-type-policy: SKIP` 显式 opt-in |
 
+> **P1 落地勘误**：MODULE_2 的 value 实为**操作码信封**（module 自定义 `load` 序列，opcode +
+> 各自的长度/字段布局），并非一条简单的长度前缀字符串——RDB 层无法通用地"读完整个 blob 丢弃"，
+> 跳过实现按 module value 结构遍历消费全部字节（复用 `skipObject` 家族的 opcode walk），
+> 真实 module 数据的边界验证推迟到有实际样本时（P3 前置发现一并覆盖）。
+
 **跳过三件套**（禁止静默跳过——跳过 = 目标缺数据，必须让用户看见）：
 
 1. WARN 日志：key 字节长度 + SHA-256 前 8 字节，**不打 key 内容**（防敏感数据泄露）；
 2. 计数：`sync_skipped_oversize_keys_total`（超限）/ `sync_skipped_unsupported_keys_total`（类型）；
 3. **任务报告跳过清单**：每跳过一个 key 记入任务级报告（key 指纹、类型、payloadBytes、原因），
-   FINISH/结算时供核对；
+   FINISH/结算时供核对。**P1 实现通道**：`WorkerSyncExecutionPort.appendTaskEvent(taskId, "sync:split",
+   "SPLIT_KEY_SKIPPED ...")` 任务事件流（报告页展示归 P3）；
 4. **平台侧告警**：复用现有 `LARGE_KEY_FOUND` ruleType 触发（先例：`RiskScanService.java:329` 调
    `AlertService.trigger`，`AlertService.java:47-60`；无需 DDL 变更）。worker 侧经引擎事件/任务报告通道
    上报，平台侧接线归 P3。
@@ -163,21 +179,37 @@ blob 的元素解码。解码失败（含恶意/损坏数据）→ 该 key 回�
 发现 module / 不支持编码 / 超 hard-cap 的 key 时在预检报告中直接提示（含数量与类型名），让用户在
 **任务创建时**决策（清理/拆分源 key 后再建任务），而不是同步跑到一半才跳过——这是比"跳过"更根本的改进。
 
+**可选性设计（2026-11-09 决议）**：采样是信息性前置提示，运行期"跳过+告警+清单"（§5.3）才是
+正确性兜底，因此采样可整体关闭而不损失正确性。分层：
+- **SCAN 采样可选**：`full-apply-precheck-sample-keys`（每节点 key 数预算，默认 5000，**0 = 关闭**，
+  §4）。发现项只进预检报告 WARN 提示（与 `commandHistoryRisk`/`targetDataRisk` 同级），
+  **不翻转 passed**；采样失败降级为"样本不可用"提示，绝不让预检因采样失败而失败。
+- **`proto-max-bulk-len` 校验不做开关**：每目标节点一次 `CONFIG GET`，成本≈0，且是 §5.2 硬不变式
+  （误配现状只能靠 §7.2 元素级防御在同步深处兜底）——split 启用即校验，误配直接 fail precheck。
+- **整体门控跟随 split**：`full-apply-max-restore-bytes = 0`（拆分禁用）时整个采样检查跳过，
+  与运行期 `splitOptions()` 双重门控对齐。
+
 ## 6. 临时 key 设计
 
 ### 6.1 命名
 
 ```
-Cluster：  "{" + <原key> + "}" + ":__ropstmppart__:" + <taskId> + ":" + <channel>
+Cluster：  "{" + <有效 tag> + "}" + ":__ropstmppart__:" + <taskId> + ":" + <channel>   （三段式，见下）
 Standalone：__ropstmppart__:{<taskId>}:<channel>:<原key 的 SHA-256 hex 前 16 字节>
 ```
 
 设计要点：
 
-1. **同 slot 保证**（Cluster 路径）：Redis hash-tag 取第一个 `{` 到第一个 `}` 之间的文本。
-   用原 key 全文作为 tag（`{<原key>}...`），无论原 key 是否自带 tag，临时 key 必与原 key 同 slot，
-   `RENAME` 不会产生 `CROSSSLOT`。`ClusterTargetRouter.restore` 按 `RedisSlot.of(request.key())` 路由
-   （`ClusterTargetRouter.java:89-109`），临时 key 天然路由到同一连接。
+1. **同 slot 保证**（Cluster 路径，**P2 勘误：原稿"{原key 全文作 tag"对自带 hash-tag 的 key 不成立**——
+   `{user:{123}:k}` 的 tag 会截断成 `user:{123`，RENAME 必 CROSSSLOT）。Redis hash-tag 取第一个 `{` 到
+   其后第一个 `}` 之间的非空文本（空 tag/未闭合则整 key 参与哈希，见 cluster.c `keyHashSlot`）。
+   因此按原 key 的**实际哈希输入**三段式命名：
+   - 有有效非空 tag → 包裹该 tag：`{tag}:__ropstmppart__:taskId:channel`（tag 内必无 `}`，包裹精确）；
+   - 整 key 哈希且 key 不含 `}` → 整 key 包裹：`{key}:__ropstmppart__:taskId:channel`（哈希输入还原为整 key）；
+   - 整 key 哈希但 key 含 `}`（任何包裹形式都无法还原哈希）→ 碰撞 tag：取首个 CRC16 与原 key 同 slot 的
+     无 brace ASCII 串（`rsopstmppart<i>`，确定性最小 i，平衡 14-bit 空间期望 ~16k 次尝试）。
+   同 tag 的不同 key 映射到同一临时名：拆分按 channel 串行且 begin 先 `UNLINK`，名字不可能与在拆 key 重叠。
+   `ClusterTargetRouter` 按 `RedisSlot.of(key)` 路由，临时 key 天然路由到同一节点。
 2. **确定性命名**：同一真实 key 的临时 key 名固定。每次拆分开始先 `UNLINK` 临时 key，
    因此崩溃重跑会先清掉上一轮残留，无需全局清理扫描。
 3. **保留命名空间冲突**：`TargetCommandSession.assertReservedNamespaceAvailable`
@@ -218,6 +250,12 @@ StandaloneSyncTaskRunner / ClusterSyncTaskRunner 的 RDB 解析回调
   - cluster 目标：`TargetCommandSession.restoreNodeBatch`（`:363-406`，两阶段 pipelined：先全部
     WATCH+GET，再全部 MULTI+N 命令+EXEC；**事务内无 progress SET**，进度走 MySQL 侧
     `FullSyncProgressTracker`）。
+  **P2 落地说明**：两阶段 pipelined 是为"一个节点一批多 slot 命令"设计的；拆分路径单 key 串行，
+  直接复用 P1 的顺序式 `applySplitBatch`（WATCH→GET→MULTI→N→EXEC），但 **WATCH 的 fence key 是临时 key
+  所在 slot 的 fence**（每 slot 一个 fence key，首次使用前经 router `ensureFence` 发布），不是会话
+  bootstrap slot 的 fence。会话经 `ClusterTargetRouter.MasterConnection` 的监视器复用（与恢复池 lane
+  互斥，连接不另建）；writer 重连走 `reopenSplit`（关节点连接 + `refreshTopology`，MOVED 后重试自然
+  路由到新 owner）。
 - **不得复用增量路径的 `apply()`**（现签名 `TargetCheckpoint apply(List<CommandPlan.PlannedCommand>, TargetCheckpoint, ...)`，
   destructive 检查在 `:524` 经 `SyncCommandCapabilities.destructive`）：其会拦截 `UNLINK`，且
   prepare/confirm 两段式 checkpoint 语义不适用于拆分场景。
@@ -226,6 +264,9 @@ StandaloneSyncTaskRunner / ClusterSyncTaskRunner 的 RDB 解析回调
   命令策略分类解耦。**发布注意**：`SyncCommandCapabilities` 位于 `redis-ops-sync-contract` 模块
   （`io.github.susongyan.redisops.sync.contract`，platform 以二进制依赖引用），改动需 contract 先发版、
   platform 后升级（部署顺序见 `../CONTRACT.md` 契约 1）。
+  **P1 落地决议：契约白名单登记推迟到 P3**——P1 的拆分命令由 `SplitKeyRestoreWriter` 直接构造字节串
+  下发（不经过增量 `apply()`/`CommandPlanner`，与命令策略天然解耦），不依赖 contract 改版即可发布；
+  contract 侧能力协商随 P3 平台接线一并做。
 
 ### 7.2 分批策略
 
@@ -243,7 +284,7 @@ StandaloneSyncTaskRunner / ClusterSyncTaskRunner 的 RDB 解析回调
 | 元素批次连接类失败 | 重连重试 3 次（沿用 `FullRestorePool.restoreBatch` 模式，`:187-201`）；仍失败 → `UNLINK` 临时 key → 任务失败（全量从 RDB 头重来） |
 | list 批次重试的二义性 | `RPUSH` 批**非幂等**：EXEC 已落但回包丢失时盲目重试会重复追加（hash/set/zset 元素级幂等无此问题）。批是原子事务，重连后先 `LLEN tempKey` 对账：等于已确认前缀 → 本批未落，安全重试；等于前缀+本批条数 → 已落，跳过继续。二值判定，无部分落盘态 |
 | 元素批次目标 OOM（`OOM command not allowed`） | **不重试**（重试必然再 OOM，且现状会把 OOM 掩盖成连接错误）——立即 `UNLINK` 临时 key → 任务失败，错误信息原样透出。实施时须在重试入口按错误类型分流，修正 `FullRestorePool.java:187-201` 的掩盖问题 |
-| 解码失败（压缩编码 blob） | 回退单条 RESTORE（≤hard-cap）；>hard-cap → 跳过+告警 |
+| 解码失败（压缩编码 blob） | **按阶段二分**：前缀/blob 解码失败（尚未发出任何元素事件，含 LZF 解压失败）→ 回退单条 RESTORE（≤hard-cap）；>hard-cap → 跳过+告警。**元素流阶段**（Begin 已发、元素已写入临时 key）失败 → 无干净回退点，fail-closed 任务失败（临时 key UNLINK 后抛出） |
 | 进程崩溃/被接管 | 真实 key 未被触碰；新 runtime 全量重跑，拆分 key 首批前 `UNLINK` 清残留 |
 | fence 被更高 generation 抢占 | `WATCH` 失败抛 `FencingException`，正常失败路径 |
 | lease 过期 | 任务转重新认领、全量重跑（非终态失败） |
@@ -272,7 +313,7 @@ checkpoint 粒度维持"整个 RDB"不变，拆分 key 可安全重写。
 | 项 | 说明 |
 |----|------|
 | `FullSyncProgressTracker` 新阶段 | `SPLITTING_KEY`（含当前 key 的字节数、已写入元素数/预估元素数），保持每秒聚合上报节奏（`FullSyncProgressTracker.java:77-82`） |
-| Micrometer 计数 | `sync_split_keys_total`、`sync_split_elements_total`、`sync_split_batches_total`、`sync_split_fallback_total`（解码失败回退 RESTORE 次数）、**`sync_skipped_oversize_keys_total` / `sync_skipped_unsupported_keys_total`（跳过）** |
+| Micrometer 计数 | `sync_split_keys_total`、`sync_split_elements_total`、`sync_split_batches_total`、`sync_split_fallback_total`（解码失败回退 RESTORE 次数，P1 实现为解析器 `decodeFallbacks()` 计数在 parse 收尾处一次性累入，tag `channel`）、**`sync_skipped_oversize_keys_total` / `sync_skipped_unsupported_keys_total`（跳过）** |
 | 跳过清单 | 任务报告内嵌跳过明细（key 指纹、类型、payloadBytes、原因），FINISH 时可见；平台侧触发 `LARGE_KEY_FOUND` 告警（§5.3） |
 | 日志 | 拆分开始/结束、跳过、回退各 WARN 级一条：taskId、key 字节长度、key SHA-256 前 8 字节、rdbType、元素数。**不打 key 内容**（防敏感数据泄露） |
 | 指标落库 | `WorkerSyncFullProgress` 透传 split 阶段信息，Platform 侧展示沿用现有进度通道 |
@@ -327,10 +368,10 @@ P0 剩余两项不修，拆分路径自身会被同样的问题拖垮（元素�
 | 阶段 | 内容 | 交付判据 |
 |------|------|----------|
 | P0 ✅（2026-11-09，`mvn verify` 全绿） | 前置修复剩余两项（clone 消除、SoTimeout）+ 背压遗留（配置键补录、`FullRestoreQueueBudget` 单测） | 现有测试全绿 + 新增背压/克隆单测 |
-| P1 | 解析器元素级路径（§5）+ `RdbValueDecoder` + Standalone 拆分链路（§6.1 Standalone 命名、§7）+ 跳过三件套（§5.3） | Standalone 集成测试通过（含超 hard-cap 跳过路径） |
+| P1 ✅（2026-11-09，`mvn clean verify` 全绿 196/196） | 解析器元素级路径（§5）+ `RdbValueDecoder` + Standalone 拆分链路（§6.1 Standalone 命名、§7）+ 跳过三件套（§5.3） | Standalone 集成测试通过（含超 hard-cap 跳过路径）——`StandaloneSyncTaskRunnerIntegrationTest#splitsOversizeKeysThroughTempKeysAndSkipsOverHardCap`：list/hash/zset/set 经临时 key 拆分 + RENAME/PEXPIREAT 收尾、string 回退 RESTORE、LZF 压缩 wire 路由（§5.2）、超 hard-cap 跳过 + 任务事件 + 无 `__ropstmppart__` 残留、拆分后增量继续；Redis 5.0.7 实例实测 |
 | P1.5（可选） | string 的 SETRANGE 拆分路径（§14-3 决议推迟至此） | 500MB string 拆分 + `DEBUG DIGEST` 比对 |
-| P2 | Cluster 拆分链路（hash-tag 路由、`ClusterTargetRouter` 适配） | Cluster 集成测试通过 |
-| P3 | 可观测性收尾（§9 指标/报告展示）+ precheck 采样扫描（大 key `MEMORY USAGE`、不支持类型 `SCAN ... TYPE`、`proto-max-bulk-len` 校验）+ 平台侧 `LARGE_KEY_FOUND` 告警接线 | 平台侧可见拆分指标、跳过清单与类型风险提示 |
+| P2 ✅（2026-11-09，`mvn clean verify` 全绿 201/201（53 项环境门控跳过）） | Cluster 拆分链路（hash-tag 路由、`ClusterTargetRouter` 适配） | Cluster 集成测试通过——`ClusterSyncTaskRunnerIntegrationTest#splitsOversizeKeysThroughSlotSafeTempKeys`：三种临时 key 命名情形（有效 tag 包裹 / 整 key 包裹 / 含 `}` 碰撞 tag）逐一覆盖 slot 一致性与 RENAME 收尾、TTL 保真、超 hard-cap 跳过 + 任务事件、逐节点无 `__ropstmppart__` 残留、拆分后增量继续；本地 Redis 5.0.7 三主双集群实测。`ClusterSplitChannelTest` 另以 `RedisSlot` 断言 12 类病态 key（含 `user:{123}` 陷阱、空 tag、`}` 前置）的 slot 一致性。source-cluster→standalone 目标的通道复用 Standalone 命名与单会话通道 |
+| P3 | 可观测性收尾（§9 指标/报告展示）+ precheck 采样扫描（大 key `MEMORY USAGE`、不支持类型 `SCAN ... TYPE`、`proto-max-bulk-len` 校验）+ 平台侧 `LARGE_KEY_FOUND` 告警接线。**采样可选**（`full-apply-precheck-sample-keys`，0=关闭；不变式校验与告警接线不受开关控制，见 §5.4 决议） | 平台侧可见拆分指标、跳过清单与类型风险提示 |
 
 每阶段独立合入，P0 可先行发布（独立价值：单 key 堆占用从 ~9 份降到 ~2 份、消除连接挂起风险）。
 

@@ -57,7 +57,8 @@ class ClusterTransactionExecutionTest {
             var runner = new ClusterSyncTaskRunner(task, false, null, mock(WorkerSyncExecutionPort.class),
                     mock(SyncRunnerStateReporter.class), keys, null, new ObjectMapper(), directory, 1024,
                     Duration.ofSeconds(1), Duration.ofSeconds(10), 1, 1, 1, 1024, 64 * 1024 * 1024L, Duration.ZERO,
-                    Duration.ofSeconds(1));
+                    Duration.ofSeconds(1), new SplitKeySettings(0, 64 * 1024, 128, 0, false),
+                    new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
             var profile = new WorkerRedisConnectionProfile(1, WorkerClusterMode.CLUSTER, List.of("127.0.0.1:6379"),
                     null, null, "NONE", null);
             ReflectionTestUtils.setField(runner, "sourceProfile", profile);

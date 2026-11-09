@@ -196,10 +196,22 @@ final class FullRestorePool implements AutoCloseable {
                 session.restoreBatch(batch, fence, lane, leaseGuard);
                 return;
             } catch (IOException | RespProtocolException error) {
+                // A target-side OOM rejects every retry of the same batch by construction; rethrow
+                // it verbatim instead of masking it as "master unavailable" after three attempts.
+                if (isTargetOOM(error))
+                    throw error;
                 last = error;
             }
         }
         throw new IOException("target master remained unavailable during full restore", last);
+    }
+
+    /** Redis replies {@code OOM command not allowed...} when the maxmemory policy rejects a write. */
+    static boolean isTargetOOM(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause() == cause ? null : cause.getCause())
+            if (cause.getMessage() != null && cause.getMessage().contains("OOM command not allowed"))
+                return true;
+        return false;
     }
 
     private void ensureHealthy() throws IOException {

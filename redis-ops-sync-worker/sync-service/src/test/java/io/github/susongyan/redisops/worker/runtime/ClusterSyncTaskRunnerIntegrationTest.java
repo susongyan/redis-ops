@@ -21,8 +21,13 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 @EnabledIfEnvironmentVariable(named = "REDIS_SYNC_CLUSTER_IT", matches = "true")
 class ClusterSyncTaskRunnerIntegrationTest {
@@ -194,13 +199,90 @@ class ClusterSyncTaskRunnerIntegrationTest {
         }
     }
 
+    @Test
+    void splitsOversizeKeysThroughSlotSafeTempKeys() throws Exception {
+        flushMasters(SOURCE_PORTS);
+        flushMasters(TARGET_PORTS);
+        RedisClusterClient sourceClient = clusterClient(SOURCE_PORTS);
+        RedisClusterClient targetClient = clusterClient(TARGET_PORTS);
+        try (var source = sourceClient.connect(); var target = targetClient.connect()) {
+            var sourceCommands = source.sync();
+            var targetCommands = target.sync();
+            sourceCommands.set("small:str", "ok");
+            sourceCommands.set("big:str", "x".repeat(8192));
+            // One key per temp-naming case (§6.1): hash-tagged, untagged, untagged with '}'.
+            String member = "m".repeat(100);
+            for (int i = 0; i < 60; i++)
+                sourceCommands.rpush("{bigtag}:list", member + ":" + i);
+            sourceCommands.expire("{bigtag}:list", 600);
+            for (int i = 0; i < 30; i++)
+                sourceCommands.hset("big:plain:hash", "field:" + i, "v".repeat(200));
+            for (int i = 0; i < 60; i++)
+                sourceCommands.rpush("weird}big:list", member + ":" + i);
+            // Incompressible value over the hard cap: skipped with an alert, never applied.
+            var random = new java.util.Random(42);
+            var huge = new StringBuilder(200_000);
+            String alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            for (int i = 0; i < 200_000; i++)
+                huge.append(alphabet.charAt(random.nextInt(alphabet.length())));
+            sourceCommands.set("huge:str", huge.toString());
+
+            var task = task(197, 1, 2, "epoch-cluster-split", "{\"allowSafeSplit\":true}");
+            WorkerRedisConnectionProfilePort profiles = clusterProfiles();
+            String keyRing = keyRing();
+            WorkerSyncExecutionPort sync = mock(WorkerSyncExecutionPort.class);
+            // 4KB restore threshold, 8-command batches, 64KB hard cap.
+            var split = new SplitKeySettings(4096, 4096, 8, 65536, false);
+            ClusterSyncTaskRunner runner = runner(task, false, profiles, keyRing, sync, split);
+            try {
+                runner.prepare();
+                runner.leaseAcquired(runtime(task.id(), 1));
+                runner.start();
+
+                await(() -> "ok".equals(targetCommands.get("small:str"))
+                        && sourceCommands.get("big:str").equals(targetCommands.get("big:str"))
+                        && sourceCommands.lrange("{bigtag}:list", 0, -1)
+                                .equals(targetCommands.lrange("{bigtag}:list", 0, -1))
+                        && sourceCommands.hgetall("big:plain:hash")
+                                .equals(targetCommands.hgetall("big:plain:hash"))
+                        && sourceCommands.lrange("weird}big:list", 0, -1)
+                                .equals(targetCommands.lrange("weird}big:list", 0, -1)),
+                        runner);
+                assertTrue(targetCommands.pttl("{bigtag}:list") > 0, "TTL must survive the RENAME finalize");
+                assertNull(targetCommands.get("huge:str"), "over-hard-cap key must be skipped");
+                for (int port : TARGET_PORTS)
+                    assertTrue(nodeKeys(port, "*ropstmppart*").isEmpty(),
+                            "no split temp key residue on 127.0.0.1:" + port);
+                verify(sync).appendTaskEvent(eq(task.id()), eq("sync:split"),
+                        contains("SPLIT_KEY_SKIPPED"));
+
+                // Splitting hands control back cleanly: incremental replication keeps working.
+                sourceCommands.incr("{bigtag}:counter");
+                await(() -> "1".equals(targetCommands.get("{bigtag}:counter")), runner);
+            } finally {
+                runner.close();
+            }
+        } finally {
+            sourceClient.shutdown();
+            targetClient.shutdown();
+        }
+    }
+
     private ClusterSyncTaskRunner runner(WorkerSyncTask task, boolean recovery,
             WorkerRedisConnectionProfilePort profiles, String keyRing) {
-        return new ClusterSyncTaskRunner(task, recovery, profiles, mock(WorkerSyncExecutionPort.class),
+        return runner(task, recovery, profiles, keyRing, mock(WorkerSyncExecutionPort.class),
+                new SplitKeySettings(0, 64 * 1024, 128, 0, false));
+    }
+
+    private ClusterSyncTaskRunner runner(WorkerSyncTask task, boolean recovery,
+            WorkerRedisConnectionProfilePort profiles, String keyRing, WorkerSyncExecutionPort sync,
+            SplitKeySettings split) {
+        return new ClusterSyncTaskRunner(task, recovery, profiles, sync,
                 mock(SyncRunnerStateReporter.class), new SpoolKeyProvider(keyRing),
                 new RedisDataEndpointResolver(5000), new ObjectMapper(),
                 dataDirectory, 1024 * 1024, Duration.ofSeconds(5), Duration.ofSeconds(10), 4, 32, 8,
-                4 * 1024 * 1024L, 64 * 1024 * 1024L, Duration.ofSeconds(2), Duration.ofMillis(200));
+                4 * 1024 * 1024L, 64 * 1024 * 1024L, Duration.ofSeconds(2), Duration.ofMillis(200),
+                split, new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
     }
 
     private static WorkerRedisConnectionProfilePort clusterProfiles() {
@@ -209,10 +291,16 @@ class ClusterSyncTaskRunnerIntegrationTest {
     }
 
     private static WorkerSyncTask task(long id, long sourceClusterId, long targetClusterId, String epoch) {
+        return task(id, sourceClusterId, targetClusterId, epoch,
+                v3() ? "{\"policyVersion\":\"v3\",\"allowSafeSplit\":true}" : "{}");
+    }
+
+    private static WorkerSyncTask task(long id, long sourceClusterId, long targetClusterId, String epoch,
+            String policy) {
         Instant now = Instant.now();
         return new WorkerSyncTask(id, "SYNC-CLUSTER-IT-" + id, null, sourceClusterId, targetClusterId,
                 "MIGRATION", "FULL_AND_INCREMENTAL", SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0,
-                "[\"*\"]", "[]", v3() ? "{\"policyVersion\":\"v3\",\"allowSafeSplit\":true}" : "{}", "FLUSH",
+                "[\"*\"]", "[]", policy, "FLUSH",
                 50_000,
                 100_000_000, 64 * 1024 * 1024, 4, 8, "START", true,
                 "cluster integration", null, epoch, null, null, 0, now, now, null);
@@ -252,6 +340,16 @@ class ClusterSyncTaskRunnerIntegrationTest {
         RedisClient client = RedisClient.create("redis://127.0.0.1:" + port);
         try (var connection = client.connect()) {
             connection.sync().flushall();
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    /** KEYS on one specific node — the cluster client cannot target a single master. */
+    private static List<String> nodeKeys(int port, String pattern) {
+        RedisClient client = RedisClient.create("redis://127.0.0.1:" + port);
+        try (var connection = client.connect()) {
+            return connection.sync().keys(pattern);
         } finally {
             client.shutdown();
         }

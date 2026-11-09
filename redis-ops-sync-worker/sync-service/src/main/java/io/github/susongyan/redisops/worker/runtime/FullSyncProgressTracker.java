@@ -25,6 +25,7 @@ final class FullSyncProgressTracker {
     private final AtomicLong lastAggregateReport = new AtomicLong();
     private final AtomicLongArray lastLaneReport;
     private final AtomicBoolean completed = new AtomicBoolean();
+    private volatile boolean splitting;
     private volatile Long totalBytes;
     private volatile Long totalKeys;
     private volatile String stage = "RECEIVING_RDB";
@@ -63,6 +64,24 @@ final class FullSyncProgressTracker {
         parsedBytes.accumulateAndGet(bytes, Math::max);
         if (accepted)
             parsedKeys.incrementAndGet();
+        if (!splitting)
+            stage = "RESTORING";
+        reportAggregate(false);
+    }
+
+    /**
+     * Marks that one key is being rebuilt element-by-element (design doc §9). Split callbacks run
+     * inline on the parse thread, so while a split is open the per-event {@link #parsed} reports
+     * keep the SPLITTING_KEY stage instead of flipping back to RESTORING.
+     */
+    void splittingStart() {
+        splitting = true;
+        stage = "SPLITTING_KEY";
+        reportAggregate(true);
+    }
+
+    void splittingEnd() {
+        splitting = false;
         stage = "RESTORING";
         reportAggregate(false);
     }

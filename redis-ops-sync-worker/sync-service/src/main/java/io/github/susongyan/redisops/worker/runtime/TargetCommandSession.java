@@ -416,6 +416,81 @@ public final class TargetCommandSession implements AutoCloseable {
         }
     }
 
+    /**
+     * Applies one split-key batch inside the standard WATCH-fence transaction (design doc §7.1):
+     * WATCH fence → fence GET → MULTI → raw commands → EXEC. Unlike {@code restoreBatch} no progress
+     * key is written inside the transaction — the authoritative full-sync progress lives in the
+     * control database, and the finalize batch must stay a pure RENAME(+PEXPIREAT) so the target
+     * switches from the complete old value to the complete new value atomically. Any failed command
+     * leaves the reply stream partially consumed, so the connection is only fit for reconnect
+     * afterwards.
+     */
+    void applySplitBatch(List<byte[][]> commands, TargetFence expectedFence, LeaseGuard leaseGuard)
+            throws IOException {
+        applySplitBatch(fenceKey, commands, expectedFence, leaseGuard);
+    }
+
+    /**
+     * Fence-watching variant for Cluster targets: the watched fence belongs to the batch's slot
+     * (each slot carries its own fence key), not to this session's bootstrap slot.
+     */
+    void applySplitBatch(byte[] watchedFenceKey, List<byte[][]> commands, TargetFence expectedFence,
+            LeaseGuard leaseGuard) throws IOException {
+        leaseGuard.assertValid();
+        expectOk(command(bytes("WATCH"), watchedFenceKey), "WATCH");
+        try {
+            assertFenceValue(command(bytes("GET"), watchedFenceKey), expectedFence);
+            leaseGuard.assertValid();
+            expectOk(command("MULTI"), "MULTI");
+            for (byte[][] planned : commands)
+                codec.writeCommandBuffered(planned);
+            codec.flush();
+            for (int i = 0; i < commands.size(); i++)
+                expectQueued(codec.read());
+            leaseGuard.assertValid();
+            RespValue result = command("EXEC");
+            if (result == RespValue.NullValue.INSTANCE)
+                throw new FencingException("split key batch lost the target fence");
+            assertTransaction(result, "split key transaction");
+        } catch (RuntimeException | IOException error) {
+            unwatchQuietly();
+            throw error;
+        }
+    }
+
+    /** List length of {@code key}; used to reconcile an ambiguous RPUSH batch retry. */
+    long llen(byte[] key) throws IOException {
+        RespValue response = command(bytes("LLEN"), key);
+        if (!(response instanceof RespValue.IntegerValue value))
+            throw new RespProtocolException("LLEN returned an unexpected response");
+        return value.value();
+    }
+
+    /** 1 when {@code key} exists, 0 otherwise; used to reconcile an ambiguous finalize batch. */
+    long exists(byte[] key) throws IOException {
+        RespValue response = command(bytes("EXISTS"), key);
+        if (!(response instanceof RespValue.IntegerValue value))
+            throw new RespProtocolException("EXISTS returned an unexpected response");
+        return value.value();
+    }
+
+    /** Best-effort delete of a temporary split key; returns the number of keys removed. */
+    long unlink(byte[] key) throws IOException {
+        RespValue response = command(bytes("UNLINK"), key);
+        if (!(response instanceof RespValue.IntegerValue value))
+            throw new RespProtocolException("UNLINK returned an unexpected response");
+        return value.value();
+    }
+
+    /** Live {@code proto-max-bulk-len} (bytes); one element argument may not exceed this. */
+    long protoMaxBulkLen() throws IOException {
+        RespValue response = command("CONFIG", "GET", "proto-max-bulk-len");
+        if (response instanceof RespValue.Array array && array.values().size() == 2
+                && array.values().get(1) instanceof RespValue.Bulk bulk)
+            return Long.parseLong(new String(bulk.value(), StandardCharsets.US_ASCII).trim());
+        throw new RespProtocolException("CONFIG GET proto-max-bulk-len returned an unexpected response");
+    }
+
     public void writeHeartbeat(long timestampMillis) throws IOException {
         expectOk(command(bytes("SET"), heartbeatKey, bytes(Long.toString(timestampMillis)),
                 bytes("PX"), bytes("60000")), "SET heartbeat");
@@ -766,7 +841,7 @@ public final class TargetCommandSession implements AutoCloseable {
         return ClusterSlotKeyspace.heartbeat(taskId, safeChannel(channel), slot);
     }
 
-    private static String safeChannel(String channel) {
+    static String safeChannel(String channel) {
         if (channel == null || channel.isBlank() || !channel.matches("[A-Za-z0-9._-]+"))
             throw new IllegalArgumentException("invalid sync channel");
         return channel;

@@ -107,8 +107,9 @@ class StandaloneSyncTaskRunnerFactoryTest {
             int concurrency, int queueCapacity, int pipelineSize) {
         return new StandaloneSyncTaskRunnerFactory(profiles, null, null, null,
                 new RedisDataEndpointResolver(1000), new com.fasterxml.jackson.databind.ObjectMapper(),
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
                 Path.of("data"), 1024, 1000, 300000, concurrency, queueCapacity, pipelineSize,
-                4 * 1024 * 1024L, 64 * 1024 * 1024L, 2000, 1000);
+                4 * 1024 * 1024L, 64 * 1024 * 1024L, 0, 0, 128, 0, "FAIL", 2000, 1000);
     }
 
     private static WorkerRedisConnectionProfilePort profiles(WorkerClusterMode source, WorkerClusterMode target) {

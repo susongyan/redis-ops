@@ -174,6 +174,40 @@ class ClusterTargetRouter implements AutoCloseable {
         }
     }
 
+    // Split-path operations (design doc §7): the split writer is single-threaded, but its batches
+    // share these node connections with the restore lanes, so every call goes through the
+    // MasterConnection monitor. Fenced batches watch the slot of the split key — each slot has its
+    // own fence key, published lazily on first use.
+
+    void applySplitBatch(byte[] slotKey, List<byte[][]> commands, TargetFence fence, LeaseGuard leaseGuard)
+            throws IOException {
+        int slot = RedisSlot.of(slotKey);
+        ensureFence(slot, fence, leaseGuard);
+        connection(slot).applySplitBatch(slot, commands, fence, leaseGuard);
+    }
+
+    long splitLlen(byte[] key) throws IOException {
+        return connection(RedisSlot.of(key)).llen(key);
+    }
+
+    long splitExists(byte[] key) throws IOException {
+        return connection(RedisSlot.of(key)).exists(key);
+    }
+
+    long splitUnlink(byte[] key) throws IOException {
+        return connection(RedisSlot.of(key)).unlink(key);
+    }
+
+    long splitProtoMaxBulkLen() throws IOException {
+        return connections.values().iterator().next().protoMaxBulkLen();
+    }
+
+    /** Drops the node connection serving the slot and refreshes the topology (MOVED retry path). */
+    void reopenSplit(byte[] slotKey) throws IOException {
+        connection(RedisSlot.of(slotKey)).close();
+        refreshTopology();
+    }
+
     @Override
     public void close() {
         for (MasterConnection connection : connections.values())
@@ -271,6 +305,32 @@ class ClusterTargetRouter implements AutoCloseable {
         synchronized void loadFunction(byte[] payload, TargetFence fence, LeaseGuard leaseGuard)
                 throws IOException {
             session().loadFunction(payload, fence, leaseGuard);
+        }
+
+        /**
+         * Split writer batch: watches the split key's slot fence. No internal retry — the writer
+         * owns reconciliation and reconnects through {@code reopenSplit} between attempts.
+         */
+        synchronized void applySplitBatch(int slot, List<byte[][]> commands, TargetFence fence,
+                LeaseGuard leaseGuard) throws IOException {
+            session().applySplitBatch(ClusterSlotKeyspace.fence(taskId, channel, slot), commands, fence,
+                    leaseGuard);
+        }
+
+        synchronized long llen(byte[] key) throws IOException {
+            return session().llen(key);
+        }
+
+        synchronized long exists(byte[] key) throws IOException {
+            return session().exists(key);
+        }
+
+        synchronized long unlink(byte[] key) throws IOException {
+            return session().unlink(key);
+        }
+
+        synchronized long protoMaxBulkLen() throws IOException {
+            return session().protoMaxBulkLen();
         }
 
         private TargetCommandSession session() throws IOException {

@@ -47,6 +47,9 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
     private final int fullApplyPipelineSize;
     private final long fullApplyTransactionMaxBytes;
     private final long fullApplyQueueMaxBytes;
+    private final SplitKeySettings splitSettings;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
+    private final io.micrometer.core.instrument.Counter splitFallback;
     private final LeaseGuard leaseGuard;
     private final long metricIntervalNanos;
     private final ExecutorService workers;
@@ -105,7 +108,8 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
             Path dataDirectory, long segmentBytes, Duration connectTimeout, Duration fullApplySocketTimeout,
             int fullApplyConcurrency,
             int fullApplyQueueCapacity, int fullApplyPipelineSize, long fullApplyTransactionMaxBytes,
-            long fullApplyQueueMaxBytes, Duration leaseSafetyMargin, Duration metricInterval) {
+            long fullApplyQueueMaxBytes, Duration leaseSafetyMargin, Duration metricInterval,
+            SplitKeySettings splitSettings, io.micrometer.core.instrument.MeterRegistry meters) {
         this.originalTask = task;
         this.recovery = recovery;
         this.profiles = profiles;
@@ -124,6 +128,9 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
         this.fullApplyTransactionMaxBytes = fullApplyTransactionMaxBytes;
         this.fullApplyQueueMaxBytes = fullApplyQueueMaxBytes;
         this.leaseGuard = new LeaseGuard(leaseSafetyMargin);
+        this.splitSettings = splitSettings;
+        this.meters = meters;
+        this.splitFallback = meters.counter("sync_split_fallback_total", "channel", CHANNEL);
         if (metricInterval.isZero() || metricInterval.isNegative())
             throw new IllegalArgumentException("metric interval must be positive");
         this.metricIntervalNanos = metricInterval.toNanos();
@@ -390,13 +397,26 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                     restoreQueueCapacity, fullApplyQueueMaxBytes, taskFullApplyPipelineSize(),
                     fullApplyTransactionMaxBytes, targetFence, leaseGuard,
                     this::waitForApplyPermission, this::targetApplyFinished, fullProgress::applied)) {
-                try {
-                    RdbStreamParser parser = new RdbStreamParser(input);
-                    parser.parse(event -> fullProgress.parsed(parser.position(), applyRdbEvent(event, restores)));
-                    fullProgress.parsingComplete(parser.position());
-                    restores.awaitCompletion();
-                } catch (UncheckedIOException error) {
-                    throw error.getCause();
+                // Split events never fire with a null writer: a null options keeps the parser legacy.
+                SplitOptions options = splitEnabled() ? splitSettings.toParserOptions() : null;
+                try (SplitKeyRestoreWriter splitWriter = options == null
+                        ? null
+                        : new SplitKeyRestoreWriter(new StandaloneSplitChannel(targetProfile, endpoints,
+                                originalTask.targetDb(), originalTask.id(), CHANNEL, connectTimeout,
+                                fullApplySocketTimeout),
+                                originalTask.id(), CHANNEL, targetFence, leaseGuard, splitSettings,
+                                this::waitForApplyPermission, this::targetApplyFinished, fullProgress,
+                                sync, meters)) {
+                    try {
+                        RdbStreamParser parser = new RdbStreamParser(input);
+                        parser.parse(event -> fullProgress.parsed(parser.position(),
+                                applyRdbEvent(event, restores, splitWriter)), options);
+                        fullProgress.parsingComplete(parser.position());
+                        splitFallback.increment(parser.decodeFallbacks());
+                        restores.awaitCompletion();
+                    } catch (UncheckedIOException error) {
+                        throw error.getCause();
+                    }
                 }
             } catch (UncheckedIOException error) {
                 throw error.getCause();
@@ -415,7 +435,7 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                 "full RDB applied; incremental replication started");
     }
 
-    private boolean applyRdbEvent(RdbEvent event, FullRestorePool restores) {
+    private boolean applyRdbEvent(RdbEvent event, FullRestorePool restores, SplitKeyRestoreWriter splitWriter) {
         try {
             if (event instanceof RdbEvent.KeyValue keyValue) {
                 if (keyValue.database() == originalTask.sourceDb() && filter.accepts(keyValue.key())) {
@@ -430,11 +450,29 @@ public final class StandaloneSyncTaskRunner implements SyncTaskRunner {
                 } finally {
                     targetApplyFinished();
                 }
+            } else if (event instanceof RdbEvent.BigKeyValueBegin begin) {
+                if (splitWriter == null)
+                    throw new IllegalStateException("split begin without a split writer");
+                if (begin.database() == originalTask.sourceDb() && filter.accepts(begin.key()))
+                    splitWriter.begin(begin);
+                else
+                    splitWriter.skipPassively(); // filtered out: swallow until the end event
+                return true;
+            } else if (event instanceof RdbEvent.KeyElement element) {
+                splitWriter.element(element);
+            } else if (event instanceof RdbEvent.BigKeyValueEnd end) {
+                splitWriter.end(end);
+            } else if (event instanceof RdbEvent.SkippedKey skipped) {
+                splitWriter.skipped(skipped);
             }
             return false;
         } catch (IOException error) {
             throw new UncheckedIOException(error);
         }
+    }
+
+    private boolean splitEnabled() {
+        return splitSettings.enabled() && commandPolicy().allowSafeSplit();
     }
 
     private void readLoop() {

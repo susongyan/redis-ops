@@ -20,7 +20,10 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 @EnabledIfEnvironmentVariable(named = "REDIS_SYNC_IT", matches = "true")
 class StandaloneSyncTaskRunnerIntegrationTest {
@@ -99,6 +102,85 @@ class StandaloneSyncTaskRunnerIntegrationTest {
                 await(() -> "BLOCKED".equals(runner.phase()), runner);
                 assertNull(target.sync().get("biz:counter"), "mixed-scope effects must not partially apply");
                 assertNull(target.sync().get("other:counter"));
+            } finally {
+                runner.close();
+            }
+        } finally {
+            sourceClient.shutdown();
+            targetClient.shutdown();
+        }
+    }
+
+    @Test
+    void splitsOversizeKeysThroughTempKeysAndSkipsOverHardCap() throws Exception {
+        RedisClient sourceClient = RedisClient.create(RedisURI.create("redis://127.0.0.1:6390"));
+        RedisClient targetClient = RedisClient.create(RedisURI.create("redis://127.0.0.1:6391"));
+        try (var source = sourceClient.connect(); var target = targetClient.connect()) {
+            source.sync().flushall();
+            target.sync().flushall();
+            source.sync().set("small:str", "ok");
+            // Above the split threshold but not splittable: the string falls back to RESTORE.
+            source.sync().set("big:str", "x".repeat(8192));
+            // Every collection below has a wire size above the 4KB threshold, below the 64KB hard cap.
+            String member = "m".repeat(100);
+            for (int i = 0; i < 60; i++)
+                source.sync().rpush("big:list", member + ":" + i);
+            source.sync().expire("big:list", 600);
+            for (int i = 0; i < 30; i++)
+                source.sync().hset("big:hash", "field:" + i, "v".repeat(200));
+            for (int i = 0; i < 40; i++)
+                source.sync().zadd("big:zset", i * 0.5, member + ":" + i);
+            for (int i = 0; i < 50; i++)
+                source.sync().sadd("big:set", member + ":" + i);
+            // Routing sizes are WIRE sizes: a highly compressible 200KB string stays below the
+            // threshold after LZF and rides the legacy RESTORE path with its compressed payload.
+            source.sync().set("compressible:str", "h".repeat(200_000));
+            // An incompressible value keeps its wire size over the hard cap: skipped with an alert.
+            var random = new java.util.Random(42);
+            var huge = new StringBuilder(200_000);
+            String alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            for (int i = 0; i < 200_000; i++)
+                huge.append(alphabet.charAt(random.nextInt(alphabet.length())));
+            source.sync().set("huge:str", huge.toString());
+
+            var task = task(196, "epoch-split", "[\"*\"]", "[]", "{\"allowSafeSplit\":true}");
+            WorkerRedisConnectionProfilePort profiles = clusterId -> new WorkerRedisConnectionProfile(clusterId,
+                    WorkerClusterMode.STANDALONE, List.of("127.0.0.1:" + (clusterId == 1 ? 6390 : 6391)),
+                    null, null, "NONE", null);
+            byte[] masterKey = new byte[32];
+            java.util.Arrays.fill(masterKey, (byte) 9);
+            String keyRing = "v1:" + Base64.getEncoder().encodeToString(masterKey);
+            WorkerSyncExecutionPort sync = mock(WorkerSyncExecutionPort.class);
+            // 4KB restore threshold, 8-command batches, 64KB hard cap.
+            var split = new SplitKeySettings(4096, 4096, 8, 65536, false);
+            var runner = runner(task, sync, profiles, keyRing, split);
+            try {
+                runner.prepare();
+                runner.leaseAcquired(runtime(task.id(), 1));
+                runner.start();
+
+                await(() -> "INCR_SYNCING".equals(runner.phase()) || "CAUGHT_UP".equals(runner.phase()), runner);
+                // Small and fallback-RESTORE keys land byte-identical.
+                assertEquals("ok", target.sync().get("small:str"));
+                assertEquals(source.sync().get("big:str"), target.sync().get("big:str"));
+                assertEquals(source.sync().get("compressible:str"), target.sync().get("compressible:str"));
+                // Split collections keep element order, membership and TTL through the RENAME finalize.
+                assertEquals(source.sync().lrange("big:list", 0, -1), target.sync().lrange("big:list", 0, -1));
+                assertTrue(target.sync().pttl("big:list") > 0);
+                assertEquals(source.sync().hgetall("big:hash"), target.sync().hgetall("big:hash"));
+                assertEquals(source.sync().zrangeWithScores("big:zset", 0, -1),
+                        target.sync().zrangeWithScores("big:zset", 0, -1));
+                assertEquals(source.sync().smembers("big:set"), target.sync().smembers("big:set"));
+                // The over-hard-cap key is skipped and listed, and no temp key is left behind.
+                assertNull(target.sync().get("huge:str"));
+                assertTrue(target.sync().keys("__ropstmppart__*").isEmpty());
+                verify(sync).appendTaskEvent(eq(task.id()), eq("sync:split"),
+                        contains("SPLIT_KEY_SKIPPED"));
+                verify(sync).appendTaskEvent(eq(task.id()), eq("sync:split"), contains("reason=OVER_HARD_CAP"));
+
+                // Splitting hands control back cleanly: incremental replication keeps working.
+                source.sync().incr("counter");
+                await(() -> "1".equals(target.sync().get("counter")), runner);
             } finally {
                 runner.close();
             }
@@ -313,10 +395,15 @@ class StandaloneSyncTaskRunnerIntegrationTest {
     }
 
     private static WorkerSyncTask task(long id, String epoch, String includes, String excludes) {
+        return task(id, epoch, includes, excludes,
+                v3() ? "{\"policyVersion\":\"v3\",\"allowSafeSplit\":true}" : "{}");
+    }
+
+    private static WorkerSyncTask task(long id, String epoch, String includes, String excludes, String policy) {
         Instant now = Instant.now();
         return new WorkerSyncTask(id, "SYNC-IT-" + id, null, 1, 2, "MIGRATION", "FULL_AND_INCREMENTAL",
                 SyncContractStatus.STARTING, "NATIVE_JAVA", 0, 0,
-                includes, excludes, v3() ? "{\"policyVersion\":\"v3\",\"allowSafeSplit\":true}" : "{}", "PRESERVE",
+                includes, excludes, policy, "PRESERVE",
                 50_000,
                 100_000_000, 50 * 1024 * 1024, 4, 8, "START", true, "integration",
                 null, epoch, null, null, 0, now, now, null);
@@ -328,7 +415,24 @@ class StandaloneSyncTaskRunnerIntegrationTest {
                 mock(SyncRunnerStateReporter.class), new SpoolKeyProvider(keyRing),
                 new RedisDataEndpointResolver(5000), new ObjectMapper(),
                 dataDirectory, 1024 * 1024, Duration.ofSeconds(5), Duration.ofSeconds(10), 4, 32, 8,
-                4 * 1024 * 1024L, 64 * 1024 * 1024L, Duration.ofSeconds(2), Duration.ofSeconds(1));
+                4 * 1024 * 1024L, 64 * 1024 * 1024L, Duration.ofSeconds(2), Duration.ofSeconds(1),
+                splitSettings(), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+    }
+
+    /** Split-flavoured runner: same wiring as above with an owned sync port and split settings. */
+    private StandaloneSyncTaskRunner runner(WorkerSyncTask task, WorkerSyncExecutionPort sync,
+            WorkerRedisConnectionProfilePort profiles, String keyRing, SplitKeySettings split) {
+        return new StandaloneSyncTaskRunner(task, false, profiles, sync,
+                mock(SyncRunnerStateReporter.class), new SpoolKeyProvider(keyRing),
+                new RedisDataEndpointResolver(5000), new ObjectMapper(),
+                dataDirectory, 1024 * 1024, Duration.ofSeconds(5), Duration.ofSeconds(10), 4, 32, 8,
+                4 * 1024 * 1024L, 64 * 1024 * 1024L, Duration.ofSeconds(2), Duration.ofSeconds(1),
+                split, new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+    }
+
+    /** Splitting disabled: keeps the legacy single-argument parser path in these tests. */
+    private static SplitKeySettings splitSettings() {
+        return new SplitKeySettings(0, 64 * 1024, 128, 0, false);
     }
 
     private static boolean v3() {
