@@ -173,7 +173,10 @@ blob 的元素解码。解码失败（含恶意/损坏数据）→ 该 key 回�
    "SPLIT_KEY_SKIPPED ...")` 任务事件流（报告页展示归 P3）；
 4. **平台侧告警**：复用现有 `LARGE_KEY_FOUND` ruleType 触发（先例：`RiskScanService.java:329` 调
    `AlertService.trigger`，`AlertService.java:47-60`；无需 DDL 变更）。worker 侧经引擎事件/任务报告通道
-   上报，平台侧接线归 P3。
+   上报，平台侧接线归 P3。**✅ 已接线（2026-11-09，P3 B）**：platform `SyncSkipAlertWorker` 周期扫描
+   `sync_task_event` 的 `SPLIT_KEY_SKIPPED` 前缀事件（默认 60s 一轮、600s 窗口），按 `SYNC_TASK/<taskId>`
+   资源触发告警（value=任务累计跳过数），OPEN/ACKNOWLEDGED 期间不重复通知，RESOLVED 后新跳过重新打开
+   （跨仓契约见 `../CONTRACT.md` 契约 8）。
 
 **前置发现（P3，precheck 增强）**：precheck 阶段对源库 `SCAN` 采样 key 类型与 `MEMORY USAGE`，
 发现 module / 不支持编码 / 超 hard-cap 的 key 时在预检报告中直接提示（含数量与类型名），让用户在
@@ -267,6 +270,11 @@ StandaloneSyncTaskRunner / ClusterSyncTaskRunner 的 RDB 解析回调
   **P1 落地决议：契约白名单登记推迟到 P3**——P1 的拆分命令由 `SplitKeyRestoreWriter` 直接构造字节串
   下发（不经过增量 `apply()`/`CommandPlanner`，与命令策略天然解耦），不依赖 contract 改版即可发布；
   contract 侧能力协商随 P3 平台接线一并做。
+  **P3 落地决议（2026-11-09）：不登记白名单，contract 0.3.x 不改版**——登记反而有害：finalize 批的
+  `RENAME` 在 `SyncCommandCapabilities` 中属 HARD_BLOCKED（增量重放无法保证原子等价）、`UNLINK` 属
+  随 `allowSafeSplit` 门控的 SAFE_SPLIT，这正是拆分收尾命令必须绕过增量命令策略层的证明；把拆分
+  命令登记进策略表会制造"策略放行 = 拆分路径可用"的错觉。能力协商沿用既有
+  `SyncCommandPolicy.allowSafeSplit()`（precheck 与运行期 `splitOptions()` 同一双门控）。
 
 ### 7.2 分批策略
 
@@ -314,7 +322,7 @@ checkpoint 粒度维持"整个 RDB"不变，拆分 key 可安全重写。
 |----|------|
 | `FullSyncProgressTracker` 新阶段 | `SPLITTING_KEY`（含当前 key 的字节数、已写入元素数/预估元素数），保持每秒聚合上报节奏（`FullSyncProgressTracker.java:77-82`） |
 | Micrometer 计数 | `sync_split_keys_total`、`sync_split_elements_total`、`sync_split_batches_total`、`sync_split_fallback_total`（解码失败回退 RESTORE 次数，P1 实现为解析器 `decodeFallbacks()` 计数在 parse 收尾处一次性累入，tag `channel`）、**`sync_skipped_oversize_keys_total` / `sync_skipped_unsupported_keys_total`（跳过）** |
-| 跳过清单 | 任务报告内嵌跳过明细（key 指纹、类型、payloadBytes、原因），FINISH 时可见；平台侧触发 `LARGE_KEY_FOUND` 告警（§5.3） |
+| 跳过清单 | 任务报告内嵌跳过明细（key 指纹、类型、payloadBytes、原因），FINISH 时可见；平台侧触发 `LARGE_KEY_FOUND` 告警（§5.3）**✅ P3 已接线**：TaskDetail `skippedKeys` + 前端跳过清单区（契约 8） |
 | 日志 | 拆分开始/结束、跳过、回退各 WARN 级一条：taskId、key 字节长度、key SHA-256 前 8 字节、rdbType、元素数。**不打 key 内容**（防敏感数据泄露） |
 | 指标落库 | `WorkerSyncFullProgress` 透传 split 阶段信息，Platform 侧展示沿用现有进度通道 |
 
@@ -371,7 +379,7 @@ P0 剩余两项不修，拆分路径自身会被同样的问题拖垮（元素�
 | P1 ✅（2026-11-09，`mvn clean verify` 全绿 196/196） | 解析器元素级路径（§5）+ `RdbValueDecoder` + Standalone 拆分链路（§6.1 Standalone 命名、§7）+ 跳过三件套（§5.3） | Standalone 集成测试通过（含超 hard-cap 跳过路径）——`StandaloneSyncTaskRunnerIntegrationTest#splitsOversizeKeysThroughTempKeysAndSkipsOverHardCap`：list/hash/zset/set 经临时 key 拆分 + RENAME/PEXPIREAT 收尾、string 回退 RESTORE、LZF 压缩 wire 路由（§5.2）、超 hard-cap 跳过 + 任务事件 + 无 `__ropstmppart__` 残留、拆分后增量继续；Redis 5.0.7 实例实测 |
 | P1.5（可选） | string 的 SETRANGE 拆分路径（§14-3 决议推迟至此） | 500MB string 拆分 + `DEBUG DIGEST` 比对 |
 | P2 ✅（2026-11-09，`mvn clean verify` 全绿 201/201（53 项环境门控跳过）） | Cluster 拆分链路（hash-tag 路由、`ClusterTargetRouter` 适配） | Cluster 集成测试通过——`ClusterSyncTaskRunnerIntegrationTest#splitsOversizeKeysThroughSlotSafeTempKeys`：三种临时 key 命名情形（有效 tag 包裹 / 整 key 包裹 / 含 `}` 碰撞 tag）逐一覆盖 slot 一致性与 RENAME 收尾、TTL 保真、超 hard-cap 跳过 + 任务事件、逐节点无 `__ropstmppart__` 残留、拆分后增量继续；本地 Redis 5.0.7 三主双集群实测。`ClusterSplitChannelTest` 另以 `RedisSlot` 断言 12 类病态 key（含 `user:{123}` 陷阱、空 tag、`}` 前置）的 slot 一致性。source-cluster→standalone 目标的通道复用 Standalone 命名与单会话通道 |
-| P3 | 可观测性收尾（§9 指标/报告展示）+ precheck 采样扫描（大 key `MEMORY USAGE`、不支持类型 `SCAN ... TYPE`、`proto-max-bulk-len` 校验）+ 平台侧 `LARGE_KEY_FOUND` 告警接线。**采样可选**（`full-apply-precheck-sample-keys`，0=关闭；不变式校验与告警接线不受开关控制，见 §5.4 决议） | 平台侧可见拆分指标、跳过清单与类型风险提示 |
+| P3 | 可观测性收尾（§9 指标/报告展示）+ precheck 采样扫描（大 key `MEMORY USAGE`、不支持类型 `SCAN ... TYPE`、`proto-max-bulk-len` 校验）+ 平台侧 `LARGE_KEY_FOUND` 告警接线。**采样可选**（`full-apply-precheck-sample-keys`，0=关闭；不变式校验与告警接线不受开关控制，见 §5.4 决议） | 平台侧可见拆分指标、跳过清单与类型风险提示。**worker 侧已完成（2026-11-09）**：`TARGET_BULK_LIMIT`（split 启用即校验、误配 fail precheck、CONFIG 读不到按 512MB）+ `SOURCE_KEY_SAMPLE`（SCAN+TYPE+MEMORY USAGE 采样、findings 仅 WARN 不翻转 passed、失败降级"样本不可用"）+ contract 白名单决议（§7.1：不登记）；**平台侧已完成（2026-11-09，P3 B）**：`SyncSkipAlertWorker` 告警接线 + TaskDetail `skippedKeys`（契约 8）；**前端已完成（2026-11-09，P3 C）**：任务详情「跳过清单」区（告警横幅 + 指纹/类型/字节/原因表格，随 5s 轮询实时更新）、FINISH 确认弹窗跳过提醒、precheck `SOURCE_KEY_SAMPLE` findings 标签、`SPLITTING_KEY` 阶段名 |
 
 每阶段独立合入，P0 可先行发布（独立价值：单 key 堆占用从 ~9 份降到 ~2 份、消除连接挂起风险）。
 

@@ -41,7 +41,9 @@ class StandaloneSyncTaskRunnerFactoryTest {
         org.mockito.Mockito.when(endpoints.readServerVersion(org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.eq(target))).thenReturn("5.0.14");
         var precheck = new SyncPrecheckExecutor(assets, profiles, null, null, null,
-                new com.fasterxml.jackson.databind.ObjectMapper(), endpoints, Path.of("data"), 1024, 300000);
+                new com.fasterxml.jackson.databind.ObjectMapper(), endpoints,
+                new SplitKeySettingsConfig(0, 0, 128, 4 * 1024 * 1024L, 0, "FAIL", 5000),
+                Path.of("data"), 1024, 300000);
         var method = SyncPrecheckExecutor.class.getDeclaredMethod("compatibleVersions", WorkerSyncTask.class);
         method.setAccessible(true);
         org.junit.jupiter.api.Assertions.assertEquals("INFO server: source=[5.0.14] -> target=[5.0.14]",
@@ -109,7 +111,8 @@ class StandaloneSyncTaskRunnerFactoryTest {
                 new RedisDataEndpointResolver(1000), new com.fasterxml.jackson.databind.ObjectMapper(),
                 new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
                 Path.of("data"), 1024, 1000, 300000, concurrency, queueCapacity, pipelineSize,
-                4 * 1024 * 1024L, 64 * 1024 * 1024L, 0, 0, 128, 0, "FAIL", 2000, 1000);
+                4 * 1024 * 1024L, 64 * 1024 * 1024L,
+                new SplitKeySettingsConfig(0, 0, 128, 4 * 1024 * 1024L, 0, "FAIL", 5000), 2000, 1000);
     }
 
     private static WorkerRedisConnectionProfilePort profiles(WorkerClusterMode source, WorkerClusterMode target) {

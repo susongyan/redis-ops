@@ -88,3 +88,7 @@ sync:
     full-apply-split-hard-cap-bytes: ${SYNC_ENGINE_FULL_APPLY_SPLIT_HARD_CAP_BYTES:503316480}
     # Parse-level unsupported types (MODULE_2): FAIL (default) fails the task, SKIP skips the key.
     full-apply-unsupported-type-policy: ${SYNC_ENGINE_FULL_APPLY_UNSUPPORTED_TYPE_POLICY:FAIL}
+    # Precheck source sampling budget (keys scanned per source node via SCAN + TYPE/MEMORY USAGE);
+    # findings only WARN and never flip the precheck verdict. 0 disables sampling; the
+    # proto-max-bulk-len validation runs whenever splitting is enabled, regardless of this switch.
+    full-apply-precheck-sample-keys: ${SYNC_ENGINE_FULL_APPLY_PRECHECK_SAMPLE_KEYS:5000}

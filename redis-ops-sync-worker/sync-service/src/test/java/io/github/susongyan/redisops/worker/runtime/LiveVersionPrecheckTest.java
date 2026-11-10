@@ -32,6 +32,7 @@ class LiveVersionPrecheckTest {
         when(endpoints.readServerVersion(any(), eq(extra))).thenReturn("6.2.6");
         when(endpoints.readServerVersion(any(), eq(target))).thenReturn("7.4.2");
         return new SyncPrecheckExecutor(assets, profiles, null, null, null, new ObjectMapper(), endpoints,
+                new SplitKeySettingsConfig(67108864, 0, 512, 4194304, 503316480, "FAIL", 5000),
                 Path.of("data"),
                 1024, 300000);
     }

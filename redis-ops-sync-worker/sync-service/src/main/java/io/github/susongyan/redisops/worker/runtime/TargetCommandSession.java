@@ -491,6 +491,68 @@ public final class TargetCommandSession implements AutoCloseable {
         throw new RespProtocolException("CONFIG GET proto-max-bulk-len returned an unexpected response");
     }
 
+    /**
+     * One page of a precheck sampling SCAN (no MATCH: filtering stays client-side in {@code KeyFilter}
+     * so the sample covers exactly the task's include/exclude semantics). The caller drives the
+     * cursor and the per-node key budget.
+     */
+    ScanPage scanPage(String cursor, int count) throws IOException {
+        RespValue response = command(bytes("SCAN"), bytes(cursor), bytes("COUNT"), bytes(Integer.toString(count)));
+        if (!(response instanceof RespValue.Array outer) || outer.values().size() != 2
+                || !(outer.values().get(0) instanceof RespValue.Bulk next)
+                || !(outer.values().get(1) instanceof RespValue.Array keys))
+            throw new RespProtocolException("SCAN returned an unexpected response");
+        List<byte[]> page = new ArrayList<>(keys.values().size());
+        for (RespValue value : keys.values()) {
+            if (!(value instanceof RespValue.Bulk key))
+                throw new RespProtocolException("SCAN key is not a bulk string");
+            page.add(key.value());
+        }
+        return new ScanPage(new String(next.value(), StandardCharsets.US_ASCII), List.copyOf(page));
+    }
+
+    /**
+     * Pipelined TYPE + MEMORY USAGE over one page of sampled keys (chunks of 200 keys per flush so
+     * the reply stream stays bounded). A key that vanishes between SCAN and probe surfaces as
+     * {@code type="none"} or a {@code null} memory value; the caller skips those.
+     */
+    List<KeyProbe> probeKeys(List<byte[]> keys) throws IOException {
+        List<KeyProbe> probes = new ArrayList<>(keys.size());
+        for (int from = 0; from < keys.size(); from += 200) {
+            List<byte[]> chunk = keys.subList(from, Math.min(keys.size(), from + 200));
+            for (byte[] key : chunk) {
+                codec.writeCommandBuffered(bytes("TYPE"), key);
+                codec.writeCommandBuffered(bytes("MEMORY"), bytes("USAGE"), key);
+            }
+            codec.flush();
+            for (byte[] ignored : chunk) {
+                RespValue type = codec.read();
+                if (type instanceof RespValue.Error error)
+                    throw new RespProtocolException("TYPE failed: " + error.value());
+                if (!(type instanceof RespValue.Simple simple))
+                    throw new RespProtocolException("TYPE returned an unexpected response");
+                RespValue memory = codec.read();
+                if (memory instanceof RespValue.Error error)
+                    throw new RespProtocolException("MEMORY USAGE failed: " + error.value());
+                Long memoryBytes;
+                if (memory == RespValue.NullValue.INSTANCE)
+                    memoryBytes = null;
+                else if (memory instanceof RespValue.IntegerValue value)
+                    memoryBytes = value.value();
+                else
+                    throw new RespProtocolException("MEMORY USAGE returned an unexpected response");
+                probes.add(new KeyProbe(simple.value(), memoryBytes));
+            }
+        }
+        return probes;
+    }
+
+    record ScanPage(String nextCursor, List<byte[]> keys) {
+    }
+
+    record KeyProbe(String type, Long memoryBytes) {
+    }
+
     public void writeHeartbeat(long timestampMillis) throws IOException {
         expectOk(command(bytes("SET"), heartbeatKey, bytes(Long.toString(timestampMillis)),
                 bytes("PX"), bytes("60000")), "SET heartbeat");

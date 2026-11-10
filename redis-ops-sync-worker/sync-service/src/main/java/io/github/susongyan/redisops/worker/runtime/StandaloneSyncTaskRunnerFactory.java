@@ -43,11 +43,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
             @Value("${sync.engine.full-apply-pipeline-size:100}") int fullApplyPipelineSize,
             @Value("${sync.engine.full-apply-transaction-max-bytes:4194304}") long fullApplyTransactionMaxBytes,
             @Value("${sync.engine.full-apply-queue-max-bytes:67108864}") long fullApplyQueueMaxBytes,
-            @Value("${sync.engine.full-apply-max-restore-bytes:67108864}") long maxRestoreBytes,
-            @Value("${sync.engine.full-apply-split-batch-bytes:0}") long splitBatchBytes,
-            @Value("${sync.engine.full-apply-split-batch-commands:512}") int splitBatchCommands,
-            @Value("${sync.engine.full-apply-split-hard-cap-bytes:503316480}") long splitHardCapBytes,
-            @Value("${sync.engine.full-apply-unsupported-type-policy:FAIL}") String unsupportedTypePolicy,
+            SplitKeySettingsConfig splitConfig,
             @Value("${sync.engine.lease-safety-margin-ms:2000}") long leaseSafetyMarginMillis,
             @Value("${sync.engine.metric-interval-ms:1000}") long metricIntervalMillis) {
         if (fullApplyConcurrency < 1 || fullApplyConcurrency > 64)
@@ -83,11 +79,7 @@ public class StandaloneSyncTaskRunnerFactory implements SyncTaskRunnerFactory {
         this.fullApplyQueueMaxBytes = fullApplyQueueMaxBytes;
         this.leaseSafetyMargin = Duration.ofMillis(leaseSafetyMarginMillis);
         this.metricInterval = Duration.ofMillis(metricIntervalMillis);
-        // Zero disables splitting entirely; a non-positive split batch size inherits the shared
-        // transaction byte cap (design doc §4).
-        this.splitSettings = new SplitKeySettings(maxRestoreBytes,
-                splitBatchBytes > 0 ? splitBatchBytes : fullApplyTransactionMaxBytes,
-                splitBatchCommands, splitHardCapBytes, "SKIP".equalsIgnoreCase(unsupportedTypePolicy));
+        this.splitSettings = splitConfig.settings();
         this.meters = meters;
     }
 

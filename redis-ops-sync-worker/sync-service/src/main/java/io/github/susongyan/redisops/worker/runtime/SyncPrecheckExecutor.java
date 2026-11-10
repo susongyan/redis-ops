@@ -7,6 +7,7 @@ import io.github.susongyan.redisops.sync.contract.SyncCommandPolicy;
 import io.github.susongyan.redisops.worker.domain.WorkerSyncPrecheckReport;
 import io.github.susongyan.redisops.worker.domain.WorkerSyncTask;
 import io.github.susongyan.redisops.worker.domain.WorkerClusterView;
+import io.github.susongyan.redisops.worker.protocol.KeyFilter;
 import io.github.susongyan.redisops.worker.persistence.WorkerAssetReadPort;
 import io.github.susongyan.redisops.worker.persistence.WorkerSyncExecutionPort;
 import io.github.susongyan.redisops.worker.persistence.WorkerSyncStatePort;
@@ -28,13 +29,14 @@ public class SyncPrecheckExecutor {
     private final WorkerSyncExecutionPort execution;
     private final ObjectMapper json;
     private final RedisDataEndpointResolver endpoints;
+    private final SplitKeySettingsConfig split;
     private final Path dataDirectory;
     private final long segmentBytes;
     private final java.time.Duration socketTimeout;
 
     public SyncPrecheckExecutor(WorkerAssetReadPort clusters, WorkerRedisConnectionProfilePort profiles,
             WorkerTopologyPort topology, WorkerSyncStatePort state, WorkerSyncExecutionPort execution,
-            ObjectMapper json, RedisDataEndpointResolver endpoints,
+            ObjectMapper json, RedisDataEndpointResolver endpoints, SplitKeySettingsConfig split,
             @Value("${sync.engine.data-dir:./data/sync}") Path dataDirectory,
             @Value("${sync.engine.segment-bytes:268435456}") long segmentBytes,
             @Value("${sync.engine.full-apply-socket-timeout-ms:300000}") long socketTimeoutMillis) {
@@ -45,6 +47,7 @@ public class SyncPrecheckExecutor {
         this.execution = execution;
         this.json = json;
         this.endpoints = endpoints;
+        this.split = split;
         this.dataDirectory = dataDirectory;
         this.segmentBytes = segmentBytes;
         this.socketTimeout = java.time.Duration.ofMillis(socketTimeoutMillis);
@@ -67,6 +70,8 @@ public class SyncPrecheckExecutor {
         passed &= check(checks, "WORKER_SPOOL_STORAGE", this::spoolStorage);
         commandHistoryRisk(checks, task);
         targetDataRisk(checks, task);
+        passed &= check(checks, "TARGET_BULK_LIMIT", () -> targetBulkLimit(task));
+        sourceKeySampleRisk(checks, task);
         Instant checked = Instant.now();
         String report;
         try {
@@ -340,6 +345,220 @@ public class SyncPrecheckExecutor {
             }
         }
     }
+
+    /**
+     * Design doc §5.2 hard invariant: {@code full-apply-split-hard-cap-bytes} must stay below every
+     * target node's live {@code proto-max-bulk-len} — otherwise a fallback RESTORE or a split element
+     * can never be sent. Not gated by the sampling switch: a misconfiguration fails the precheck.
+     */
+    private String targetBulkLimit(WorkerSyncTask task) throws Exception {
+        if (!splitEnabled(task))
+            return "splitting disabled (maxRestoreBytes=0 or policy allowSafeSplit=false); "
+                    + "proto-max-bulk-len validation skipped, every key goes through single-key RESTORE";
+        long hardCap = split.settings().hardCapBytes();
+        long minLimit = Long.MAX_VALUE;
+        int nodes = 0;
+        int defaulted = 0;
+        try (WorkerRedisConnectionProfile profile = profiles.get(task.targetClusterId())) {
+            List<TargetCommandSession> sessions = new ArrayList<>();
+            try {
+                if (profile.mode() == WorkerClusterMode.CLUSTER) {
+                    Set<RedisEndpoint> masters = new LinkedHashSet<>();
+                    for (RedisDataEndpointResolver.ClusterMaster master : endpoints.resolveClusterMasters(profile))
+                        masters.add(master.endpoint());
+                    for (RedisEndpoint master : masters)
+                        sessions.add(TargetCommandSession.clusterSlot(profile, master, task.id(),
+                                java.time.Duration.ofSeconds(10), socketTimeout, "precheck", 0));
+                } else {
+                    sessions.add(new TargetCommandSession(profile, endpoints.resolvePrimary(profile),
+                            task.targetDb(), task.id(), java.time.Duration.ofSeconds(10), socketTimeout));
+                }
+                for (TargetCommandSession target : sessions) {
+                    nodes++;
+                    try {
+                        minLimit = Math.min(minLimit, target.protoMaxBulkLen());
+                    } catch (Exception unreadable) {
+                        // Design doc §5.2: an unreadable CONFIG falls back to the Redis default.
+                        defaulted++;
+                        minLimit = Math.min(minLimit, 536870912L);
+                    }
+                }
+            } finally {
+                for (TargetCommandSession session : sessions)
+                    session.close();
+            }
+        }
+        if (hardCap >= minLimit)
+            throw new IllegalStateException("full-apply-split-hard-cap-bytes (" + hardCap
+                    + ") must stay below the target proto-max-bulk-len (min " + minLimit + " on "
+                    + nodes + " node(s)); lower the hard cap or raise proto-max-bulk-len");
+        return "proto-max-bulk-len min=" + minLimit + " over " + nodes + " target node(s) > hard-cap "
+                + hardCap + (defaulted > 0
+                        ? "; " + defaulted + " node(s) unreadable, assumed the Redis default 512MB"
+                        : "")
+                + "; rebuilt collections may use a different encoding than the source"
+                + " (functionally equivalent, memory footprint may differ)";
+    }
+
+    /**
+     * Design doc §5.4: informational source sampling ahead of the run. Findings (module types,
+     * memory estimates over the hard cap) only surface as a WARNING — the runtime
+     * skip+alert+list behaviour of §5.3 remains the correctness backstop — and a sampling failure
+     * degrades to a "sample unavailable" notice instead of failing the precheck.
+     */
+    private void sourceKeySampleRisk(List<Map<String, Object>> checks, WorkerSyncTask task) {
+        try {
+            if (!splitEnabled(task)) {
+                checks.add(Map.of("name", "SOURCE_KEY_SAMPLE", "status", "PASSED",
+                        "message", "拆分未启用；跳过源库大 key 采样"));
+                return;
+            }
+            if (split.precheckSampleKeys() == 0) {
+                checks.add(Map.of("name", "SOURCE_KEY_SAMPLE", "status", "PASSED",
+                        "message", "采样已关闭（full-apply-precheck-sample-keys=0）；"
+                                + "运行期跳过+告警+清单兜底仍然生效"));
+                return;
+            }
+            checks.add(sampleSourceKeys(task));
+        } catch (Exception error) {
+            checks.add(Map.of("name", "SOURCE_KEY_SAMPLE", "status", "WARNING",
+                    "message", "样本不可用，不影响预检查通过：" + safe(error.getMessage())));
+        }
+    }
+
+    private Map<String, Object> sampleSourceKeys(WorkerSyncTask task) throws Exception {
+        KeyFilter filter = new KeyFilter(patterns(task.includePatternsJson()),
+                patterns(task.excludePatternsJson()));
+        long maxRestoreBytes = split.settings().maxRestoreBytes();
+        long hardCapBytes = split.settings().hardCapBytes();
+        int budget = split.precheckSampleKeys();
+        long scannedKeys = 0;
+        long inScopeKeys = 0;
+        long splitPath = 0;
+        long fallback = 0;
+        Map<String, long[]> findings = new LinkedHashMap<>(); // "kind|type" -> {count, maxBytes}
+        int nodes = 0;
+        try (WorkerRedisConnectionProfile profile = profiles.get(task.sourceClusterId())) {
+            List<TargetCommandSession> sessions = new ArrayList<>();
+            try {
+                if (profile.mode() == WorkerClusterMode.CLUSTER) {
+                    Set<RedisEndpoint> masters = new LinkedHashSet<>();
+                    for (RedisDataEndpointResolver.ClusterMaster master : endpoints.resolveClusterMasters(profile))
+                        masters.add(master.endpoint());
+                    for (RedisEndpoint master : masters)
+                        sessions.add(TargetCommandSession.clusterSlot(profile, master, task.id(),
+                                java.time.Duration.ofSeconds(10), socketTimeout, "precheck-source", 0));
+                } else {
+                    sessions.add(new TargetCommandSession(profile, endpoints.resolvePrimary(profile),
+                            task.sourceDb(), task.id(), java.time.Duration.ofSeconds(10), socketTimeout));
+                }
+                for (TargetCommandSession source : sessions) {
+                    nodes++;
+                    long nodeScanned = 0;
+                    String cursor = "0";
+                    do {
+                        TargetCommandSession.ScanPage page = source.scanPage(cursor, 1000);
+                        cursor = page.nextCursor();
+                        nodeScanned += page.keys().size();
+                        List<byte[]> inScope = new ArrayList<>();
+                        for (byte[] key : page.keys())
+                            if (filter.accepts(key))
+                                inScope.add(key);
+                        if (inScope.isEmpty())
+                            continue;
+                        inScopeKeys += inScope.size();
+                        for (TargetCommandSession.KeyProbe probe : source.probeKeys(inScope)) {
+                            SampleClass kind = classifySample(probe.type(), probe.memoryBytes(),
+                                    maxRestoreBytes, hardCapBytes);
+                            switch (kind) {
+                                case UNSUPPORTED_TYPE, OVER_HARD_CAP -> {
+                                    long[] aggregate = findings.computeIfAbsent(kind + "|" + probe.type(),
+                                            ignored -> new long[2]);
+                                    aggregate[0]++;
+                                    aggregate[1] = Math.max(aggregate[1],
+                                            probe.memoryBytes() == null ? 0L : probe.memoryBytes());
+                                }
+                                case SPLIT_PATH -> splitPath++;
+                                case FALLBACK_RESTORE -> fallback++;
+                                case SKIP -> {
+                                }
+                            }
+                        }
+                    } while (!"0".equals(cursor) && nodeScanned < budget);
+                    scannedKeys += nodeScanned;
+                }
+            } finally {
+                for (TargetCommandSession session : sessions)
+                    session.close();
+            }
+        }
+        long warningCount = findings.values().stream().mapToLong(aggregate -> aggregate[0]).sum();
+        Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put("name", "SOURCE_KEY_SAMPLE");
+        entry.put("status", findings.isEmpty() ? "PASSED" : "WARNING");
+        entry.put("message", (findings.isEmpty()
+                ? "采样 " + nodes + " 节点共扫描 " + scannedKeys + " key（每节点预算 " + budget + "），命中同步范围 "
+                        + inScopeKeys + " 个：未发现 module/不支持类型或超 hard-cap（" + hardCapBytes
+                        + "）的 key"
+                : "采样 " + nodes + " 节点共扫描 " + scannedKeys + " key（每节点预算 " + budget + "），命中同步范围 "
+                        + inScopeKeys + " 个：发现 " + warningCount + " 个 module/不支持类型或超 hard-cap 的 key，"
+                        + "同步期这些 key 会被跳过并计入跳过清单，建议建任务前清理或改造（findings 只含数量与类型）")
+                + "；预计约 " + splitPath + " 个 key 走拆分路径、" + fallback + " 个走回退 RESTORE"
+                + "（MEMORY USAGE 为内存估算，wire 尺寸以 LZF 压缩后为准）");
+        entry.put("sample", Map.of("nodes", nodes, "scannedKeys", scannedKeys, "inScopeKeys", inScopeKeys,
+                "budgetPerNode", budget));
+        if (!findings.isEmpty())
+            entry.put("findings", findings.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .map(finding -> {
+                        String[] parts = finding.getKey().split("\\|", 2);
+                        return Map.<String, Object>of("kind", parts[0], "type", parts[1],
+                                "count", finding.getValue()[0], "maxBytes", finding.getValue()[1]);
+                    }).toList());
+        return entry;
+    }
+
+    /** Classification of one sampled key (design doc §5.2/§5.3 routing, memory-estimated); pure for tests. */
+    static SampleClass classifySample(String type, Long memoryBytes, long maxRestoreBytes, long hardCapBytes) {
+        if (type == null || "none".equals(type) || memoryBytes == null)
+            return SampleClass.SKIP;
+        if (!SAMPLED_TYPES.contains(type))
+            return SampleClass.UNSUPPORTED_TYPE;
+        if (memoryBytes > hardCapBytes)
+            return SampleClass.OVER_HARD_CAP;
+        if (memoryBytes > maxRestoreBytes) {
+            boolean splittable = switch (type) {
+                case "list", "set", "zset", "hash" -> true;
+                default -> false;
+            };
+            return splittable ? SampleClass.SPLIT_PATH : SampleClass.FALLBACK_RESTORE;
+        }
+        return SampleClass.SKIP;
+    }
+
+    private static final Set<String> SAMPLED_TYPES = Set.of("string", "list", "set", "zset", "hash", "stream");
+
+    enum SampleClass {
+        SKIP, UNSUPPORTED_TYPE, OVER_HARD_CAP, SPLIT_PATH, FALLBACK_RESTORE
+    }
+
+    /** Both gates of the runtime {@code splitOptions()} (design doc §3): engine threshold and task policy. */
+    private boolean splitEnabled(WorkerSyncTask task) throws Exception {
+        return split.settings().enabled() && commandPolicy(task).allowSafeSplit();
+    }
+
+    private List<String> patterns(String value) {
+        if (value == null || value.isBlank())
+            return List.of();
+        try {
+            return json.readValue(value, STRING_LIST);
+        } catch (java.io.IOException error) {
+            throw new IllegalArgumentException("invalid sync key filter", error);
+        }
+    }
+
+    private static final com.fasterxml.jackson.core.type.TypeReference<List<String>> STRING_LIST = new com.fasterxml.jackson.core.type.TypeReference<>() {
+    };
 
     private String commandPolicySummary(WorkerSyncTask task) throws Exception {
         SyncCommandPolicy policy = commandPolicy(task);
