@@ -255,7 +255,8 @@ public interface SyncMapper {
     @Select("""
             SELECT p.id,p.task_id,p.full_sync_epoch,p.channel_id,p.lane,p.stage,p.total_bytes,p.received_bytes,
               p.parsed_bytes,p.total_keys,
-              p.parsed_keys,p.applied_keys,p.applied_bytes,p.status,p.started_at,p.updated_at
+              p.parsed_keys,p.applied_keys,p.applied_bytes,p.split_keys,p.split_bytes,
+              p.split_skipped_keys,p.split_skipped_bytes,p.status,p.started_at,p.updated_at
             FROM sync_full_progress p JOIN sync_task t ON t.id=p.task_id
             WHERE p.task_id=#{taskId} AND p.full_sync_epoch=t.full_sync_epoch
             ORDER BY p.channel_id,p.lane
@@ -263,9 +264,11 @@ public interface SyncMapper {
     List<SyncFullProgress> findFullProgress(long taskId);
     @Insert("""
             INSERT INTO sync_full_progress(task_id,full_sync_epoch,channel_id,lane,stage,total_bytes,received_bytes,
-              parsed_bytes,total_keys,parsed_keys,applied_keys,applied_bytes,status,started_at)
+              parsed_bytes,total_keys,parsed_keys,applied_keys,applied_bytes,split_keys,split_bytes,
+              split_skipped_keys,split_skipped_bytes,status,started_at)
             VALUES(#{taskId},#{fullSyncEpoch},#{channelId},#{lane},#{stage},#{totalBytes},#{receivedBytes},#{parsedBytes},
-              #{totalKeys},#{parsedKeys},#{appliedKeys},#{appliedBytes},#{status},
+              #{totalKeys},#{parsedKeys},#{appliedKeys},#{appliedBytes},#{splitKeys},#{splitBytes},
+              #{splitSkippedKeys},#{splitSkippedBytes},#{status},
               COALESCE(#{startedAt},CURRENT_TIMESTAMP(3)))
             ON DUPLICATE KEY UPDATE stage=VALUES(stage),total_bytes=COALESCE(VALUES(total_bytes),total_bytes),
               received_bytes=GREATEST(received_bytes,VALUES(received_bytes)),
@@ -273,7 +276,11 @@ public interface SyncMapper {
               total_keys=COALESCE(VALUES(total_keys),total_keys),
               parsed_keys=GREATEST(parsed_keys,VALUES(parsed_keys)),
               applied_keys=GREATEST(applied_keys,VALUES(applied_keys)),
-              applied_bytes=GREATEST(applied_bytes,VALUES(applied_bytes)),status=VALUES(status)
+              applied_bytes=GREATEST(applied_bytes,VALUES(applied_bytes)),
+              split_keys=GREATEST(split_keys,VALUES(split_keys)),
+              split_bytes=GREATEST(split_bytes,VALUES(split_bytes)),
+              split_skipped_keys=GREATEST(split_skipped_keys,VALUES(split_skipped_keys)),
+              split_skipped_bytes=GREATEST(split_skipped_bytes,VALUES(split_skipped_bytes)),status=VALUES(status)
             """)
     void upsertFullProgress(SyncFullProgress progress);
     class TaskRow {
