@@ -1,4 +1,5 @@
 import { actorLabel } from '../actor.js'
+import { parseSplitSkip, skipReasonTag, rdbTypeName, skipBytes } from '../syncSkipList.js'
 import { useEffect, useRef, useState } from 'react'
 import {
   Alert,
@@ -66,6 +67,7 @@ const capabilityMeta = {
 const fullStageMeta = {
   RECEIVING_RDB: '接收 RDB',
   PARSING_RDB: '解析 RDB',
+  SPLITTING_KEY: '拆分大 Key',
   RESTORING: '并发写入',
   COMPLETED: '全量完成',
 }
@@ -1198,6 +1200,15 @@ export default function SyncTasksPage() {
           message="Worker 将获取最终源 offset，等待目标应用完成后结束"
           style={{ marginBottom: 16 }}
         />
+        {detail?.task?.id === finishTask?.id && detail?.skippedKeys?.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            message={`该任务全量阶段已跳过 ${detail.skippedKeys.length} 个大 key`}
+            description="跳过的 key 未同步到目标端（超硬上限或类型不支持），请在任务详情的「跳过清单」核对并确认可接受缺失后再结束。"
+            style={{ marginBottom: 16 }}
+          />
+        )}
         <Form form={finishForm} layout="vertical">
           <Form.Item
             name="sourceWriteFenced"
@@ -1331,6 +1342,13 @@ export default function SyncTasksPage() {
                           {risk.command} · 历史 {risk.calls} 次 · {risk.reason}
                         </Tag>
                       ))}
+                      {(row.findings || []).map((finding) => (
+                        <Tag color="error" key={`${finding.kind}-${finding.type}`} style={{ marginTop: 6 }}>
+                          {finding.kind === 'UNSUPPORTED_TYPE' ? '不支持类型' : '超硬上限'} · {finding.type}
+                          {` · ${finding.count} 个`}
+                          {finding.maxBytes > 0 ? ` · 最大 ${skipBytes(finding.maxBytes)}` : ''}
+                        </Tag>
+                      ))}
                     </div>
                   ),
                 },
@@ -1441,6 +1459,49 @@ export default function SyncTasksPage() {
             </div>
           )
         })() : <div className="muted">全量同步启动后显示 RDB 接收、解析和并发 RESTORE 进度</div>}
+
+        {detail?.skippedKeys?.length > 0 && (() => {
+          const skipRows = detail.skippedKeys
+            .map((event) => ({ ...parseSplitSkip(event.message), id: event.id, createdAt: event.createdAt }))
+            .filter((row) => row.fingerprint)
+          return (
+            <>
+              <h3>跳过清单</h3>
+              <Alert
+                type="warning"
+                showIcon
+                message={`全量同步已跳过 ${skipRows.length} 个 key，目标端缺少这些数据`}
+                description="超过拆分硬上限或类型不支持的大 key 会被跳过而不是拖垮任务；跳过即目标缺数据，请核对源端这些 key（必要时清理或改造后重建任务）再执行 FINISH。"
+                style={{ marginBottom: 12 }}
+              />
+              <Table
+                rowKey="id"
+                size="small"
+                pagination={{ pageSize: 20, showTotal: (total) => `共 ${total} 条` }}
+                dataSource={skipRows}
+                columns={[
+                  { title: '时间', dataIndex: 'createdAt', render: timeText },
+                  { title: '类型', dataIndex: 'rdbType', render: rdbTypeName },
+                  {
+                    title: 'Key 指纹',
+                    dataIndex: 'fingerprint',
+                    render: (value) => <code>{value}</code>,
+                  },
+                  { title: 'Key 名长', dataIndex: 'keyBytes', render: (value) => skipBytes(value) },
+                  { title: 'Payload', dataIndex: 'payloadBytes', render: (value) => skipBytes(value) },
+                  {
+                    title: '原因',
+                    dataIndex: 'reason',
+                    render: (value) => {
+                      const [label, color] = skipReasonTag(value)
+                      return <Tag color={color}>{label}</Tag>
+                    },
+                  },
+                ]}
+              />
+            </>
+          )
+        })()}
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 16 }}>
           <h3 style={{ margin: 0 }}>运行实例</h3>
