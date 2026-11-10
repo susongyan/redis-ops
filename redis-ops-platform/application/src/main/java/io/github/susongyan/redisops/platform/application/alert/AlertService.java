@@ -61,6 +61,19 @@ public class AlertService {
             }
         return Optional.empty();
     }
+    /**
+     * True when an OPEN or ACKNOWLEDGED event already exists for the first enabled rule of this type
+     * — callers that re-detect the same condition every poll use it to avoid duplicate notifications.
+     * Resolved events deliberately do not count: a fresh trigger after resolution re-opens the event.
+     */
+    public boolean hasUnresolved(String type, String resourceType, String resourceId) {
+        for (AlertRule r : alerts.rules())
+            if (r.enabled() && r.ruleType().equals(type))
+                return alerts.findEventByKey(r.id(), resourceType, resourceId)
+                        .map(event -> event.status() == AlertStatus.OPEN || event.status() == AlertStatus.ACKNOWLEDGED)
+                        .orElse(false);
+        return false;
+    }
     @Transactional
     public AlertEvent acknowledge(long id, String op, long version) {
         if (!alerts.acknowledge(id, op, version))

@@ -43,6 +43,13 @@ public class MyBatisAlertRepository implements AlertRepository {
         m.upsert(x);
         return m.eventByKey(x);
     }
+    public Optional<AlertEvent> findEventByKey(long rid, String rt, String id) {
+        AlertMapper.EventRow x = new AlertMapper.EventRow();
+        x.ruleId = rid;
+        x.resourceType = rt;
+        x.resourceId = id;
+        return Optional.ofNullable(m.eventByKey(x));
+    }
     public Optional<AlertEvent> findEvent(long id) {
         return Optional.ofNullable(m.event(id));
     }

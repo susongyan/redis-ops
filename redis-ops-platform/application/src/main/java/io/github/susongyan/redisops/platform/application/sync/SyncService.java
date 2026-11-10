@@ -143,6 +143,12 @@ public class SyncService {
         int offset = Math.multiplyExact(page - 1, actualSize);
         return new PageResult<>(sync.findEvents(id, offset, actualSize), sync.countEvents(id), page, actualSize);
     }
+
+    /** Big-key split skip list (§5.3) for the task detail drawer; skips are rare, cap is generous. */
+    public List<SyncTaskEvent> skippedKeys(long id) {
+        get(id);
+        return sync.findSplitSkips(id, 200);
+    }
     public Optional<SyncRuntime> runtime(long id) {
         get(id);
         return sync.findRuntime(id);

@@ -67,7 +67,8 @@ public class SyncController {
         PageResult<SyncTaskEvent> events = service.events(id, 1, 20);
         return wrap(new TaskDetail(service.get(id), events.items(), events.total(),
                 service.runtime(id).orElse(null), service.channels(id),
-                service.precheck(id).orElse(null), service.metrics(id, 100), service.fullProgress(id)), request);
+                service.precheck(id).orElse(null), service.metrics(id, 100), service.fullProgress(id),
+                service.skippedKeys(id)), request);
     }
 
     @GetMapping("/api/v1/sync-task-workers")
@@ -278,7 +279,8 @@ public class SyncController {
     }
     public record TaskDetail(SyncTask task, List<SyncTaskEvent> events, long eventTotal, SyncRuntime runtime,
             List<SyncChannelCheckpoint> channels, SyncPrecheckReport precheck,
-            List<SyncMetricSnapshot> metrics, List<SyncFullProgress> fullProgress) {
+            List<SyncMetricSnapshot> metrics, List<SyncFullProgress> fullProgress,
+            List<SyncTaskEvent> skippedKeys) {
     }
 
     private ApiResponse<SyncTask> action(HttpServletRequest request, String key, String operation, Object body,

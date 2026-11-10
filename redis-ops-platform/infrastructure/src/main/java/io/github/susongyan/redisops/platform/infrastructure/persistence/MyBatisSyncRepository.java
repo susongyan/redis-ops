@@ -49,6 +49,15 @@ public class MyBatisSyncRepository implements SyncRepository {
     public long countEvents(long id) {
         return mapper.countEvents(id);
     }
+    public List<Long> findSplitSkipTaskIds(long windowSeconds) {
+        return mapper.findSplitSkipTaskIds(windowSeconds);
+    }
+    public long countSplitSkips(long taskId) {
+        return mapper.countSplitSkips(taskId);
+    }
+    public List<SyncTaskEvent> findSplitSkips(long taskId, int limit) {
+        return mapper.findSplitSkips(taskId, limit);
+    }
     public long countActiveTasks(long id) {
         return mapper.countActiveTasks(id);
     }

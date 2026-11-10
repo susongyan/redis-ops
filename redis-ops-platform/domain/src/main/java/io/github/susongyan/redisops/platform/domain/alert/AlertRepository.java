@@ -9,6 +9,7 @@ public interface AlertRepository {
     boolean updateRule(AlertRule rule, long version);
     AlertEvent upsertOpen(long ruleId, String resourceType, String resourceId, AlertSeverity severity, String title,
             String evidenceJson);
+    Optional<AlertEvent> findEventByKey(long ruleId, String resourceType, String resourceId);
     Optional<AlertEvent> findEvent(long id);
     PageResult<AlertEvent> events(AlertStatus status, int page, int size);
     boolean acknowledge(long id, String operator, long version);

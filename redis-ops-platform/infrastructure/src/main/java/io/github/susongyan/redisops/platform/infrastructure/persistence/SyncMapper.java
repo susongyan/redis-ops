@@ -6,12 +6,11 @@ import java.util.List;
 
 @Mapper
 public interface SyncMapper {
-    // Timezone convention (see ADR-037): every DATETIME column in the shared schema is
-    // written with one label — the database session wall clock, and the session timezone
-    // is whatever the database server itself uses (JDBC URLs carry no override).
-    // CURRENT_TIMESTAMP defaults, lease/heartbeat math and Java Instant parameters all
-    // agree on that single label, so timestamps are read as-is; mixing deployments whose
-    // database servers run different timezones would silently shift reads.
+    // Timezone convention (see ../CONTRACT.md 契约 7): every DATETIME column in the shared schema is
+    // written with one label — the +08 session wall clock. CURRENT_TIMESTAMP defaults, lease/heartbeat
+    // math and Java Instant parameters all agree, so timestamps are read as-is. This holds only while
+    // the JDBC URL carries connectionTimeZone=Asia/Shanghai (or leaves the session default +08);
+    // a UTC-labelled session would silently shift every read by 8h.
     String TASK_COLUMNS = "id,task_no,relation_id,source_cluster_id,target_cluster_id,purpose,sync_mode,status,tool_type,"
             +
             "source_db,target_db,CAST(include_patterns_json AS CHAR) include_patterns_json," +
@@ -70,6 +69,21 @@ public interface SyncMapper {
             @Param("limit") int limit);
     @Select("SELECT COUNT(*) FROM sync_task_event WHERE task_id=#{taskId}")
     long countEvents(long taskId);
+    @Select("""
+            SELECT DISTINCT task_id FROM sync_task_event
+            WHERE message LIKE 'SPLIT_KEY_SKIPPED %'
+              AND created_at >= DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL #{windowSeconds} SECOND)
+            """)
+    List<Long> findSplitSkipTaskIds(@Param("windowSeconds") long windowSeconds);
+    @Select("SELECT COUNT(*) FROM sync_task_event WHERE task_id=#{taskId} AND message LIKE 'SPLIT_KEY_SKIPPED %'")
+    long countSplitSkips(long taskId);
+    @Select("""
+            SELECT id,task_id,from_status,to_status,operator_id AS operator,message,created_at,
+              CAST(operator_snapshot AS CHAR) operatorSnapshot
+            FROM sync_task_event WHERE task_id=#{taskId} AND message LIKE 'SPLIT_KEY_SKIPPED %'
+            ORDER BY id LIMIT #{limit}
+            """)
+    List<SyncTaskEvent> findSplitSkips(@Param("taskId") long taskId, @Param("limit") int limit);
     @Select("SELECT COUNT(*) FROM sync_task WHERE relation_id=#{relationId} AND status NOT IN ('FINISHED','CANCELLED','FAILED')")
     long countActiveTasks(long relationId);
     @Insert("INSERT INTO switchover(relation_id,old_primary_cluster_id,old_standby_cluster_id,stopped_task_id,reverse_task_id,status,operator_id,source_write_fenced,source_fence_note,last_error,confirmed_at,operator_snapshot) VALUES(#{relationId},#{oldPrimaryClusterId},#{oldStandbyClusterId},#{stoppedTaskId},#{reverseTaskId},#{status},#{operator},#{sourceWriteFenced},#{sourceFenceNote},#{lastError},#{confirmedAt},#{operatorSnapshot})")

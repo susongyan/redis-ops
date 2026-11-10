@@ -10,6 +10,10 @@ public interface SyncRepository {
     void requestSpoolCleanup(long taskId, String operator);
     List<SyncTaskEvent> findEvents(long taskId, int offset, int limit);
     long countEvents(long taskId);
+    /** Tasks with a big-key split skip event written within the window (seconds, DB clock). */
+    List<Long> findSplitSkipTaskIds(long windowSeconds);
+    long countSplitSkips(long taskId);
+    List<SyncTaskEvent> findSplitSkips(long taskId, int limit);
     long countActiveTasks(long relationId);
     Switchover saveSwitchover(Switchover switchover);
     Optional<Switchover> findSwitchover(long id);
