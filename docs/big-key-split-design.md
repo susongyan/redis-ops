@@ -325,6 +325,7 @@ checkpoint 粒度维持"整个 RDB"不变，拆分 key 可安全重写。
 | 跳过清单 | 任务报告内嵌跳过明细（key 指纹、类型、payloadBytes、原因），FINISH 时可见；平台侧触发 `LARGE_KEY_FOUND` 告警（§5.3）**✅ P3 已接线**：TaskDetail `skippedKeys` + 前端跳过清单区（契约 8） |
 | 日志 | 拆分开始/结束、跳过、回退各 WARN 级一条：taskId、key 字节长度、key SHA-256 前 8 字节、rdbType、元素数。**不打 key 内容**（防敏感数据泄露） |
 | 指标落库 | `WorkerSyncFullProgress` 透传 split 阶段信息，Platform 侧展示沿用现有进度通道 |
+| **拆分独立统计（2026-11-10 补，契约 9）** | `SPLITTING_KEY` 只是"正在拆某一个 key"的瞬时阶段，不能回答"这个任务拆了多少/多大"。为此 `sync_full_progress` 新增四列（V45）：`split_keys/split_bytes`（元素级重建并 RENAME 落地的个数与 wire payloadBytes）、`split_skipped_keys/split_skipped_bytes`（跳过的个数与 wire 大小）。拆分成功在 RENAME 收尾后经 `splitKeyDone` 喂数、跳过在 `emitSkip` 处经 `splitKeySkipped` 喂数；`parsed_keys/applied_*` 保持 RESTORE 路径语义不变。四列是通道级值（同通道各 lane 行同值，聚合只取 lane=-1）。前端全量进度面板有拆分活动时显示"拆分大 Key N 个 / X（跳过 M 个 / Y）"汇总与每通道列 |
 
 ## 10. 前置修复（P0，本方案的前置依赖）
 
