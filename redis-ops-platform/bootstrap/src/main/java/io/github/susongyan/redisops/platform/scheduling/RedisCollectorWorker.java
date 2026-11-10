@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.time.Instant;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -115,7 +116,9 @@ public class RedisCollectorWorker {
                 throw new IllegalStateException("no reachable cluster masters");
             return result;
         } finally {
-            client.shutdown();
+            // bounded: the no-arg shutdown() waits on CompletableFuture.get() forever and one
+            // stuck client starves the whole scheduler pool (observed: platform-scheduler-1 hung 5h+)
+            client.shutdown(1, 3, TimeUnit.SECONDS);
         }
     }
 
@@ -131,7 +134,9 @@ public class RedisCollectorWorker {
             } catch (RuntimeException exception) {
                 failure = exception;
             } finally {
-                client.shutdown();
+                // bounded: the no-arg shutdown() waits on CompletableFuture.get() forever and one
+                // stuck client starves the whole scheduler pool (observed: platform-scheduler-1 hung 5h+)
+                client.shutdown(1, 3, TimeUnit.SECONDS);
             }
         }
         throw failure == null ? new IllegalStateException("Sentinel master not found") : failure;
@@ -145,7 +150,9 @@ public class RedisCollectorWorker {
             snapshot.put("redis_ops_slowlog_len", Long.toString(slowlog == null ? 0 : slowlog));
             return snapshot;
         } finally {
-            client.shutdown();
+            // bounded: the no-arg shutdown() waits on CompletableFuture.get() forever and one
+            // stuck client starves the whole scheduler pool (observed: platform-scheduler-1 hung 5h+)
+            client.shutdown(1, 3, TimeUnit.SECONDS);
         }
     }
 
