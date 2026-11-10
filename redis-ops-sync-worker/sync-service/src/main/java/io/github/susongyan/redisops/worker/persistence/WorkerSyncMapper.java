@@ -172,16 +172,22 @@ public interface WorkerSyncMapper {
 
     @Insert("""
             INSERT INTO sync_full_progress(task_id,full_sync_epoch,channel_id,lane,stage,total_bytes,received_bytes,
-              parsed_bytes,total_keys,parsed_keys,applied_keys,applied_bytes,status,started_at)
+              parsed_bytes,total_keys,parsed_keys,applied_keys,applied_bytes,split_keys,split_bytes,
+              split_skipped_keys,split_skipped_bytes,status,started_at)
             VALUES(#{taskId},#{fullSyncEpoch},#{channelId},#{lane},#{stage},#{totalBytes},#{receivedBytes},
-              #{parsedBytes},#{totalKeys},#{parsedKeys},#{appliedKeys},#{appliedBytes},#{status},#{startedAt})
+              #{parsedBytes},#{totalKeys},#{parsedKeys},#{appliedKeys},#{appliedBytes},#{splitKeys},#{splitBytes},
+              #{splitSkippedKeys},#{splitSkippedBytes},#{status},#{startedAt})
             ON DUPLICATE KEY UPDATE stage=VALUES(stage),total_bytes=COALESCE(VALUES(total_bytes),total_bytes),
               received_bytes=GREATEST(received_bytes,VALUES(received_bytes)),
               parsed_bytes=GREATEST(parsed_bytes,VALUES(parsed_bytes)),
               total_keys=COALESCE(VALUES(total_keys),total_keys),
               parsed_keys=GREATEST(parsed_keys,VALUES(parsed_keys)),
               applied_keys=GREATEST(applied_keys,VALUES(applied_keys)),
-              applied_bytes=GREATEST(applied_bytes,VALUES(applied_bytes)),status=VALUES(status)
+              applied_bytes=GREATEST(applied_bytes,VALUES(applied_bytes)),
+              split_keys=GREATEST(split_keys,VALUES(split_keys)),
+              split_bytes=GREATEST(split_bytes,VALUES(split_bytes)),
+              split_skipped_keys=GREATEST(split_skipped_keys,VALUES(split_skipped_keys)),
+              split_skipped_bytes=GREATEST(split_skipped_bytes,VALUES(split_skipped_bytes)),status=VALUES(status)
             """)
     void upsertFullProgress(io.github.susongyan.redisops.worker.domain.WorkerSyncFullProgress progress);
 

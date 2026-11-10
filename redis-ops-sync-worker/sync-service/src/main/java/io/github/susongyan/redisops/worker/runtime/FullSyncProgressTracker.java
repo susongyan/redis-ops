@@ -22,6 +22,10 @@ final class FullSyncProgressTracker {
     private final AtomicLong parsedKeys = new AtomicLong();
     private final AtomicLongArray laneKeys;
     private final AtomicLongArray laneBytes;
+    private final AtomicLong splitKeys = new AtomicLong();
+    private final AtomicLong splitBytes = new AtomicLong();
+    private final AtomicLong splitSkippedKeys = new AtomicLong();
+    private final AtomicLong splitSkippedBytes = new AtomicLong();
     private final AtomicLong lastAggregateReport = new AtomicLong();
     private final AtomicLongArray lastLaneReport;
     private final AtomicBoolean completed = new AtomicBoolean();
@@ -100,6 +104,20 @@ final class FullSyncProgressTracker {
         reportAggregate(false);
     }
 
+    /** One oversized key was rebuilt element-by-element and renamed into place (wire payloadBytes). */
+    void splitKeyDone(long payloadBytes) {
+        splitKeys.incrementAndGet();
+        splitBytes.addAndGet(payloadBytes);
+        reportAggregate(false);
+    }
+
+    /** One oversized key was dropped with a SPLIT_KEY_SKIPPED event (wire payloadBytes). */
+    void splitKeySkipped(long payloadBytes) {
+        splitSkippedKeys.incrementAndGet();
+        splitSkippedBytes.addAndGet(payloadBytes);
+        reportAggregate(false);
+    }
+
     void completed() {
         completed.set(true);
         totalKeys = parsedKeys.get();
@@ -144,7 +162,8 @@ final class FullSyncProgressTracker {
     private WorkerSyncFullProgress row(int lane, long appliedKeys, long appliedBytes) {
         return new WorkerSyncFullProgress(taskId, epoch, channel, lane, stage, totalBytes,
                 receivedBytes.get(), parsedBytes.get(), totalKeys, parsedKeys.get(), appliedKeys,
-                appliedBytes, status, startedAt, Instant.now());
+                appliedBytes, splitKeys.get(), splitBytes.get(), splitSkippedKeys.get(),
+                splitSkippedBytes.get(), status, startedAt, Instant.now());
     }
 
     private void persist(WorkerSyncFullProgress progress) {

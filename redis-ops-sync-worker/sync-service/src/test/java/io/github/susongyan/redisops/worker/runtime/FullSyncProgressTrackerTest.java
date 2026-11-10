@@ -46,6 +46,32 @@ class FullSyncProgressTrackerTest {
     }
 
     @Test
+    void reportsSplitKeyStatisticsSeparatelyFromRestoreLanes() {
+        WorkerSyncExecutionPort repository = mock(WorkerSyncExecutionPort.class);
+        FullSyncProgressTracker tracker = new FullSyncProgressTracker(9, "epoch-3", "source-b", 1, repository);
+
+        tracker.rdbReceived(2_000);
+        tracker.parsed(1_500, false); // routed to the split path: accepted=false, no parsed key
+        tracker.splitKeyDone(1_500);
+        tracker.splitKeySkipped(500);
+        tracker.parsingComplete(2_000);
+        tracker.completed();
+
+        ArgumentCaptor<WorkerSyncFullProgress> captor = ArgumentCaptor.forClass(WorkerSyncFullProgress.class);
+        verify(repository, atLeastOnce()).upsertFullProgress(captor.capture());
+        WorkerSyncFullProgress aggregate = captor.getAllValues().stream()
+                .filter(row -> row.lane() == -1 && row.status().equals("COMPLETED"))
+                .reduce((first, second) -> second).orElseThrow();
+
+        assertThat(aggregate.splitKeys()).isEqualTo(1);
+        assertThat(aggregate.splitBytes()).isEqualTo(1_500);
+        assertThat(aggregate.splitSkippedKeys()).isEqualTo(1);
+        assertThat(aggregate.splitSkippedBytes()).isEqualTo(500);
+        assertThat(aggregate.parsedKeys()).isZero(); // split keys never enter the RESTORE counters
+        assertThat(aggregate.appliedKeys()).isZero();
+    }
+
+    @Test
     void observationFailureDoesNotInterruptSync() {
         WorkerSyncExecutionPort repository = mock(WorkerSyncExecutionPort.class);
         doThrow(new IllegalStateException("database unavailable")).when(repository)

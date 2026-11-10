@@ -152,6 +152,7 @@ final class SplitKeyRestoreWriter implements AutoCloseable {
         finalizeKey();
         splitKeys.increment();
         splitElements.increment(elementsWritten);
+        progress.splitKeyDone(event.payloadBytes());
         log.warn("split key end taskId={} keyBytes={} keyFingerprint={} rdbType={} elements={} payloadBytes={}",
                 taskId, currentKey.length, fingerprint(currentKey), rdbType, elementsWritten,
                 event.payloadBytes());
@@ -326,6 +327,7 @@ final class SplitKeyRestoreWriter implements AutoCloseable {
             skippedUnsupported.increment();
         else
             skippedOversize.increment();
+        progress.splitKeySkipped(payloadBytes);
         String fingerprint = fingerprint(key);
         log.warn("split key skipped taskId={} keyBytes={} keyFingerprint={} rdbType={} payloadBytes={} "
                 + "reason={}", taskId, key.length, fingerprint, type, payloadBytes, reason);
