@@ -245,6 +245,10 @@ export default function SyncTasksPage() {
     item.totalKeys,
     item.appliedKeys,
     item.appliedBytes,
+    item.splitKeys,
+    item.splitBytes,
+    item.splitSkippedKeys,
+    item.splitSkippedBytes,
     item.status,
     item.updatedAt,
   ].join(':')).join('|')
@@ -1371,6 +1375,10 @@ export default function SyncTasksPage() {
             : Math.round(channels.reduce((sum, item) => sum + fullPercent(item), 0) / channels.length)
           const failed = channels.some((item) => item.status === 'FAILED')
           const completed = channels.length > 0 && channels.every((item) => item.status === 'COMPLETED')
+          const splitKeys = channels.reduce((sum, item) => sum + (item.splitKeys || 0), 0)
+          const splitBytes = channels.reduce((sum, item) => sum + (item.splitBytes || 0), 0)
+          const splitSkippedKeys = channels.reduce((sum, item) => sum + (item.splitSkippedKeys || 0), 0)
+          const splitSkippedBytes = channels.reduce((sum, item) => sum + (item.splitSkippedBytes || 0), 0)
           return (
             <div
               key={`full-progress-${metricFlash}`}
@@ -1398,6 +1406,12 @@ export default function SyncTasksPage() {
                     label: '已写入 Key',
                     children: channels.reduce((sum, item) => sum + item.appliedKeys, 0),
                   },
+                  ...(splitKeys > 0 || splitSkippedKeys > 0 ? [{
+                    key: 'split',
+                    label: <TipLabel label="拆分大 Key" tip="超过拆分阈值的集合类 key 按元素级重建的个数与 wire 大小汇总（独立于已解析/已写入 Key 计数）；跳过 = 超硬上限或类型不支持，目标端缺这些数据。" />,
+                    span: 3,
+                    children: `${splitKeys} 个 / ${bytesLabel(splitBytes)}${splitSkippedKeys > 0 ? `（跳过 ${splitSkippedKeys} 个 / ${bytesLabel(splitSkippedBytes)}）` : ''}`,
+                  }] : []),
                 ]}
               />
               <Table
@@ -1429,6 +1443,12 @@ export default function SyncTasksPage() {
                   {
                     title: '已写入 Key',
                     render: (_, row) => `${row.appliedKeys}${row.totalKeys == null ? '' : ` / ${row.totalKeys}`}`,
+                  },
+                  {
+                    title: <TipLabel label="拆分大 Key" tip="本通道按元素级重建的大 key 个数与 wire 大小；跳过 = 超硬上限或类型不支持。" />,
+                    render: (_, row) => (row.splitKeys > 0 || row.splitSkippedKeys > 0)
+                      ? `${row.splitKeys} 个 / ${bytesLabel(row.splitBytes || 0)}${row.splitSkippedKeys > 0 ? `，跳过 ${row.splitSkippedKeys} 个 / ${bytesLabel(row.splitSkippedBytes || 0)}` : ''}`
+                      : '0 个',
                   },
                   { title: '更新时间', dataIndex: 'updatedAt', render: timeText },
                 ]}
