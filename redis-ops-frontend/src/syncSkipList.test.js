@@ -1,15 +1,24 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {parseSplitSkip,skipReasonTag,rdbTypeName,skipBytes} from './syncSkipList.js'
+import {parseSplitSkip,skipReasonTag,rdbTypeName,skipBytes,skipKeyLabel,skipElementsLabel} from './syncSkipList.js'
 
-test('parseSplitSkip accepts the worker message and ignores appended fields',()=>{
-  const parsed=parseSplitSkip('SPLIT_KEY_SKIPPED keyFingerprint=0123456789abcdef keyBytes=32 rdbType=4 payloadBytes=536870912 reason=OVER_HARD_CAP')
-  assert.deepEqual(parsed,{fingerprint:'0123456789abcdef',keyBytes:32,rdbType:4,payloadBytes:536870912,reason:'OVER_HARD_CAP'})
-  // 契约 8：新字段只能追加在行尾，解析不锚定结尾
-  assert.equal(parseSplitSkip('SPLIT_KEY_SKIPPED keyFingerprint=ab keyBytes=1 rdbType=0 payloadBytes=2 reason=UNSUPPORTED_TYPE extra=3').reason,'UNSUPPORTED_TYPE')
+test('parseSplitSkip reads v2 key-name messages and legacy fingerprint ones',()=>{
+  // v2：key 原名在行尾（容忍空格）、集合类带声明元素个数
+  const v2=parseSplitSkip('SPLIT_KEY_SKIPPED rdbType=4 keyBytes=22 elements=20010000 payloadBytes=536870912 reason=OVER_HARD_CAP key=biz:user:2024:followers')
+  assert.deepEqual(v2,{key:'biz:user:2024:followers',fingerprint:null,keyBytes:22,rdbType:4,elements:20010000,payloadBytes:536870912,reason:'OVER_HARD_CAP'})
+  const spaced=parseSplitSkip('SPLIT_KEY_SKIPPED rdbType=1 keyBytes=5 elements=3 payloadBytes=32 reason=ELEMENT_OVER_BULK_LIMIT key=a b c')
+  assert.equal(spaced.key,'a b c')
+  assert.equal(skipKeyLabel(spaced),'a b c')
+  // v1 存量事件仍可解析，展示回退指纹
+  const v1=parseSplitSkip('SPLIT_KEY_SKIPPED keyFingerprint=0123456789abcdef keyBytes=32 rdbType=4 payloadBytes=536870912 reason=OVER_HARD_CAP')
+  assert.equal(v1.key,null)
+  assert.equal(v1.elements,0)
+  assert.equal(skipKeyLabel(v1),'0123456789abcdef')
+  assert.equal(skipElementsLabel(v1),'—')
+  assert.equal(skipElementsLabel(v2),'20,010,000')
+  assert.equal(skipKeyLabel(null),'-')
   assert.equal(parseSplitSkip('别的消息'),null)
   assert.equal(parseSplitSkip(null),null)
-  assert.equal(parseSplitSkip('SPLIT_KEY_SKIPPED keyFingerprint=zz keyBytes=x rdbType=4 payloadBytes=2 reason=R'),null)
 })
 
 test('skip reason tags and rdb type names cover the known vocabulary',()=>{

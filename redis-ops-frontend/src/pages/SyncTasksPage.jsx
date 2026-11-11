@@ -1,5 +1,5 @@
 import { actorLabel } from '../actor.js'
-import { parseSplitSkip, skipReasonTag, rdbTypeName, skipBytes } from '../syncSkipList.js'
+import { parseSplitSkip, skipReasonTag, rdbTypeName, skipBytes, skipKeyLabel, skipElementsLabel } from '../syncSkipList.js'
 import { useEffect, useRef, useState } from 'react'
 import {
   Alert,
@@ -1483,7 +1483,7 @@ export default function SyncTasksPage() {
         {detail?.skippedKeys?.length > 0 && (() => {
           const skipRows = detail.skippedKeys
             .map((event) => ({ ...parseSplitSkip(event.message), id: event.id, createdAt: event.createdAt }))
-            .filter((row) => row.fingerprint)
+            .filter((row) => row.key || row.fingerprint)
           return (
             <>
               <h3>跳过清单</h3>
@@ -1503,11 +1503,13 @@ export default function SyncTasksPage() {
                   { title: '时间', dataIndex: 'createdAt', render: timeText },
                   { title: '类型', dataIndex: 'rdbType', render: rdbTypeName },
                   {
-                    title: 'Key 指纹',
-                    dataIndex: 'fingerprint',
-                    render: (value) => <code>{value}</code>,
+                    title: 'Key',
+                    dataIndex: 'key',
+                    render: (_, row) => (
+                      <code style={{ wordBreak: 'break-all' }}>{skipKeyLabel(row)}</code>
+                    ),
                   },
-                  { title: 'Key 名长', dataIndex: 'keyBytes', render: (value) => skipBytes(value) },
+                  { title: '元素', dataIndex: 'elements', render: (_, row) => skipElementsLabel(row) },
                   { title: 'Payload', dataIndex: 'payloadBytes', render: (value) => skipBytes(value) },
                   {
                     title: '原因',
