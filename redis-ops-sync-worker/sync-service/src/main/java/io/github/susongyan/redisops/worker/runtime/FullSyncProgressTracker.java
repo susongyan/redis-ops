@@ -22,6 +22,8 @@ final class FullSyncProgressTracker {
     private final AtomicLong parsedKeys = new AtomicLong();
     private final AtomicLongArray laneKeys;
     private final AtomicLongArray laneBytes;
+    private final AtomicLong appliedViaSplitKeys = new AtomicLong(); // parse-thread split finals, no lane
+    private final AtomicLong appliedViaSplitBytes = new AtomicLong();
     private final AtomicLong splitKeys = new AtomicLong();
     private final AtomicLong splitBytes = new AtomicLong();
     private final AtomicLong splitSkippedKeys = new AtomicLong();
@@ -104,10 +106,16 @@ final class FullSyncProgressTracker {
         reportAggregate(false);
     }
 
-    /** One oversized key was rebuilt element-by-element and renamed into place (wire payloadBytes). */
+    /**
+     * One oversized key was rebuilt element-by-element and renamed into place (wire payloadBytes).
+     * The key IS written to the target, so it also counts toward the channel's applied totals —
+     * without it a pure-split channel would forever read "written 0" while data flows.
+     */
     void splitKeyDone(long payloadBytes) {
         splitKeys.incrementAndGet();
         splitBytes.addAndGet(payloadBytes);
+        appliedViaSplitKeys.incrementAndGet();
+        appliedViaSplitBytes.addAndGet(payloadBytes);
         reportAggregate(false);
     }
 
@@ -148,7 +156,7 @@ final class FullSyncProgressTracker {
             appliedKeys += laneKeys.get(lane);
             appliedBytes += laneBytes.get(lane);
         }
-        persist(row(-1, appliedKeys, appliedBytes));
+        persist(row(-1, appliedKeys + appliedViaSplitKeys.get(), appliedBytes + appliedViaSplitBytes.get()));
     }
 
     private void reportLane(int lane, boolean force) {

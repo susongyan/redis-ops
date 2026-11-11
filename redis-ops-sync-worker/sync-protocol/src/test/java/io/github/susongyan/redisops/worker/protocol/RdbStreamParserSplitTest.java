@@ -5,6 +5,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -198,6 +199,8 @@ class RdbStreamParserSplitTest {
         // 150-byte threshold split would engage) and is skipped without a Begin event
         var skippedList = (RdbEvent.SkippedKey) events.get(2);
         assertEquals(RdbEvent.SkipReason.OVER_HARD_CAP, skippedList.reason());
+        assertEquals(0, skippedString.estimatedElements()); // string blob: count unknowable
+        assertEquals(3, skippedList.estimatedElements()); // declared list length survives the skip
         var next = (RdbEvent.KeyValue) events.get(3);
         assertArrayEquals("next-key".getBytes(StandardCharsets.US_ASCII), next.key());
     }
@@ -212,8 +215,87 @@ class RdbStreamParserSplitTest {
         assertEquals(2, count(events, RdbEvent.KeyElement.class)); // elements 1-2 emitted before the abort
         var skipped = (RdbEvent.SkippedKey) last(events, RdbEvent.SkippedKey.class);
         assertEquals(RdbEvent.SkipReason.OVER_HARD_CAP, skipped.reason());
+        assertEquals(4, skipped.estimatedElements()); // mid-stream abort still reports the declared count
         // the whole value was still consumed: 1 count byte + 4 x (2-byte length + 100 bytes)
         assertEquals(1 + 4 * 102, skipped.payloadBytes());
+        assertEquals(RdbEvent.End.INSTANCE, events.get(events.size() - 1));
+    }
+
+    @Test
+    void quicklistSkipSumsDeclaredElementsFromNodeHeaders() throws Exception {
+        Rdb rdb = new Rdb();
+        rdb.key("big-ql", TYPE_LIST_QUICKLIST, s -> {
+            rdb.length(3);
+            rdb.string(ziplist("a".repeat(40)));
+            rdb.string(ziplist("b".repeat(40)));
+            rdb.string(ziplist("c".repeat(40)));
+        });
+        List<RdbEvent> events = parse(rdb, new SplitOptions(20, 60, false));
+        var skipped = (RdbEvent.SkippedKey) last(events, RdbEvent.SkippedKey.class);
+        assertEquals(RdbEvent.SkipReason.OVER_HARD_CAP, skipped.reason());
+        // no whole-list total exists in the wire; the count is the sum of node headers
+        assertEquals(3, skipped.estimatedElements());
+    }
+
+    @Test
+    void quicklistV2SkipCountsPlainNodeAsOneElement() throws Exception {
+        Rdb rdb = new Rdb();
+        rdb.key("big-ql2", TYPE_LIST_QUICKLIST_2, s -> {
+            rdb.length(3);
+            rdb.length(1);
+            rdb.string(listpack("x".repeat(40), "y".repeat(40)));
+            rdb.length(2); // plain node: one element whatever its bytes
+            rdb.string("plain-element");
+            rdb.length(1);
+            rdb.string(listpack("z".repeat(40)));
+        });
+        List<RdbEvent> events = parse(rdb, new SplitOptions(20, 90, false));
+        var skipped = (RdbEvent.SkippedKey) last(events, RdbEvent.SkippedKey.class);
+        assertEquals(RdbEvent.SkipReason.OVER_HARD_CAP, skipped.reason());
+        assertEquals(4, skipped.estimatedElements()); // 2 (listpack) + 1 (plain) + 1 (listpack)
+    }
+
+    @Test
+    void quicklistSkipCountsLzfCompressedNodesExactly() throws Exception {
+        Rdb rdb = new Rdb();
+        rdb.key("lzf-ql", TYPE_LIST_QUICKLIST_2, s -> {
+            rdb.length(3);
+            for (int i = 0; i < 3; i++) {
+                rdb.length(1); // packed container
+                rdb.writeLzfBlob(listpack("x".repeat(40), "y".repeat(40)));
+            }
+        });
+        rdb.key("after", TYPE_STRING, s -> rdb.string("tail"));
+        // real trailer CRC: proves the discard consumed every LZF node byte and fed the running crc
+        List<RdbEvent> events = parseCrc(rdb, new SplitOptions(5, 5, false));
+        var skipped = (RdbEvent.SkippedKey) last(events, RdbEvent.SkippedKey.class);
+        assertEquals(RdbEvent.SkipReason.OVER_HARD_CAP, skipped.reason());
+        assertEquals(6, skipped.estimatedElements()); // header sum: 3 nodes x 2 listpack entries
+        var after = (RdbEvent.KeyValue) events.get(events.size() - 2);
+        assertEquals("after", new String(after.key(), StandardCharsets.US_ASCII));
+        assertEquals(RdbEvent.End.INSTANCE, events.get(events.size() - 1));
+    }
+
+    @Test
+    void quicklistMidStreamSkipConsumesLzfNodesAfterTheAbort() throws Exception {
+        Rdb rdb = new Rdb();
+        rdb.key("mid-ql", TYPE_LIST_QUICKLIST_2, s -> {
+            rdb.length(4);
+            for (int i = 0; i < 3; i++) { // nodes 1-3: raw listpacks of two entries each
+                rdb.length(1);
+                rdb.string(listpack("x".repeat(40), "y".repeat(40)));
+            }
+            rdb.length(1);
+            rdb.writeLzfBlob(listpack("z".repeat(40))); // node 4: discarded after the cap trip
+        });
+        rdb.key("after", TYPE_STRING, s -> rdb.string("tail"));
+        List<RdbEvent> events = parseCrc(rdb, new SplitOptions(5, 200, false));
+        var skipped = (RdbEvent.SkippedKey) last(events, RdbEvent.SkippedKey.class);
+        assertEquals(RdbEvent.SkipReason.OVER_HARD_CAP, skipped.reason());
+        // 2 (node 1, prefix) + 2 (node 2, streamed) + 2 (node 3, decoded at the abort) + 1 (LZF node 4)
+        assertEquals(7, skipped.estimatedElements());
+        var after = (RdbEvent.KeyValue) events.get(events.size() - 2);
+        assertEquals("after", new String(after.key(), StandardCharsets.US_ASCII));
         assertEquals(RdbEvent.End.INSTANCE, events.get(events.size() - 1));
     }
 
@@ -231,6 +313,7 @@ class RdbStreamParserSplitTest {
         List<RdbEvent> skipped = parse(module2, new SplitOptions(100, 4096, true));
         var event = (RdbEvent.SkippedKey) skipped.get(1);
         assertEquals(RdbEvent.SkipReason.UNSUPPORTED_TYPE, event.reason());
+        assertEquals(0, event.estimatedElements());
         assertArrayEquals("mod".getBytes(StandardCharsets.US_ASCII), event.key());
         assertEquals(RdbEvent.End.INSTANCE, skipped.get(2));
         assertThrows(UnsupportedRdbTypeException.class,
@@ -259,6 +342,13 @@ class RdbStreamParserSplitTest {
     private static List<RdbEvent> parse(Rdb rdb, SplitOptions options) throws Exception {
         List<RdbEvent> events = new ArrayList<>();
         new RdbStreamParser(new ByteArrayInputStream(rdb.bytes())).parse(events::add, options);
+        return events;
+    }
+
+    /** Parse with a real trailer CRC so any stream misalignment (skip/discard desync) fails. */
+    private static List<RdbEvent> parseCrc(Rdb rdb, SplitOptions options) throws Exception {
+        List<RdbEvent> events = new ArrayList<>();
+        new RdbStreamParser(new ByteArrayInputStream(rdb.bytesWithCrc())).parse(events::add, options);
         return events;
     }
 
@@ -330,6 +420,15 @@ class RdbStreamParserSplitTest {
             return out.toByteArray();
         }
 
+        /** Same as {@link #bytes()} but with a real trailer CRC the parser validates. */
+        byte[] bytesWithCrc() {
+            byte[] all = bytes();
+            long crc = RedisCrc64.calculate(Arrays.copyOf(all, all.length - 8));
+            for (int i = 0; i < 8; i++)
+                all[all.length - 8 + i] = (byte) ((crc >>> (8 * i)) & 0xff);
+            return all;
+        }
+
         void expire(long millis) {
             out.write(252);
             writeLongLe(millis);
@@ -385,6 +484,20 @@ class RdbStreamParserSplitTest {
             length(plain.length);
             out.write(plain.length - 1);
             out.writeBytes(plain);
+        }
+
+        /** Writes {@code plain} as an LZF-encoded string of literal chunks of at most 32 bytes. */
+        void writeLzfBlob(byte[] plain) {
+            var lzf = new ByteArrayOutputStream();
+            for (int i = 0; i < plain.length; i += 32) {
+                int take = Math.min(32, plain.length - i);
+                lzf.write(take - 1);
+                lzf.writeBytes(Arrays.copyOfRange(plain, i, i + take));
+            }
+            out.write(0xC0 | 3); // encoded kind 3 = LZF
+            length(lzf.size());
+            length(plain.length);
+            out.writeBytes(lzf.toByteArray());
         }
 
         void write(int b) {

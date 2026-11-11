@@ -68,7 +68,10 @@ class FullSyncProgressTrackerTest {
         assertThat(aggregate.splitSkippedKeys()).isEqualTo(1);
         assertThat(aggregate.splitSkippedBytes()).isEqualTo(500);
         assertThat(aggregate.parsedKeys()).isZero(); // split keys never enter the RESTORE counters
-        assertThat(aggregate.appliedKeys()).isZero();
+        // ... but a finalized split key IS written to the target: it counts as applied on the
+        // channel row (lane rows stay RESTORE-only), so "written keys" no longer reads 0
+        assertThat(aggregate.appliedKeys()).isEqualTo(1);
+        assertThat(aggregate.appliedBytes()).isEqualTo(1_500);
     }
 
     @Test

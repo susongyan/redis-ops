@@ -152,7 +152,7 @@ public final class RdbStreamParser {
                 throw new UnsupportedRdbTypeException(type, "Redis Module data is not supported");
             skipModule2Payload();
             consumer.accept(new RdbEvent.SkippedKey(key, type, position - valueStart,
-                    RdbEvent.SkipReason.UNSUPPORTED_TYPE));
+                    RdbEvent.SkipReason.UNSUPPORTED_TYPE, 0));
             return;
         }
         if (type == TYPE_MODULE)
@@ -199,7 +199,7 @@ public final class RdbStreamParser {
             long uncompressed = readLength(record);
             if (compressed > options.hardCapBytes()) {
                 transferBytes(compressed, null);
-                consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+                consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP, 0));
                 return;
             }
             byte[] blob = readExact(Math.toIntExact(compressed), record);
@@ -222,7 +222,7 @@ public final class RdbStreamParser {
             long len = length.value;
             if (len > options.hardCapBytes()) {
                 transferBytes(len, null);
-                consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+                consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP, 0));
                 return;
             }
             if (type == TYPE_STRING || !splittableType(type) || len <= options.maxRestoreBytes()) {
@@ -292,7 +292,7 @@ public final class RdbStreamParser {
         }
         if (oversize) {
             discardElements(type, arity, scored, count - i - 1);
-            consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+            consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP, count));
             return;
         }
         if (i == count) { // never crossed the threshold — same as legacy
@@ -311,7 +311,7 @@ public final class RdbStreamParser {
                 transferElement(type, arity, scored, record);
                 if (record.size() > options.hardCapBytes()) {
                     discardElements(type, arity, scored, count - j - 1);
-                    consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+                    consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP, count));
                     return;
                 }
             }
@@ -328,7 +328,7 @@ public final class RdbStreamParser {
             RdbEvent.KeyElement element = readElementStreaming(type, arity);
             if (position - valueStart > options.hardCapBytes()) {
                 discardElements(type, arity, scored, count - j - 1);
-                consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+                consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP, count));
                 return;
             }
             consumer.accept(element);
@@ -344,6 +344,7 @@ public final class RdbStreamParser {
     private void readQuicklistValue(int type, Consumer<RdbEvent> consumer, SplitOptions options, byte[] key,
             long valueStart) throws IOException {
         boolean v2 = type == TYPE_LIST_QUICKLIST_2;
+        boolean listpack = v2; // v1 nodes are ziplists, v2 packed nodes are listpacks
         ByteArrayOutputStream record = new ByteArrayOutputStream();
         record.write(type);
         long nodeCount = readLength(record);
@@ -361,8 +362,10 @@ public final class RdbStreamParser {
                 break;
         }
         if (oversize) {
-            discardQuicklistNodes(v2, nodeCount - i - 1);
-            consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+            long remaining = discardQuicklistNodes(v2, listpack, nodeCount - i - 1);
+            long recorded = recordedQuicklistElements(record, type, i + 1);
+            consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP,
+                    remaining < 0 || recorded < 0 ? 0 : remaining + recorded));
             return;
         }
         if (i == nodeCount) {
@@ -385,8 +388,10 @@ public final class RdbStreamParser {
                     readContainer(record);
                 transferString(record);
                 if (record.size() > options.hardCapBytes()) {
-                    discardQuicklistNodes(v2, nodeCount - j - 1);
-                    consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+                    long remaining = discardQuicklistNodes(v2, listpack, nodeCount - j - 1);
+                    long recorded = recordedQuicklistElements(record, type, j + 1);
+                    consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP,
+                            remaining < 0 || recorded < 0 ? 0 : remaining + recorded));
                     return;
                 }
             }
@@ -404,8 +409,9 @@ public final class RdbStreamParser {
             byte[] blob = readString(null);
             List<byte[]> elements = decodeQuicklistNode(type, new QuicklistNode(container, blob));
             if (position - valueStart > options.hardCapBytes()) {
-                discardQuicklistNodes(v2, nodeCount - j - 1);
-                consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+                long remaining = discardQuicklistNodes(v2, listpack, nodeCount - j - 1);
+                consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP,
+                        remaining < 0 ? 0 : emitted + elements.size() + remaining));
                 return;
             }
             for (byte[] element : elements) {
@@ -441,7 +447,7 @@ public final class RdbStreamParser {
         record.write(type);
         skipObject(type, record);
         if (record.overflow)
-            consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP));
+            consumer.accept(skipped(key, type, valueStart, RdbEvent.SkipReason.OVER_HARD_CAP, 0));
         else
             acceptKeyValue(consumer, key, record.bytes());
     }
@@ -472,8 +478,9 @@ public final class RdbStreamParser {
         consumer.accept(new RdbEvent.KeyValue(database, key, expireAt, toDumpPayload(encoded)));
     }
 
-    private RdbEvent.SkippedKey skipped(byte[] key, int type, long valueStart, RdbEvent.SkipReason reason) {
-        return new RdbEvent.SkippedKey(key, type, position - valueStart, reason);
+    private RdbEvent.SkippedKey skipped(byte[] key, int type, long valueStart, RdbEvent.SkipReason reason,
+            long estimatedElements) {
+        return new RdbEvent.SkippedKey(key, type, position - valueStart, reason, estimatedElements);
     }
 
     private static int arityOf(int type) {
@@ -492,11 +499,95 @@ public final class RdbStreamParser {
             transferElement(type, arity, scored, null);
     }
 
-    private void discardQuicklistNodes(boolean v2, long count) throws IOException {
+    /**
+     * Discards {@code count} quicklist nodes while summing their declared entry counts (ziplist
+     * {@code zllen} / listpack header count; a plain node holds exactly one element). The RDB has
+     * no whole-list total, so this header sum is the exact count. Every node is consumed in full —
+     * the skip must leave the stream (and its running CRC) exactly aligned — even once the sum
+     * turns unknowable; LZF-compressed nodes are inflated only far enough to read their header.
+     * Returns {@code -1} when any node is unknowable: a header prefix that will not inflate, a
+     * 0xFFFF header count (only a full scan would know), an integer-encoded blob, or a node
+     * shorter than its own header.
+     */
+    private long discardQuicklistNodes(boolean v2, boolean listpack, long count) throws IOException {
+        long elements = 0;
+        boolean knowable = true;
+        int offset = listpack ? 4 : 8;
         for (long i = 0; i < count; i++) {
-            if (v2)
-                readContainer(null);
-            transferString(null);
+            if (v2 && readContainer(null) == 2) {
+                transferString(null);
+                elements++;
+                continue;
+            }
+            Length length = readLengthValue(null);
+            long declared;
+            if (!length.encoded) {
+                int peek = (int) Math.min(length.value, offset + 2);
+                declared = declaredEntries(readExact(peek, null), offset);
+                transferBytes(length.value - peek, null);
+            } else {
+                declared = switch ((int) length.value) {
+                    case 3 -> { // LZF blob: consume it whole, inflate only the header prefix
+                        long compressed = readLength(null);
+                        readLength(null); // uncompressed size — only the header prefix is inflated
+                        yield lzfDeclaredEntries(readExact(Math.toIntExact(compressed), null), offset);
+                    }
+                    case 0, 1, 2 -> { // integer-encoded blob: 1-4 payload bytes, no node header
+                        transferBytes(1L << (int) length.value, null);
+                        yield -1;
+                    }
+                    default -> throw new RespProtocolException("unknown encoded RDB string: " + length.value);
+                };
+            }
+            if (declared < 0)
+                knowable = false;
+            else
+                elements += declared;
+        }
+        return knowable ? elements : -1;
+    }
+
+    /** Sums the declared entry counts of node blobs already recorded in the phase-1 buffer. */
+    private long recordedQuicklistElements(ByteArrayOutputStream record, int type, long nodes) {
+        try {
+            boolean listpack = type == TYPE_LIST_QUICKLIST_2;
+            long sum = 0;
+            for (QuicklistNode node : PrefixReader.readQuicklistNodes(record.toByteArray(), type, nodes)) {
+                if (node.container() == 2) {
+                    sum++;
+                    continue;
+                }
+                byte[] blob = node.blob();
+                int offset = listpack ? 4 : 8;
+                long declared = declaredEntries(blob, offset);
+                if (declared < 0)
+                    return -1;
+                sum += declared;
+            }
+            return sum;
+        } catch (RuntimeException e) {
+            return -1; // buffer disagrees with the node framing: treat the total as unknowable
+        }
+    }
+
+    /** Declared entry count from a node blob's header bytes, or -1 when it cannot be trusted. */
+    private static long declaredEntries(byte[] header, int offset) {
+        if (header.length < offset + 2)
+            return -1; // shorter than its own header: refuse to guess
+        long declared = (header[offset] & 255L) | ((header[offset + 1] & 255L) << 8);
+        return declared == 0xFFFF ? -1 : declared; // 0xFFFF = only a full scan would know
+    }
+
+    /**
+     * Declared entry count of an LZF-compressed node blob, or -1 when the header prefix cannot
+     * be inflated. Only the first {@code offset + 2} decompressed bytes are needed, so the cost
+     * stays bounded no matter how large the node is.
+     */
+    private static long lzfDeclaredEntries(byte[] compressed, int offset) {
+        try {
+            return declaredEntries(Lzf.decompressPrefix(compressed, offset + 2), offset);
+        } catch (RuntimeException e) {
+            return -1;
         }
     }
 
@@ -1063,6 +1154,47 @@ public final class RdbStreamParser {
             }
             if (out != outputLength)
                 throw new RespProtocolException("LZF output length mismatch");
+            return output;
+        }
+
+        /**
+         * Inflates at most {@code limit} bytes and stops there — a prefix read that never
+         * materializes the full output. Throws when the input cannot produce {@code limit} bytes;
+         * the caller treats that as an unreadable count, not a parse failure.
+         */
+        static byte[] decompressPrefix(byte[] input, int limit) {
+            byte[] output = new byte[limit];
+            int in = 0, out = 0;
+            while (out < limit) {
+                if (in >= input.length)
+                    throw new RespProtocolException("LZF prefix exhausted");
+                int control = input[in++] & 255;
+                if (control < 32) {
+                    int length = control + 1;
+                    if (in + length > input.length)
+                        throw new RespProtocolException("invalid LZF literal");
+                    int take = Math.min(length, limit - out);
+                    System.arraycopy(input, in, output, out, take);
+                    in += length;
+                    out += take;
+                } else {
+                    int length = control >>> 5, reference = out - ((control & 31) << 8) - 1;
+                    if (length == 7) {
+                        if (in >= input.length)
+                            throw new RespProtocolException("invalid LZF length");
+                        length += (input[in++] & 255);
+                    }
+                    if (in >= input.length)
+                        throw new RespProtocolException("invalid LZF reference");
+                    reference -= input[in++] & 255;
+                    length += 2;
+                    if (reference < 0)
+                        throw new RespProtocolException("invalid LZF back reference");
+                    int take = Math.min(length, limit - out);
+                    for (int i = 0; i < take; i++)
+                        output[out++] = output[reference + i];
+                }
+            }
             return output;
         }
     }

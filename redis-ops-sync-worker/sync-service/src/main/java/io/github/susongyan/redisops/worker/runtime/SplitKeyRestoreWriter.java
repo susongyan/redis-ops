@@ -58,6 +58,9 @@ final class SplitKeyRestoreWriter implements AutoCloseable {
     private volatile byte[] currentKey;
     private volatile byte[] tempKey;
     private int rdbType;
+    // RDB-declared count from the begin event (0 for quicklists: they declare node counts);
+    // only the bulk-limit abort still reports it — hard-cap skips carry the parser's exact sum
+    private long estimatedElements;
     private long expireAt = -1;
     private long elementsWritten;
     private boolean listKind;
@@ -93,6 +96,10 @@ final class SplitKeyRestoreWriter implements AutoCloseable {
         currentKey = event.key();
         tempKey = target.tempKey(taskId, channel, currentKey);
         rdbType = event.rdbType();
+        estimatedElements = switch (rdbType) { // quicklists declare a node count, not elements —
+            case T_LIST_QUICKLIST, T_LIST_QUICKLIST_2 -> 0; // reporting nodes as elements would lie
+            default -> event.estimatedElements();
+        };
         expireAt = event.absoluteExpireMillis();
         elementsWritten = 0;
         listKind = switch (rdbType) {
@@ -121,7 +128,7 @@ final class SplitKeyRestoreWriter implements AutoCloseable {
                 Math.max(event.value() == null ? 0 : event.value().length,
                         event.score() == null ? 0 : event.score().length));
         if (largest > bulkLimit()) { // §5.2 invariant backstop: this element can never be sent
-            abortToList("ELEMENT_OVER_BULK_LIMIT", event.member().length, elementsWritten);
+            abortToList("ELEMENT_OVER_BULK_LIMIT", event.member().length, elementsWritten, estimatedElements);
             aborted = true; // swallow the remaining elements; the end event resets the state
             return;
         }
@@ -170,12 +177,12 @@ final class SplitKeyRestoreWriter implements AutoCloseable {
                 ? "UNSUPPORTED_TYPE"
                 : "OVER_HARD_CAP";
         if (currentKey != null) { // mid-stream hard-cap abort: no end event follows, reset fully
-            abortToList(reason, event.payloadBytes(), elementsWritten);
+            abortToList(reason, event.payloadBytes(), elementsWritten, event.estimatedElements());
             resetKeyState();
             progress.splittingEnd();
             return;
         }
-        emitSkip(event.key(), event.rdbType(), event.payloadBytes(), reason);
+        emitSkip(event.key(), event.rdbType(), event.payloadBytes(), event.estimatedElements(), reason);
     }
 
     @Override
@@ -314,36 +321,53 @@ final class SplitKeyRestoreWriter implements AutoCloseable {
         return true;
     }
 
-    /** Unlinks the temp key and records the skip; callers own the follow-up state handling. */
-    private void abortToList(String reason, long payloadBytes, long written) throws IOException {
+    /**
+     * Unlinks the temp key and records the skip; callers own the follow-up state handling.
+     * {@code estimated} is the best-known total element count — the parser's header sum on the
+     * hard-cap path, the begin event's declared count on the bulk-limit path.
+     */
+    private void abortToList(String reason, long payloadBytes, long written, long estimated) throws IOException {
         unlinkTempBestEffort();
-        emitSkip(currentKey, rdbType, payloadBytes, reason);
+        emitSkip(currentKey, rdbType, payloadBytes, estimated, reason);
         log.warn("split key aborted after {} elements taskId={} keyFingerprint={} reason={}",
                 written, taskId, fingerprint(currentKey), reason);
     }
 
-    private void emitSkip(byte[] key, int type, long payloadBytes, String reason) {
+    private void emitSkip(byte[] key, int type, long payloadBytes, long estimatedElements, String reason) {
         if (reason.equals("UNSUPPORTED_TYPE"))
             skippedUnsupported.increment();
         else
             skippedOversize.increment();
         progress.splitKeySkipped(payloadBytes);
-        String fingerprint = fingerprint(key);
-        log.warn("split key skipped taskId={} keyBytes={} keyFingerprint={} rdbType={} payloadBytes={} "
-                + "reason={}", taskId, key.length, fingerprint, type, payloadBytes, reason);
+        String keyName = new String(key, StandardCharsets.UTF_8);
+        log.warn("split key skipped taskId={} key=\"{}\" keyBytes={} rdbType={} elements={} "
+                + "payloadBytes={} reason={}", taskId, keyName, key.length, type, estimatedElements,
+                payloadBytes, reason);
         try {
-            sync.appendTaskEvent(taskId, "sync:split", "SPLIT_KEY_SKIPPED keyFingerprint=" + fingerprint
-                    + " keyBytes=" + key.length + " rdbType=" + type + " payloadBytes=" + payloadBytes
-                    + " reason=" + reason);
+            sync.appendTaskEvent(taskId, "sync:split", skipEventMessage(key, type, payloadBytes,
+                    estimatedElements, reason));
         } catch (RuntimeException reportingFailure) {
             // The counter and log line above already made the skip visible.
         }
+    }
+
+    /**
+     * Contract 8 v2 skip event: the raw key rides last so names with spaces survive, and the
+     * collection's RDB-declared element count (0 = unknown for opaque blobs) tells the operator
+     * the scale. Replaced the v1 fingerprint — an operator cannot act on a hash.
+     */
+    static String skipEventMessage(byte[] key, int type, long payloadBytes, long estimatedElements,
+            String reason) {
+        return "SPLIT_KEY_SKIPPED rdbType=" + type + " keyBytes=" + key.length + " elements="
+                + estimatedElements + " payloadBytes=" + payloadBytes + " reason=" + reason + " key="
+                + new String(key, StandardCharsets.UTF_8);
     }
 
     private void resetKeyState() {
         currentKey = null;
         tempKey = null;
         rdbType = 0;
+        estimatedElements = 0;
         expireAt = -1;
         elementsWritten = 0;
         listKind = false;

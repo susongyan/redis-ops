@@ -51,8 +51,18 @@ public sealed interface RdbEvent permits RdbEvent.SelectDb, RdbEvent.KeyValue, R
      * discarded without a usable payload; {@code UNSUPPORTED_TYPE} covers opt-in module skipping.
      * May arrive between {@code BigKeyValueBegin} and its end when a mid-stream cap check trips —
      * the writer must then abort the open temp key instead of finalizing it.
+     * {@code estimatedElements} is the RDB-declared collection length when the skip fired on the
+     * element path (list/set/zset/hash), and for quicklists the exact sum of the per-node header
+     * counts (ziplist {@code zllen} / listpack header; plain node = 1) taken while consuming the
+     * value — the wire has no whole-list total, and LZF-compressed nodes are prefix-inflated
+     * just far enough to read their header. {@code 0} = unknowable: pre-encoding blobs are
+     * opaque, and a node whose header prefix will not inflate, that declares >65534 entries
+     * (0xFFFF), or that is integer-encoded would need a full decode, which the hard cap exists
+     * to avoid.
      */
-    record SkippedKey(byte[] key, int rdbType, long payloadBytes, SkipReason reason) implements RdbEvent {
+    record SkippedKey(byte[] key, int rdbType, long payloadBytes, SkipReason reason, long estimatedElements)
+            implements
+                RdbEvent {
     }
 
     enum SkipReason {
