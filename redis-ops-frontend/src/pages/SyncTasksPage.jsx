@@ -947,10 +947,11 @@ export default function SyncTasksPage() {
                     valuePropName="checked"
                     noStyle
                   >
-                    <Checkbox>允许安全拆分多 Key 命令</Checkbox>
+                    <Checkbox>允许安全拆分（多 Key 命令 / 大 Key 重建）</Checkbox>
                   </Form.Item>
                   <div className="sync-policy-option-help">
-                    MSET、DEL、UNLINK 可按 Key/Slot 拆分，但不保留跨 Key 原子性。
+                    增量：MSET/DEL/UNLINK 按 Key/Slot 拆分下发，跨 Key 不原子；关闭则这些命令被拦截（任务
+                    BLOCKED）。全量：超 64MB 集合类大 Key 走元素级重建＋原子 RENAME，超 480MB 跳过并告警。
                   </div>
                 </div>
               </Col>
@@ -1270,7 +1271,7 @@ export default function SyncTasksPage() {
                       <Space wrap>
                         <Tag color="purple">策略：{policy.policyVersion || 'v1'}</Tag>
                         <Tag color={policy.allowSafeSplit === false ? 'default' : 'blue'}>
-                          安全拆分：{policy.allowSafeSplit === false ? '关闭' : '开启'}
+                          安全拆分（多 Key / 大 Key）：{policy.allowSafeSplit === false ? '关闭' : '开启'}
                         </Tag>
                         <Tag>增量清空：不支持</Tag>
                         {policy.allowDestructiveCommands && (
