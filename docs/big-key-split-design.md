@@ -166,11 +166,21 @@ blob 的元素解码。解码失败（含恶意/损坏数据）→ 该 key 回�
 
 **跳过三件套**（禁止静默跳过——跳过 = 目标缺数据，必须让用户看见）：
 
-1. WARN 日志：key 字节长度 + SHA-256 前 8 字节，**不打 key 内容**（防敏感数据泄露）；
+1. WARN 日志：key 字节长度 + key 名（**2026-11-10 修订**：原设计只打 SHA-256 指纹防敏感泄露，
+   用户反馈指纹无法定位 key——平台各处（治理扫描/分布分析）本就展示完整 key 名，事件与日志
+   改为直接携带 key 名，指纹仅存量旧事件兼容渲染）；
 2. 计数：`sync_skipped_oversize_keys_total`（超限）/ `sync_skipped_unsupported_keys_total`（类型）；
-3. **任务报告跳过清单**：每跳过一个 key 记入任务级报告（key 指纹、类型、payloadBytes、原因），
-   FINISH/结算时供核对。**P1 实现通道**：`WorkerSyncExecutionPort.appendTaskEvent(taskId, "sync:split",
-   "SPLIT_KEY_SKIPPED ...")` 任务事件流（报告页展示归 P3）；
+3. **任务报告跳过清单**：每跳过一个 key 记入任务级报告（**key 名、类型、总元素个数、payloadBytes、
+   原因**），FINISH/结算时供核对。元素个数语义：list/set/zset/hash 元素路径=RDB 声明长度；
+   **quicklist 无整表总数——丢弃节点时顺带读各节点头（ziplist zllen/listpack 头，plain 节点=1）
+   精确求和；LZF 压缩节点只解压头前缀（offset+2 字节）读头，同样精确**。节点头 0xFFFF
+   （>65534 条目）、头前缀解压失败、整数编码节点、编码前 blob 不可知，这四类报 0。
+   **2026-11-10 修正**：原实现遇 LZF 节点提前 return、且窥视用 readExactRaw 不喂 CRC——
+   跳过点之后流错位 → 真机任务 36 `RDB checksum mismatch`、elements=0；现改为无论可知与否
+   都整节点消费（peek 走 readExact 喂 CRC），可知性仅由 knowable 标志降级。
+   **P1 实现通道**：`WorkerSyncExecutionPort.appendTaskEvent(taskId, "sync:split", "SPLIT_KEY_SKIPPED ...")`
+   任务事件流（报告页展示归 P3）。**事件格式 v2（2026-11-10，契约 8）**：`key` 放行尾容忍空格，
+   `elements` 按上述语义；v1 指纹格式仅存量事件；
 4. **平台侧告警**：复用现有 `LARGE_KEY_FOUND` ruleType 触发（先例：`RiskScanService.java:329` 调
    `AlertService.trigger`，`AlertService.java:47-60`；无需 DDL 变更）。worker 侧经引擎事件/任务报告通道
    上报，平台侧接线归 P3。**✅ 已接线（2026-11-09，P3 B）**：platform `SyncSkipAlertWorker` 周期扫描

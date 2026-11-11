@@ -63,6 +63,15 @@
 
 ## 3. 端到端验证
 
+### 3.0 拆分独立统计 E2E（2026-11-10，任务 34）
+
+- 拓扑：源 cluster 3（共享集群，bkwrite.jsh 造的 7 个 2001 万元素级大 key 样本 ~9GB）→ local-c1（id=5，FLUSH），worker local-sync。
+- 结果：precheck READY → **CAUGHT_UP**，三通道 COMPLETED；`lane=-1` 汇总 **splitKeys=5 / splitBytes=1.90GB、splitSkippedKeys=2 / splitSkippedBytes=1.25GB**，同时 parsedKeys=7、appliedKeys=0 ——拆分计数独立于 RESTORE 计数的语义在真实数据上成立（任务 32 旧构建下这 5 拆 2 跳只能靠事件数出来）。
+- 告警活体：真实 SPLIT_KEY_SKIPPED 事件 → 60s 轮询内 `alert_event` OPEN（LARGE_KEY_FOUND / SYNC_TASK / P1，首轮 value=1.0，第二条落在 OPEN 去重窗内属设计行为）。
+- 前端活体（Playwright 真登录 + 真数据）：全量进度面板汇总行「拆分大 Key **5 个 / 1.8 GiB（跳过 2 个 / 1.2 GiB）**」+ 每通道列（`2 个 / 856.2 MiB` 等），7 项断言全过（截图 /tmp/ui-audit/live-split-stats.png）。
+- 测后全清（用户批准）：任务 34 CANCELLED、共享集群的 7 个 bk:* UNLINK（各返回 1）、local-c1 三主 FLUSHDB（dbsize=0）、临时告警规则与合成事件删除。
+- 附带（与拆分无关）：任务 33 启动失败 = 源侧共享集群瞬时 CLUSTERDOWN 落在写围栏 WATCH 上，worker 瞬态重试仅 5 次×15s 未扛过；节点恢复后重跑即过。另修复调度器全挂根因（RedisCollectorWorker 无界 Lettuce shutdown 挂死 platform-scheduler-1 达 5.2h）。
+
 ### 3.1 真实数据 E2E（2026-11-10，任务 31）
 
 - 拓扑：源 cluster 4（共享测试集群，凭据经 AES-GCM 密钥集解密）→ local-c1（id=5，FLUSH 模式），
@@ -90,10 +99,15 @@
   `sync_split_fallback_total`——真实无超限数据集应为 0 且不增长。
 - 平台：`alert_event(resource_type=SYNC_TASK)`；前端任务详情跳过清单与 FINISH 提醒。
 - **拆分独立统计（2026-11-10 增补，契约 9 / V45）**：`sync_full_progress` 四列
-  `split_keys/split_bytes/split_skipped_keys/split_skipped_bytes` 独立于 RESTORE 计数
-  （`parsed_keys/applied_*` 语义不变）；前端全量进度面板显示"拆分大 Key N 个 / X（跳过 M 个 / Y）"
-  汇总与每通道列。此前的观测缺口：纯拆分通道 parsed/applied 恒 0/0、跳过只有事件流——
+  `split_keys/split_bytes/split_skipped_keys/split_skipped_bytes` 独立统计；
+  **applied 语义修订（同日）**：拆分 RENAME 落地的 key 计入 `applied_keys/applied_bytes`
+  （只并入 lane=-1 聚合行）——纯拆分通道「已写入 Key」不再恒 0，`parsed = applied + skipped`
+  三者闭环；`parsed_keys` 不变。前端全量进度面板显示"拆分大 Key N 个 / X（跳过 M 个 / Y）"
+  汇总与每通道列。此前的观测缺口：纯拆分通道 applied 恒 0、跳过只有事件流——
   任务 32 现场确认（5 拆 + 2 跳过在旧构建下只能靠事件数出来）。
+- **跳过事件格式 v2（2026-11-10，契约 8）**：`key=原key名`（行尾、容忍空格）替代指纹，
+  `elements=` 集合类声明总元素数（不可知 0）；前端「Key 指纹」列改「Key」列并新增「元素」列，
+  v1 存量事件回退指纹渲染。mock 走查 7 项全过（/tmp/ui-audit/audit-v2.mjs）。
 - 测试环境联调前置：需在测试环境创建 LARGE_KEY_FOUND 告警规则，否则跳过只落事件不告警。
 
 ## 5. 版本
