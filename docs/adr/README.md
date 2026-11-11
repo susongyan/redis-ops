@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-039 同步跳过日志与任务事件携带 Redis Key 名](ADR-039-key-names-in-operational-logs.md)
 - [ADR-038 用户触发的长任务在接收实例进程内执行](ADR-038-in-process-local-job-runner.md)
 - [ADR-037 数据库会话时区交由数据库自身决定](ADR-037-database-session-timezone.md)
 - [ADR-036 只读执行记录删除](ADR-036-read-only-record-deletion.md)
