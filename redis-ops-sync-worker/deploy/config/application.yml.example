@@ -1,4 +1,7 @@
-# 复制到 /etc/redis-ops-worker/application-pro.yml；替换全部 REPLACE_*。
+# 复制到部署工作目录的 config/application.yml（相对 java 进程启动目录解析；
+# opsctl 部署即 <INSTALL_DIR>/config/）。用于不接 Apollo 的部署；接 Apollo 时
+# 同名键会被 Apollo 发布值覆盖（优先级见 docs/apollo-integration.md）。
+# 替换全部 REPLACE_*。
 spring:
   application:
     name: redis-ops-sync-worker

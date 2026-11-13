@@ -5,7 +5,6 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 CONF_FILE="${REDIS_OPS_ENV_FILE:-${INSTALL_DIR}/conf/redis-ops.env}"
 EXAMPLE_CONF="${INSTALL_DIR}/conf/redis-ops.env.example"
-REDIS_OPS_PROFILE="${REDIS_OPS_PROFILE:-dev}"
 
 die() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -51,11 +50,15 @@ load_config() {
     source "${CONF_FILE}"
     set +a
   else
-    info "${CONF_FILE} not found; using embedded Spring profile '${REDIS_OPS_PROFILE}' configuration"
+    info "${CONF_FILE} not found; using packaged defaults (profile overlay: ${REDIS_OPS_PROFILE:-none})"
   fi
 
-  REDIS_OPS_PROFILE="${REDIS_OPS_PROFILE:-dev}"
-  [[ "${REDIS_OPS_PROFILE}" =~ ^(dev|fat|uat|pro)$ ]] || die "unsupported REDIS_OPS_PROFILE: ${REDIS_OPS_PROFILE}"
+  # Optional local overlay: REDIS_OPS_PROFILE=dev activates the packaged
+  # application-dev.yml. Unset (deployments) runs profile-less: base
+  # application.yml defaults plus Apollo values from -Denv/-Dapollo.meta.
+  if [[ -n "${REDIS_OPS_PROFILE:-}" ]]; then
+    [[ "${REDIS_OPS_PROFILE}" =~ ^(dev)$ ]] || die "unsupported REDIS_OPS_PROFILE: ${REDIS_OPS_PROFILE} (only 'dev' ships as local overlay)"
+  fi
   PLATFORM_PORT="${PLATFORM_PORT:-8080}"
   SYNC_SERVICE_PORT="${SYNC_SERVICE_PORT:-8081}"
   FRONTEND_PORT="${FRONTEND_PORT:-8088}"
@@ -240,6 +243,8 @@ wait_healthy() {
 
 run_component() {
   local role="$1"
+  local spring_profile_args=""
+  [[ -n "${REDIS_OPS_PROFILE:-}" ]] && spring_profile_args="--spring.profiles.active=${REDIS_OPS_PROFILE}"
   ensure_dirs
   printf '%s\n' "$$" >"$(pid_file "${role}")"
   case "${role}" in
@@ -247,14 +252,14 @@ run_component() {
       validate_platform
       # shellcheck disable=SC2086
       exec java ${PLATFORM_JAVA_OPTS} -jar "${INSTALL_DIR}/app/platform.jar" \
-        --spring.profiles.active="${REDIS_OPS_PROFILE}" \
+        ${spring_profile_args} \
         --server.port="${PLATFORM_PORT}"
       ;;
     worker)
       validate_worker
       # shellcheck disable=SC2086
       exec java ${SYNC_WORKER_JAVA_OPTS} -jar "${INSTALL_DIR}/app/sync-worker.jar" \
-        --spring.profiles.active="${REDIS_OPS_PROFILE}"
+        ${spring_profile_args}
       ;;
     frontend)
       validate_frontend

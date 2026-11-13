@@ -1,5 +1,7 @@
-# 复制到 /etc/redis-ops-platform/application-pro.yml；替换全部 REPLACE_*。
-# 不直接部署仓库内示例账号；不要将填入真实秘密的文件提交 Git。
+# 复制到部署工作目录的 config/application.yml（相对 java 进程启动目录解析；
+# opsctl 部署即 <INSTALL_DIR>/config/）。用于不接 Apollo 的部署；接 Apollo 时
+# 同名键会被 Apollo 发布值覆盖（优先级见 docs/apollo-integration.md）。
+# 替换全部 REPLACE_*；不直接部署仓库内示例账号；不要将填入真实秘密的文件提交 Git。
 spring:
   application:
     name: redis-ops-platform
@@ -8,7 +10,8 @@ spring:
     username: redis_ops_platform
     password: "REPLACE_PLATFORM_PASSWORD"
   flyway:
-    enabled: true
+    # 运行时迁移默认关闭：各环境 DDL 由 DBA 按序手工执行。全新环境需要时改 true。
+    enabled: false
     # 独立迁移账号；url 默认沿用 datasource。schema 只由 Platform 迁移。
     user: redis_ops_migrator
     password: "REPLACE_MIGRATOR_PASSWORD"

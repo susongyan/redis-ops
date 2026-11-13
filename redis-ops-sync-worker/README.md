@@ -7,5 +7,5 @@
 mvn clean verify
 ```
 
-部署入口：[测试/生产交付](../docs/deployment-delivery.md)，[外部配置模板](deploy/config/application-pro.yml.example)。
+部署入口：[测试/生产交付](../docs/deployment-delivery.md)，[外部配置模板](deploy/config/application.yml.example)。
 Worker 不执行 schema migration，必须等待 Platform 升级完成。

@@ -8,4 +8,4 @@ mvn clean verify
 ```
 
 部署入口：[测试/生产交付](../docs/deployment-delivery.md)。本项目包含 [数据库手册](sql/README.md)
-和 [外部配置模板](deploy/config/application-pro.yml.example)。模板须填写后再部署。
+和 [外部配置模板](deploy/config/application.yml.example)（不接 Apollo 时填写；接 Apollo 后同名键被发布值覆盖）。模板须填写后再部署。

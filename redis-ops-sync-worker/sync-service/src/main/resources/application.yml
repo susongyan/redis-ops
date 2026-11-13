@@ -1,6 +1,7 @@
 spring:
-  profiles:
-    default: dev
+  # No default profile: deployments run profile-less (base defaults plus
+  # optional Apollo per -Denv/-Dapollo.meta). Only application-dev.yml ships
+  # as a local-dev overlay, activated by an explicit --spring.profiles.active=dev.
   # Spring Config Data is the single configuration entry point. Apollo
   # integrates through its Config Data adapter; see docs/apollo-integration.md.
   config:
