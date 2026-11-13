@@ -44,9 +44,12 @@ Platform API 与 Nginx 前端。生产 MySQL 和被管理 Redis 均为外部依�
 bin/redis-opsctl start all
 ```
 
-如需切换环境，可在启动前设置 `REDIS_OPS_PROFILE=fat|uat|pro`，或在可选的
-`conf/redis-ops.env` 中配置。该文件不存在时控制脚本不会报错，而是直接使用内置 Profile。
-后续接入 Apollo 时可继续沿用这些 Spring 属性名。
+部署态 profile-less：配置来源是基础默认值 + 部署目录 `config/application.yml` 或
+Apollo 发布值。`REDIS_OPS_PROFILE=dev` 仅用于激活包内本地开发 overlay（可在启动前
+设置，或在可选的 `conf/redis-ops.env` 中配置；该文件不存在时控制脚本不会报错）。
+没有其他内置环境 profile；接 Apollo 的部署不要激活任何 profile——profile 文件
+定义过的键会遮蔽 Apollo 发布值，规则与优先级见
+[Apollo 接入说明](apollo-integration.md)。
 
 以普通部署用户操作：
 

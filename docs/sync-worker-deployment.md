@@ -3,7 +3,7 @@
 任务对应的执行实例、机器 IP 与租约状态见 [Worker 状态展示及配置](sync-worker-visibility.md)。
 
 独立测试/生产部署以 [部署交付入口](deployment-delivery.md) 为主，配置模板在
-[Worker deploy/config](../redis-ops-sync-worker/deploy/config/application-pro.yml.example)。
+[Worker deploy/config](../redis-ops-sync-worker/deploy/config/application.yml.example)。
 以下合并包和 redis-opsctl 是兼容入口，不代表 Worker 构建依赖 Platform。
 
 Sync Worker 是 `sync-service` 生成的独立 Java 进程。它通过共享 MySQL 领取同步
@@ -31,8 +31,11 @@ chmod 600 conf/redis-ops.env
 
 ## 2. Worker 配置
 
-开发环境默认使用 JAR 内置的 `dev` Profile，直接执行 `bin/redis-opsctl start worker` 即可；
-`conf/redis-ops.env` 为可选覆盖配置。切换环境可设置 `REDIS_OPS_PROFILE=fat|uat|pro`。
+本地开发需显式 `REDIS_OPS_PROFILE=dev bin/redis-opsctl start worker` 激活包内
+`application-dev.yml` overlay（脚本不再默认任何 profile）；`conf/redis-ops.env`
+为可选覆盖配置。部署态 profile-less：配置来源是基础默认值 + 部署目录
+`config/application.yml` 或 Apollo 发布值（优先级与"profile 遮蔽 Apollo"的规则见
+[Apollo 接入说明](apollo-integration.md)，接 Apollo 的部署不要激活任何 profile）。
 
 必须配置：
 

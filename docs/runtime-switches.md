@@ -1,6 +1,8 @@
 # 分析 Agent 配置与监控采集开关
 
-以下均为 Platform 的 Spring 启动配置，可放在外部 application-pro.yml，后续也可由已接入的配置中心注入。
+以下均为 Platform 的 Spring 启动配置，可放在部署目录 `config/application.yml`，或由
+Apollo 发布值注入（同名键 Apollo 赢；注意不要放进任何 profile 文件，见
+[Apollo 接入说明](apollo-integration.md)）。
 当前不支持运行中统一热更新；修改后受控重启 Platform。不要把配置中心发布成功当作已生效。
 
 ```yaml

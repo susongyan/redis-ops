@@ -15,8 +15,8 @@
 | Platform JAR | redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0-SNAPSHOT.jar | /opt/redis-ops-platform/app/platform.jar |
 | Worker JAR | redis-ops-sync-worker/sync-service/target/redis-ops-worker-service-0.1.0-SNAPSHOT.jar | /opt/redis-ops-worker/app/sync-worker.jar |
 | 前端静态文件 | redis-ops-frontend/dist/ | /opt/redis-ops-frontend/dist/ |
-| Platform 外部配置 | [application-pro.yml.example](../redis-ops-platform/deploy/config/application-pro.yml.example) | /etc/redis-ops-platform/application-pro.yml |
-| Worker 外部配置 | [application-pro.yml.example](../redis-ops-sync-worker/deploy/config/application-pro.yml.example) | /etc/redis-ops-worker/application-pro.yml |
+| Platform 外部配置 | [application.yml.example](../redis-ops-platform/deploy/config/application.yml.example) | /opt/redis-ops-platform/config/application.yml |
+| Worker 外部配置 | [application.yml.example](../redis-ops-sync-worker/deploy/config/application.yml.example) | /opt/redis-ops-worker/config/application.yml |
 | 数据库准备 | [数据库手册](../redis-ops-platform/sql/README.md)及同目录 SQL 模板 | DBA 审批后执行 |
 | Nginx 配置 | [前端部署说明](frontend-deployment.md) | Nginx 站点配置目录 |
 
@@ -88,34 +88,38 @@ npm run build
 ## 4. 首次部署顺序
 
 1. DBA 按[数据库手册](../redis-ops-platform/sql/README.md)准备数据库与账号；可以选择
-   [最新完整 SQL 初始化包](../redis-ops-platform/sql/latest/README.md)，或空库由 Flyway 逐条迁移，二选一。
+   [最新完整 SQL 初始化包](../redis-ops-platform/sql/latest/README.md)，或空库以
+   `PLATFORM_FLYWAY_ENABLED=true` 由 Flyway 逐条迁移，二选一。运行时迁移默认关闭。
    完整 SQL 已包含建库和 BASELINE，不再重复建库或执行 V1–V30；先不启动 Worker。
-2. 将两个示例配置分别复制到各自 `/etc/redis-ops-*/application-pro.yml`，替换所有占位符。
+2. 将两个示例配置分别复制到各自部署目录的 `config/application.yml`（JAR 启动目录下解析），
+   替换所有占位符；接 Apollo 的部署可不放本地文件，改由发布值覆盖同名键。
 3. 两边配置同一数据库和同一 Redis 凭据密钥环；不要每次启动生成新密钥。
 4. 以独立部署用户创建应用日志目录与 Worker 数据目录；配置只对服务用户开放读取，目录按公司策略保护。
-5. 启动 Platform，观察 Flyway 校验/迁移成功、健康 UP，确认 schema history 与发布内容一致。
+5. 启动 Platform，确认健康 UP；启用 Flyway 的环境同时观察迁移成功、schema history 与发布内容一致。
 6. schema 就绪后启动 Worker，确认健康 UP 且无 SQL、密钥解析或周期调度异常。
 7. 配置 Nginx 指向 Platform；验证页面加载和 `/api/v1/clusters`，再开始功能验收。
 
 首次验证可以在终端前台运行以下命令；持续运行交给公司进程管理器/systemd，不能依赖终端保持在线：
 
 ```bash
-java -Xms512m -Xmx1024m -jar /opt/redis-ops-platform/app/platform.jar \
-  --spring.profiles.active=pro \
-  --spring.config.additional-location=file:/etc/redis-ops-platform/
+cd /opt/redis-ops-platform
+java -Xms512m -Xmx1024m -jar app/platform.jar
 
-java -Xms1g -Xmx2g -jar /opt/redis-ops-worker/app/sync-worker.jar \
-  --spring.profiles.active=pro \
-  --spring.config.additional-location=file:/etc/redis-ops-worker/
+cd /opt/redis-ops-worker
+java -Xms1g -Xmx2g -jar app/sync-worker.jar
 ```
 
-以上堆大小仅为起步示例，应按压力测试调整。外部目录使用绝对路径且末尾 `/`，故意不加 `optional:`，
-避免配置目录缺失时静默回退；仍需部署检查文件存在、占位符已替换。启动日志不得输出配置内容。
-UAT 可复制为 `application-uat.yml` 并改启动 profile 为 `uat`；每套环境使用不同数据库及密钥。
+进程 profile-less 启动：基础默认值来自包内 application.yml，同名键由启动目录下
+`config/application.yml` 覆盖，接 Apollo 后再由发布值覆盖（优先级见
+[Apollo 接入说明](apollo-integration.md)）。包内 `./config/` 导入是 optional 的，
+部署检查必须确认文件存在、占位符已替换。启动日志不得输出配置内容。
+多套环境各自持有部署目录与 `config/application.yml`（或按 `ENV`/`APOLLO_META` 区分）；
+每套环境使用不同数据库及密钥。
 
-systemd 可直接使用上述命令作为 ExecStart，设置 User/Group、WorkingDirectory、Restart=on-failure，
-并确保停止超时足够优雅关闭。已有 redis-opsctl/systemd 模板见角色部署文档，但属于兼容入口：
-脚本会通过命令行传入 profile、Platform 端口；只使用外部 YAML 时优先采用本节直接启动方式。
+以上堆大小仅为起步示例，应按压力测试调整。systemd 可直接使用上述命令作为 ExecStart，
+设置 User/Group、WorkingDirectory、Restart=on-failure，并确保停止超时足够优雅关闭。
+已有 redis-opsctl/systemd 模板见角色部署文档，但属于兼容入口：脚本仅在显式设置
+`REDIS_OPS_PROFILE=dev` 时传入本地开发 overlay；只使用外部 YAML 时优先采用本节直接启动方式。
 
 ## 5. 配置原则与安全边界
 
