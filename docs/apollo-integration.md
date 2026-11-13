@@ -51,7 +51,8 @@ spring:
   包内或外置）定义过的键，**永远压过 Apollo 发布值**——Apollo 拉取正常、日志无错，
   但那个键就是被本地 profile 遮蔽着，排查时极具迷惑性。
 - 想让 Apollo 接管的键，任何 profile yml、任何环境的本地配置都不能再定义。
-- 包内只随 Jar 发布一个 `application-dev.yml`（本地开发 overlay），且**仅在显式
+- 包内只随 Jar 发布一个 `application-dev.yml`（Platform 与 Worker 各自的 Jar 一份；
+  Worker 侧是空占位，只声明 dev profile 有效），且**仅在显式
   `--spring.profiles.active=dev` / `REDIS_OPS_PROFILE=dev` 时激活**；部署态
   profile-less，配置来源就是"基础默认值 + Apollo 发布值（或部署目录
   `config/application.yml`）"。没有第二个环境 profile，也不要自造。

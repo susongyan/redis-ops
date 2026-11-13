@@ -74,7 +74,7 @@ npm run build
 docker compose up -d mysql redis redis-sync-target
 ```
 
-等待 MySQL 健康，按上节构建。新空库由 Platform Flyway 初始化；已有库按增量升级，不重复导入完整 SQL。
+等待 MySQL 健康，按上节构建。第 3 步显式激活 `dev` profile：包内 `application-dev.yml` overlay 打开 Flyway，新空库由 Platform 自动初始化；已有库按增量升级，不重复导入完整 SQL。
 
 ### 2. 准备外部配置
 
@@ -106,8 +106,11 @@ redis-ops:
 
 ```bash
 java -jar redis-ops-platform/bootstrap/target/redis-ops-platform-bootstrap-0.1.0-SNAPSHOT.jar \
+  --spring.profiles.active=dev \
   --spring.config.additional-location=file:/absolute/path/local-redis-ops.yml
 ```
+
+`--spring.profiles.active=dev` 激活包内唯一的本地 overlay（`application-dev.yml`）：本地空库 Flyway 自动建表、cookie 允许明文 HTTP。部署态不激活任何 profile，运行时 Flyway 默认关闭，配置来源与优先级见[部署交付](docs/deployment-delivery.md)与[Apollo 边界](docs/apollo-integration.md)。
 
 另一个终端：
 

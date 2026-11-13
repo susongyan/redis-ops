@@ -38,14 +38,18 @@ Platform API 与 Nginx 前端。生产 MySQL 和被管理 Redis 均为外部依�
 
 ## 3. 解压和配置
 
-默认使用 JAR 内置的 `dev` Profile，开发环境无需复制配置文件即可启动：
+本地开发用包内 dev overlay 启动（控制脚本没有默认 profile，必须显式指定）：
 
 ```bash
-bin/redis-opsctl start all
+REDIS_OPS_PROFILE=dev bin/redis-opsctl start all
 ```
 
+dev overlay（`application-dev.yml`）只做两件事：本地空库 Flyway 自动初始化
+（`PLATFORM_FLYWAY_ENABLED=false` 仍可显式压掉）、cookie 允许明文 HTTP；数据库
+密钥环等仍通过 `conf/redis-ops.env` 或环境变量提供。
+
 部署态 profile-less：配置来源是基础默认值 + 部署目录 `config/application.yml` 或
-Apollo 发布值。`REDIS_OPS_PROFILE=dev` 仅用于激活包内本地开发 overlay（可在启动前
+Apollo 发布值。`REDIS_OPS_PROFILE=dev` 仅用于激活上述包内本地开发 overlay（可在启动前
 设置，或在可选的 `conf/redis-ops.env` 中配置；该文件不存在时控制脚本不会报错）。
 没有其他内置环境 profile；接 Apollo 的部署不要激活任何 profile——profile 文件
 定义过的键会遮蔽 Apollo 发布值，规则与优先级见

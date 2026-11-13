@@ -1,0 +1,15 @@
+# Local development overlay, packaged but inert unless the dev profile is
+# explicitly activated (--spring.profiles.active=dev / REDIS_OPS_PROFILE=dev).
+# Deployments run profile-less; never extend this file into an environment
+# profile (profile keys permanently shadow Apollo published values, see
+# docs/apollo-integration.md).
+#
+# The overlay intentionally defines no properties: the base defaults already
+# target the local compose MySQL. Database credentials and the credential key
+# ring come from the environment or an external config file, never from this
+# jar. In particular the worker never runs Flyway: the schema is owned by the
+# Platform, so SYNC_FLYWAY_ENABLED stays false under this profile too.
+spring:
+  config:
+    activate:
+      on-profile: dev

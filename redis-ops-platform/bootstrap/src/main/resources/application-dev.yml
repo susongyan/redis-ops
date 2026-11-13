@@ -1,0 +1,17 @@
+# Local development overlay, packaged but inert unless the dev profile is
+# explicitly activated (--spring.profiles.active=dev / REDIS_OPS_PROFILE=dev).
+# Deployments run profile-less; never extend this file into an environment
+# profile (profile keys permanently shadow Apollo published values, see
+# docs/apollo-integration.md).
+spring:
+  config:
+    activate:
+      on-profile: dev
+  flyway:
+    # Base default is off (DDL is applied manually by the DBA). Dev flips the
+    # default on so a fresh local database bootstraps itself; an explicit
+    # PLATFORM_FLYWAY_ENABLED=false still wins over this default.
+    enabled: ${PLATFORM_FLYWAY_ENABLED:true}
+identity:
+  # Plain HTTP on localhost; every deployment keeps secure cookies.
+  cookie-secure: false

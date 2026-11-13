@@ -32,7 +32,8 @@ chmod 600 conf/redis-ops.env
 ## 2. Worker 配置
 
 本地开发需显式 `REDIS_OPS_PROFILE=dev bin/redis-opsctl start worker` 激活包内
-`application-dev.yml` overlay（脚本不再默认任何 profile）；`conf/redis-ops.env`
+`application-dev.yml` overlay（空占位：Worker 本地默认值即 compose 库，且该 overlay
+永不打开 Worker 的 Flyway——schema 只由 Platform 迁移）；`conf/redis-ops.env`
 为可选覆盖配置。部署态 profile-less：配置来源是基础默认值 + 部署目录
 `config/application.yml` 或 Apollo 发布值（优先级与"profile 遮蔽 Apollo"的规则见
 [Apollo 接入说明](apollo-integration.md)，接 Apollo 的部署不要激活任何 profile）。
